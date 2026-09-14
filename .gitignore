@@ -1,0 +1,118 @@
+# =============================================================================
+# Cyberpunk TCG — .gitignore (monorepo : Java + Node/Vue + Python)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Système d'exploitation / éditeurs
+# -----------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.code-workspace
+.*.swp
+
+# -----------------------------------------------------------------------------
+# Secrets & configuration locale (ne JAMAIS committer)
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+**/application-local.yml
+**/application-local.yaml
+*.pem
+*.jks
+*.p12
+
+# -----------------------------------------------------------------------------
+# Java / Maven / Gradle
+# -----------------------------------------------------------------------------
+target/
+build/
+out/
+!.mvn/wrapper/maven-wrapper.jar
+.mvn/timing.properties
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+hs_err_pid*
+replay_pid*
+.gradle/
+*.log.lck
+
+# -----------------------------------------------------------------------------
+# Node / Vue / Vite / Tailwind
+# -----------------------------------------------------------------------------
+node_modules/
+.pnpm-store/
+dist/
+dist-ssr/
+.vite/
+.vite-inspect/
+*.tsbuildinfo
+.eslintcache
+.stylelintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+coverage/
+*.local
+
+# -----------------------------------------------------------------------------
+# Python (scraper)
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/*.egg-info/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.ipynb_checkpoints/
+
+# -----------------------------------------------------------------------------
+# Données générées (scraping, exports, cache)
+# -----------------------------------------------------------------------------
+scraper/output/
+scraper/.cache/
+data/
+*.duckdb
+*.sqlite
+*.sqlite3
+
+# -----------------------------------------------------------------------------
+# Logs & divers
+# -----------------------------------------------------------------------------
+*.log
+logs/
+tmp/
+temp/
+*.pid
+docker-compose.override.yml
