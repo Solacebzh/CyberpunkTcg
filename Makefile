@@ -11,7 +11,7 @@ SCRAPER_DIR  := scraper
 
 .PHONY: help install install-backend install-frontend install-scraper \
         db-up db-down db-reset db-logs \
-        backend frontend scraper-test test build clean
+        backend frontend frontend-mock scraper-test test test-frontend build clean
 
 help: ## Affiche cette aide
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -54,11 +54,17 @@ backend: ## Lance le backend Spring Boot (http://localhost:8080)
 frontend: ## Lance le serveur de dev Vite (http://localhost:5173)
 	cd $(FRONTEND_DIR) && npm run dev
 
+frontend-mock: ## Backend simulé (REST + STOMP) pour travailler l'UI sans JVM
+	cd $(FRONTEND_DIR) && npm run mock:ws
+
 ## --- Qualité ----------------------------------------------------------------
 
 test: ## Lance les tests backend + scraper
 	cd $(BACKEND_DIR) && mvn -B test
 	cd $(SCRAPER_DIR) && .venv/bin/python -m pytest -q
+
+test-frontend: ## Lance les tests du frontend (Vitest)
+	cd $(FRONTEND_DIR) && npm run test:unit
 
 build: ## Build de production (jar backend + bundle frontend)
 	cd $(BACKEND_DIR) && mvn -B clean package
