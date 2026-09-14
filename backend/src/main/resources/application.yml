@@ -51,12 +51,15 @@ app:
   # Origines autorisées pour CORS / WebSocket (CSV des origines du frontend)
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
-  # Préfixes STOMP (rappelés ici pour rester synchrone avec docs/websocket-protocol.md)
+  # Préfixes STOMP (rappelés ici pour rester synchrone avec docs/WEBSOCKET-PROTOCOL.md)
   websocket:
     endpoint: /ws
     application-prefix: /app
     broker-prefix: /topic
     user-prefix: /queue
+  # Délai de grâce après déconnexion d'un joueur en partie, avant forfait (ISO-8601)
+  game:
+    disconnect-grace: ${GAME_DISCONNECT_GRACE:PT2M}
 
 # --- Logs ---
 logging:

@@ -1,7 +1,8 @@
 package com.cyberpunktcg.api;
 
 import com.cyberpunktcg.api.dto.HealthResponse;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -18,10 +19,11 @@ import java.time.Instant;
  * <p>Volontairement tolérant : une base indisponible n'entraîne pas d'erreur 500,
  * elle est signalée par {@code database: "DOWN"} — pratique pendant le développement.</p>
  */
-@Slf4j
 @RestController
 @RequestMapping("/api")
 public class HealthController {
+
+    private static final Logger log = LoggerFactory.getLogger(HealthController.class);
 
     private final DataSource dataSource;
     private final String applicationName;

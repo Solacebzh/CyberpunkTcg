@@ -9,7 +9,7 @@ Les autres documents détaillent chaque aspect.
 | **[getting-started.md](getting-started.md)** | tu installes le projet sur une nouvelle machine |
 | **[DATA-MODEL.md](DATA-MODEL.md)** | tu touches aux cartes (schéma JSON, entités JPA, tables PostgreSQL) |
 | **[game-rules.md](game-rules.md)** | tu implémentes des règles ou du moteur de jeu |
-| **[websocket-protocol.md](websocket-protocol.md)** | tu ajoutes un message temps réel (client **et** serveur) |
+| **[WEBSOCKET-PROTOCOL.md](WEBSOCKET-PROTOCOL.md)** | tu ajoutes un message temps réel (client **et** serveur) |
 | **[roadmap.md](roadmap.md)** | tu veux savoir quoi faire ensuite / ce qui est déjà fait |
 
 ---

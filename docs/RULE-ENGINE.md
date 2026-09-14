@@ -5,7 +5,7 @@ passe par une commande validée côté serveur. Aucune règle ne vit dans le fro
 les contrôleurs ou les services (le service orchestre, le moteur décide).
 
 Documents liés : `game-rules.md` (règles), `architecture.md` (§2-3, couches),
-`DATA-MODEL.md` (contrat des cartes), `websocket-protocol.md` (transport, feature 04).
+`DATA-MODEL.md` (contrat des cartes), `WEBSOCKET-PROTOCOL.md` (transport, feature 04).
 
 ## 1. Carte du code
 

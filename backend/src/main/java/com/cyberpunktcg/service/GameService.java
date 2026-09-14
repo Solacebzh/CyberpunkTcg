@@ -96,6 +96,26 @@ public class GameService {
     }
 
     /**
+     * Abandon d'un joueur (action CONCEDE ou forfait après expiration du
+     * délai de reconnexion). L'adversaire est déclaré vainqueur.
+     *
+     * @param reason libellé de la raison (« Abandon », « Forfait déconnexion »…)
+     * @return l'événement GAME_WON généré, ou {@code null} si la partie était déjà finie
+     */
+    public GameEvent concede(String gameId, String playerId, String reason) {
+        GameState state = requireGame(gameId);
+        if (state.isGameOver()) {
+            return null;
+        }
+        GameCommand.requireKnownPlayer(state, playerId);
+        Player winner = state.getOpponent(playerId);
+        String endReason = reason + " de " + playerId;
+        state.setWinner(winner.getId(), endReason);
+        state.appendEvent(GameEventType.GAME_WON, winner.getId(), endReason);
+        return new GameEvent(GameEventType.GAME_WON, winner.getId(), endReason);
+    }
+
+    /**
      * Vue masquée d'une partie pour un joueur (secrets adverses effacés).
      * Un observateur inconnu ne voit les secrets de personne.
      *
