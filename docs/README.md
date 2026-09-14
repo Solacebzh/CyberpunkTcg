@@ -7,7 +7,7 @@ Les autres documents détaillent chaque aspect.
 | --- | --- |
 | **[architecture.md](architecture.md)** | tu veux comprendre les couches, le modèle « serveur autoritaire » et le flux d'une action |
 | **[getting-started.md](getting-started.md)** | tu installes le projet sur une nouvelle machine |
-| **[data-model.md](data-model.md)** | tu touches aux cartes (schéma JSON, entités JPA, tables PostgreSQL) |
+| **[DATA-MODEL.md](DATA-MODEL.md)** | tu touches aux cartes (schéma JSON, entités JPA, tables PostgreSQL) |
 | **[game-rules.md](game-rules.md)** | tu implémentes des règles ou du moteur de jeu |
 | **[websocket-protocol.md](websocket-protocol.md)** | tu ajoutes un message temps réel (client **et** serveur) |
 | **[roadmap.md](roadmap.md)** | tu veux savoir quoi faire ensuite / ce qui est déjà fait |
@@ -43,7 +43,7 @@ Les autres documents détaillent chaque aspect.
                                        ┌──────────────────┴───────────────────┐
                                        │  scraper (Python)                    │
                                        │  cyberpunktcg.com → cards.json ──────┘
-                                       │  (JSON conforme à card.schema.json)
+                                       │  (JSON conforme à card-schema.json)
                                        └──────────────────────────────────────┘
 ```
 
@@ -65,7 +65,7 @@ Une carte est **une donnée**, pas une classe Java ni un composant Vue :
 cyberpunktcg.com ──scraper──► cards.json ──import──► PostgreSQL (table cards)
                                     │                        │
                                     │                        ├─► API REST   GET /api/cards
-                                    └─ card.schema.json      └─► état de jeu STOMP /topic/game.{id}
+                                    └─ card-schema.json      └─► état de jeu STOMP /topic/game.{id}
                                        (contrat unique)
 ```
 
@@ -73,10 +73,10 @@ Le même schéma est décliné en trois langages, chacun avec son fichier de ré
 
 | Langage | Fichier | Rôle |
 | --- | --- | --- |
-| JSON Schema | [`schemas/card.schema.json`](schemas/card.schema.json) | **source de vérité** |
+| JSON Schema | [`../backend/src/main/resources/schema/card-schema.json`](../backend/src/main/resources/schema/card-schema.json) | **source de vérité** |
 | Python | `scraper/src/cyberpunk_scraper/models.py` | validation à l'extraction/export |
 | TypeScript | `frontend/src/types/card.ts` | typage de l'affichage |
-| Java | `backend/.../domain/Card.java` (feature 02) | entité JPA |
+| Java | `backend/.../domain/card/Card.java` | entité JPA et DTO REST |
 
 Ajouter une carte ne demande donc **aucun déploiement de code** : on relance le scraper, on réimporte.
 
