@@ -58,7 +58,7 @@ class HttpClient:
                 timeout=self.timeout,
                 follow_redirects=True,
                 headers={
-                    "User-Agent": self.user_agent,
+                    "User-Agent": "CyberpunkTCG-Scraper/1.0 (Educational Project)",
                     "Accept": "application/json,text/html;q=0.8,*/*;q=0.5",
                     "Accept-Language": "en-US,en;q=0.8,fr;q=0.7",
                     "Origin": "https://cyberpunktcg.com",
