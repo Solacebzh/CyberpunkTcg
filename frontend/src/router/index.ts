@@ -3,8 +3,11 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import HomeView from '@/views/HomeView.vue'
 
 /**
- * Routes du client. Les écrans de jeu (table, deck builder) arriveront
- * avec les features 03 à 06 — voir docs/roadmap.md.
+ * Routes du client (feature 05) : accueil, deck builder, lobby et plateau.
+ *
+ * `/game/:gameId?` accepte un identifiant optionnel : en cas de rechargement de
+ * page, `GameView` retombe sur le `gameId` conservé par le lobby (doc §8) et
+ * redirige vers `/lobby` s'il n'y a rien à reprendre.
  */
 const routes: RouteRecordRaw[] = [
   {
@@ -16,9 +19,21 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/lobby',
     name: 'lobby',
-    // Chargement paresseux : le futur écran de partie ne pèse pas sur l'accueil
+    // Chargement paresseux : ces écrans ne pèsent pas sur l'accueil
     component: () => import('@/views/LobbyView.vue'),
     meta: { title: 'Lobby' },
+  },
+  {
+    path: '/deck',
+    name: 'deck',
+    component: () => import('@/views/DeckBuilderView.vue'),
+    meta: { title: 'Deck builder' },
+  },
+  {
+    path: '/game/:gameId?',
+    name: 'game',
+    component: () => import('@/views/GameView.vue'),
+    meta: { title: 'Partie' },
   },
   {
     path: '/:pathMatch(.*)*',

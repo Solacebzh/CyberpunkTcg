@@ -164,3 +164,68 @@
     box-shadow: 0 0 18px rgba(252, 238, 10, 0.35);
   }
 }
+
+/* --- Feature 05 : plateau de jeu ------------------------------------------ */
+@layer components {
+  .cyber-btn--danger {
+    border-color: var(--color-cyber-magenta);
+    color: var(--color-cyber-magenta);
+    background: rgba(255, 42, 109, 0.07);
+  }
+
+  .cyber-btn--danger:hover:not(:disabled) {
+    background: rgba(255, 42, 109, 0.2);
+    box-shadow: 0 0 18px rgba(255, 42, 109, 0.4);
+  }
+
+  .cyber-btn--green {
+    border-color: var(--color-cyber-green);
+    color: var(--color-cyber-green);
+    background: rgba(57, 255, 136, 0.07);
+  }
+
+  .cyber-btn--green:hover:not(:disabled) {
+    background: rgba(57, 255, 136, 0.18);
+    box-shadow: 0 0 18px rgba(57, 255, 136, 0.4);
+  }
+
+  /* Barre de défilement discrète pour les zones à scrolling interne */
+  .cyber-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-cyber-line) transparent;
+  }
+
+  .cyber-scroll::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+  }
+
+  .cyber-scroll::-webkit-scrollbar-thumb {
+    background: var(--color-cyber-line);
+    border-radius: 999px;
+  }
+
+  /* Dos de carte (main adverse, Legends non révélées, cartes vendues) */
+  .cyber-cardback {
+    background:
+      repeating-linear-gradient(45deg, rgba(5, 217, 232, 0.09) 0 6px, transparent 6px 12px),
+      linear-gradient(160deg, #16162a, #0a0a12);
+    border-bottom: 1px solid var(--color-cyber-line);
+  }
+
+  /* Field : trame néon pour matérialiser la zone de combat */
+  .field-zone {
+    background:
+      radial-gradient(40rem 12rem at 50% 0%, rgba(5, 217, 232, 0.08), transparent 70%),
+      repeating-linear-gradient(90deg, rgba(42, 42, 61, 0.35) 0 1px, transparent 1px 34px);
+  }
+
+  /* Titre de zone (Main, Legends, Field…) */
+  .zone-label {
+    font-family: var(--font-mono);
+    font-size: 0.55rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: #64748b;
+  }
+}

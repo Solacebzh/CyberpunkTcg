@@ -41,7 +41,9 @@ CyberpunkTcg/                  # racine du monorepo (= racine du dépôt git)
 │   ├── getting-started.md
 │   ├── DATA-MODEL.md
 │   ├── game-rules.md
+│   ├── RULE-ENGINE.md
 │   ├── WEBSOCKET-PROTOCOL.md
+│   ├── FRONTEND-ARCHITECTURE.md
 │   └── roadmap.md
 ├── docker-compose.yml         # PostgreSQL local
 ├── Makefile                   # Raccourcis de développement
@@ -80,6 +82,7 @@ Checklist de validation en 30 secondes :
 | [docs/DATA-MODEL.md](docs/DATA-MODEL.md) | Schéma JSON des cartes, modèle de données PostgreSQL |
 | [docs/game-rules.md](docs/game-rules.md) | Règles du jeu résumées et périmètre du moteur |
 | [docs/WEBSOCKET-PROTOCOL.md](docs/WEBSOCKET-PROTOCOL.md) | Contrat STOMP (destinations, enveloppes, synchronisation) |
+| [docs/FRONTEND-ARCHITECTURE.md](docs/FRONTEND-ARCHITECTURE.md) | Client Vue : composants, stores, flux de données, animations |
 | [docs/roadmap.md](docs/roadmap.md) | Découpage en features et état d'avancement |
 
 ## Workflow Git du projet

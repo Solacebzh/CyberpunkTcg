@@ -10,6 +10,7 @@ Les autres documents détaillent chaque aspect.
 | **[DATA-MODEL.md](DATA-MODEL.md)** | tu touches aux cartes (schéma JSON, entités JPA, tables PostgreSQL) |
 | **[game-rules.md](game-rules.md)** | tu implémentes des règles ou du moteur de jeu |
 | **[WEBSOCKET-PROTOCOL.md](WEBSOCKET-PROTOCOL.md)** | tu ajoutes un message temps réel (client **et** serveur) |
+| **[FRONTEND-ARCHITECTURE.md](FRONTEND-ARCHITECTURE.md)** | tu touches au client Vue (composants, stores, animations, plateau) |
 | **[roadmap.md](roadmap.md)** | tu veux savoir quoi faire ensuite / ce qui est déjà fait |
 
 ---

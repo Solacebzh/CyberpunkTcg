@@ -1,14 +1,18 @@
 /**
- * Store Pinia de la connexion : santé de l'API REST + canal STOMP temps réel.
+ * Store de connexion : santé de l'API REST + état du canal STOMP partagé.
  *
- * Sert de référence pour les futurs stores (`gameStore`, `deckStore`…) :
- * état exposé en lecture seule, actions explicites, aucune logique de jeu ici.
+ * Depuis la feature 05, le client STOMP est **unique** pour toute la page :
+ * ce store lit l'état exposé par `useGameSocket()` (le même canal que le lobby
+ * et la partie) au lieu d'ouvrir sa propre connexion. Le badge d'accueil reste
+ * donc un simple indicateur, et le bouton « Quitter » est neutralisé en partie.
  */
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 
+import { useGameSocket } from '@/composables/useGameSocket'
 import { fetchHealth, type HealthResponse } from '@/services/api'
-import { GameSocket, type ConnectionState } from '@/services/socket'
+import type { ConnectionState } from '@/services/socket'
+import { useUiStore } from '@/stores/ui'
 
 export type ApiState = 'unknown' | 'checking' | 'up' | 'down'
 
@@ -21,23 +25,26 @@ export interface LogEntry {
 const MAX_LOG_ENTRIES = 30
 
 export const useConnectionStore = defineStore('connection', () => {
+  const socket = useGameSocket()
+  const ui = useUiStore()
+
   // --- État ---
   const apiState = ref<ApiState>('unknown')
   const health = ref<HealthResponse | null>(null)
   const apiError = ref<string | null>(null)
-
-  const wsState = ref<ConnectionState>('disconnected')
-  const wsDetail = ref<string | null>(null)
-
   const log = ref<LogEntry[]>([])
 
-  let socket: GameSocket | null = null
-  let unsubscribePong: (() => void) | null = null
+  /** Partie en cours sur le canal partagé : on évite de le fermer par erreur. */
+  const channelInUse = ref(false)
+
+  let pongWired = false
 
   // --- Dérivés ---
+  const wsState = computed<ConnectionState>(() => socket.status.value)
+  const wsDetail = computed<string | null>(() => socket.statusDetail.value)
   const isApiUp = computed(() => apiState.value === 'up')
-  const isWsConnected = computed(() => wsState.value === 'connected')
-  const isWsBusy = computed(() => wsState.value === 'connecting')
+  const isWsConnected = computed(() => socket.isConnected.value)
+  const isWsBusy = computed(() => socket.status.value === 'connecting')
   const apiVersion = computed(() => health.value?.version ?? '—')
   const databaseUp = computed(() => health.value?.database === 'UP')
 
@@ -49,6 +56,11 @@ export const useConnectionStore = defineStore('connection', () => {
 
   function clearLog(): void {
     log.value = []
+  }
+
+  /** Signale qu'un écran (partie) a besoin du canal en permanence. */
+  function markChannelInUse(inUse: boolean): void {
+    channelInUse.value = inUse
   }
 
   // --- API REST ---
@@ -71,53 +83,38 @@ export const useConnectionStore = defineStore('connection', () => {
     }
   }
 
-  // --- WebSocket STOMP ---
-  function ensureSocket(): GameSocket {
-    if (socket) return socket
-
-    socket = new GameSocket({
-      onStateChange: (state, detail) => {
-        wsState.value = state
-        wsDetail.value = detail ?? null
-        if (state === 'connected') pushLog('success', 'WebSocket STOMP connecté sur /ws')
-        if (state === 'disconnected') pushLog('info', 'WebSocket déconnecté')
-        if (state === 'error') pushLog('error', detail ?? 'Erreur WebSocket')
-      },
-      onError: (message) => pushLog('error', message),
+  // --- WebSocket STOMP (canal partagé) ---
+  function wirePong(): void {
+    if (pongWired) return
+    pongWired = true
+    socket.onPong((pong) => {
+      pushLog('success', `pong reçu du serveur — écho « ${pong?.echo ?? '?'} » à ${pong?.serverTime ?? '?'}`)
     })
-
-    return socket
   }
 
   function connect(): void {
-    const client = ensureSocket()
-
-    unsubscribePong?.()
-    unsubscribePong = client.subscribe<{ type: string; echo: string; serverTime: string }>('/topic/pong', (pong) => {
-      pushLog('success', `pong reçu du serveur — écho « ${pong?.echo ?? '?' } » à ${pong?.serverTime ?? '?'}`)
-    })
-
-    client.connect()
+    wirePong()
+    socket.connect()
+    pushLog('info', `Ouverture du canal STOMP (pseudo ${socket.pseudo.value})`)
   }
 
   function disconnect(): void {
-    unsubscribePong?.()
-    unsubscribePong = null
-    socket?.disconnect()
-    wsState.value = 'disconnected'
+    if (channelInUse.value) {
+      ui.warn('Canal utilisé par une partie en cours : abandonne la partie avant de le fermer')
+      return
+    }
+    socket.disconnect()
     pushLog('info', 'Déconnexion demandée par le joueur')
   }
 
   /** Envoie une intention `/app/ping` et vérifie que le serveur répond. */
   function ping(): void {
-    const client = ensureSocket()
-
-    if (!client.connected) {
+    wirePong()
+    if (!socket.isConnected.value) {
       pushLog('error', 'Impossible d’envoyer /app/ping : canal non connecté')
       return
     }
-
-    client.publish('/app/ping', { message: `hello depuis ${navigator.platform || 'le client'}` })
+    socket.ping(`hello depuis ${socket.pseudo.value}`)
     pushLog('info', 'Ping envoyé sur /app/ping')
   }
 
@@ -126,10 +123,11 @@ export const useConnectionStore = defineStore('connection', () => {
     apiState,
     health,
     apiError,
+    log,
+    channelInUse,
+    // dérivés
     wsState,
     wsDetail,
-    log,
-    // dérivés
     isApiUp,
     isWsConnected,
     isWsBusy,
@@ -141,5 +139,6 @@ export const useConnectionStore = defineStore('connection', () => {
     disconnect,
     ping,
     clearLog,
+    markChannelInUse,
   }
 })
