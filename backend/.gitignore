@@ -1,0 +1,19 @@
+# Build Maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# Configuration locale (surcharges non versionnées)
+src/main/resources/application-local.yml
+src/main/resources/application-local.yaml
+
+# IDE
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+.vscode/
+
+# Logs
+*.log
+logs/

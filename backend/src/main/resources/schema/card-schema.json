@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyberpunktcg.local/schema/card-schema.json",
+  "title": "Cyberpunk TCG Card",
+  "description": "Contrat partagé par le scraper Python, le backend Spring et le client Vue.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "name",
+    "subtitle",
+    "type",
+    "color",
+    "ram",
+    "cost",
+    "power",
+    "streetCred",
+    "tags",
+    "keywords",
+    "text",
+    "abilities",
+    "imageUrl",
+    "setCode",
+    "collectorNumber",
+    "rarity"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 180,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+      "description": "Identifiant stable en kebab-case, généralement le slug de la base officielle."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "subtitle": {
+      "type": ["string", "null"],
+      "maxLength": 200
+    },
+    "type": {
+      "type": "string",
+      "enum": ["legend", "unit", "program", "gear"]
+    },
+    "color": {
+      "type": "string",
+      "enum": ["red", "green", "blue", "yellow"]
+    },
+    "ram": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 20,
+      "description": "Valeur RAM imprimée. 0 lorsque la source ne fournit aucune valeur."
+    },
+    "cost": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 50,
+      "description": "Coût en Eddies, null lorsqu'aucun coût n'est imprimé."
+    },
+    "power": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Puissance imprimée, y compris pour les Legends ou Gear qui en possèdent une."
+    },
+    "streetCred": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Seuil de Street Cred explicite, null lorsqu'il n'existe pas."
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1, "maxLength": 80 },
+      "uniqueItems": true
+    },
+    "keywords": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["go_solo", "blocker", "quick", "flip", "play", "attack"]
+      },
+      "uniqueItems": true
+    },
+    "text": {
+      "type": "string",
+      "maxLength": 10000,
+      "description": "Texte de règles complet de la carte."
+    },
+    "abilities": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1, "maxLength": 2000 },
+      "description": "Paragraphes d'effet normalisés, dans leur ordre d'impression."
+    },
+    "imageUrl": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "maxLength": 2048,
+      "description": "URL stable source_image_url, sans signature CloudFront temporaire."
+    },
+    "setCode": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Z0-9]+$"
+    },
+    "collectorNumber": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32
+    },
+    "rarity": {
+      "type": ["string", "null"],
+      "enum": ["common", "uncommon", "rare", "epic", "secret", "iconic", "nova", "promo", null]
+    }
+  }
+}

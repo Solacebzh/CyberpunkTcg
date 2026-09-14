@@ -1,0 +1,23 @@
+# Dépendances
+node_modules/
+.pnpm-store/
+
+# Build
+dist/
+dist-ssr/
+*.tsbuildinfo
+.vite/
+
+# Environnement local
+.env
+.env.local
+.env.*.local
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*

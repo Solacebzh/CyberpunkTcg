@@ -1,0 +1,87 @@
+# =============================================================================
+# Cyberpunk TCG Online — configuration backend
+# Les valeurs sensibles passent par des variables d'environnement (cf. .env.example).
+# =============================================================================
+spring:
+  application:
+    name: cyberpunk-tcg-backend
+
+  # --- Base de données ---
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/cyberpunk_tcg}
+    username: ${DB_USERNAME:cyberpunk}
+    password: ${DB_PASSWORD:cyberpunk}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 5000
+      pool-name: cyberpunk-tcg-pool
+
+  jpa:
+    # `update` en dev ; passer à `validate` quand les migrations Flyway arriveront (feature 02+)
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:update}
+    open-in-view: false
+    show-sql: ${JPA_SHOW_SQL:false}
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+
+  # --- Jackson : JSON lisible et tolérant pour les cartes data-driven ---
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+      indent-output: false
+    deserialization:
+      fail-on-unknown-properties: false
+
+server:
+  port: ${SERVER_PORT:8080}
+  error:
+    include-message: always
+  shutdown: graceful
+
+# --- Application ---
+app:
+  # Version du backend, injectée depuis le pom.xml (filtrage de ressources Spring Boot)
+  version: ${APP_VERSION:@project.version@}
+  # Origines autorisées pour CORS / WebSocket (CSV des origines du frontend)
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+  # Préfixes STOMP (rappelés ici pour rester synchrone avec docs/WEBSOCKET-PROTOCOL.md)
+  websocket:
+    endpoint: /ws
+    application-prefix: /app
+    broker-prefix: /topic
+    user-prefix: /queue
+  # Délai de grâce après déconnexion d'un joueur en partie, avant forfait (ISO-8601)
+  game:
+    disconnect-grace: ${GAME_DISCONNECT_GRACE:PT2M}
+
+# --- Logs ---
+logging:
+  level:
+    root: INFO
+    com.cyberpunktcg: ${LOG_LEVEL_APP:DEBUG}
+    org.springframework.web.socket: INFO
+
+---
+# =============================================================================
+# Profil « test » : H2 en mémoire → `mvn test` fonctionne sans PostgreSQL
+# =============================================================================
+spring:
+  config:
+    activate:
+      on-profile: test
+  datasource:
+    url: jdbc:h2:mem:cyberpunk_tcg;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    database-platform: org.hibernate.dialect.H2Dialect
