@@ -1,45 +1,62 @@
 <script setup lang="ts">
-/**
- * Page d'accueil — sert aussi de « smoke test » visuel de la stack :
- * REST (/api/health), STOMP (/app/ping → /topic/pong), rendu data-driven des cartes
- * et animations GSAP.
- */
-import { onMounted, onBeforeUnmount, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import gsap from 'gsap'
 
 import CardPreview from '@/components/CardPreview.vue'
+import { ApiError, fetchCards } from '@/services/api'
 import { useConnectionStore } from '@/stores/connection'
-import sampleCardsJson from '@/data/sample-cards.json'
 import type { GameCard } from '@/types/card'
 
 const store = useConnectionStore()
 const { apiState, apiError, health, wsState, wsDetail, log, isApiUp, isWsConnected, databaseUp } = storeToRefs(store)
 
-const sampleCards = sampleCardsJson as GameCard[]
 const root = ref<HTMLElement | null>(null)
+const cards = ref<GameCard[]>([])
+const cardsState = ref<'loading' | 'ready' | 'error'>('loading')
+const cardsError = ref<string | null>(null)
 
 const stack = [
   { label: 'Backend', value: 'Java 21 · Spring Boot 3.5' },
   { label: 'Temps réel', value: 'WebSocket STOMP' },
   { label: 'Données', value: 'PostgreSQL 16 · JPA' },
-  { label: 'Frontend', value: 'Vue 3 · TS · Pinia' },
-  { label: 'UI', value: 'TailwindCSS v4 · GSAP' },
-  { label: 'Cartes', value: 'JSON data-driven' },
+  { label: 'Frontend', value: 'Vue 3 · TypeScript' },
+  { label: 'Scraper', value: 'NetDeck API · cache local' },
+  { label: 'Cartes', value: 'GET /api/cards' },
 ]
 
 const nextSteps = [
-  { feature: '02', label: 'Scraper complet des cartes + import en base' },
   { feature: '03', label: 'Comptes joueurs & deck builder (RAM, 3 Legends, 40-50 cartes)' },
   { feature: '04', label: 'Lobby temps réel et partie 1v1 (serveur autoritaire)' },
-  { feature: '05', label: 'Moteur de règles : phases, combat, Gig dice, React window' },
+  { feature: '05', label: 'Moteur : 7 Gigs, une vente par tour, réactions QUICK' },
   { feature: '06', label: 'Plateau de jeu animé (GSAP) et journal de partie' },
 ]
 
 let ctx: gsap.Context | null = null
 
+async function loadCards(): Promise<void> {
+  cardsState.value = 'loading'
+  cardsError.value = null
+  try {
+    cards.value = await fetchCards()
+    cardsState.value = 'ready'
+    await nextTick()
+    ctx?.add(() => {
+      gsap.from('[data-animate="card"]', {
+        y: 24,
+        opacity: 0,
+        duration: 0.5,
+        ease: 'power2.out',
+        stagger: 0.08,
+      })
+    })
+  } catch (error) {
+    cardsState.value = 'error'
+    cardsError.value = error instanceof ApiError ? error.message : 'Catalogue indisponible'
+  }
+}
+
 onMounted(() => {
-  // Un seul contexte GSAP : les animations sont annulées proprement au démontage.
   ctx = gsap.context(() => {
     gsap.from('[data-animate="hero"]', {
       y: 18,
@@ -48,23 +65,13 @@ onMounted(() => {
       ease: 'power3.out',
       stagger: 0.08,
     })
-    gsap.from('[data-animate="card"]', {
-      y: 24,
-      opacity: 0,
-      duration: 0.5,
-      delay: 0.25,
-      ease: 'power2.out',
-      stagger: 0.1,
-    })
   }, root.value ?? undefined)
 
   void store.checkApi()
+  void loadCards()
 })
 
-onBeforeUnmount(() => {
-  ctx?.revert()
-  // La connexion reste ouverte pendant la navigation : c'est le store qui la pilote.
-})
+onBeforeUnmount(() => ctx?.revert())
 
 const logColor = (kind: 'info' | 'success' | 'error'): string =>
   kind === 'success' ? 'text-cyber-green' : kind === 'error' ? 'text-cyber-magenta' : 'text-slate-400'
@@ -72,7 +79,6 @@ const logColor = (kind: 'info' | 'success' | 'error'): string =>
 
 <template>
   <div ref="root" class="flex flex-col gap-8">
-    <!-- Hero -->
     <section class="cyber-panel overflow-hidden p-6 md:p-8">
       <p data-animate="hero" class="font-mono text-xs uppercase tracking-[0.3em] text-cyber-magenta">
         // Night City · serveur autoritaire
@@ -81,11 +87,9 @@ const logColor = (kind: 'info' | 'success' | 'error'): string =>
         Cyberpunk <span class="text-cyber-yellow">TCG</span> Online
       </h1>
       <p data-animate="hero" class="mt-3 max-w-2xl text-sm leading-relaxed text-slate-300">
-        Monorepo prêt à jouer : backend Spring Boot autoritaire, client Vue 3 temps réel, cartes
-        entièrement pilotées par des données JSON. Objectif — jouer entre amis, sans chercher ses cartes
-        au fond d'un placard.
+        Le catalogue officiel suit un pipeline vérifiable : API NetDeck de cyberpunktcg.com, normalisation
+        Python, import JPA, puis rendu Vue depuis l’API REST locale.
       </p>
-
       <ul data-animate="hero" class="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         <li
           v-for="item in stack"
@@ -98,14 +102,12 @@ const logColor = (kind: 'info' | 'success' | 'error'): string =>
       </ul>
     </section>
 
-    <!-- Diagnostics -->
     <section class="grid gap-4 lg:grid-cols-2">
       <div class="cyber-panel p-5">
         <h2 class="cyber-title text-sm text-cyber-cyan">Diagnostic de connexion</h2>
         <p class="mt-1 font-mono text-[0.7rem] text-slate-500">
           Backend attendu sur :8080 · frontend sur :5173 (proxy /api et /ws)
         </p>
-
         <dl class="mt-4 grid gap-2 font-mono text-xs">
           <div class="flex items-center justify-between gap-3 rounded border border-cyber-line/70 px-3 py-2">
             <dt class="text-slate-400">GET /api/health</dt>
@@ -128,7 +130,6 @@ const logColor = (kind: 'info' | 'success' | 'error'): string =>
             </dd>
           </div>
         </dl>
-
         <div class="mt-4 flex flex-wrap gap-2">
           <button type="button" class="cyber-btn" :disabled="apiState === 'checking'" @click="store.checkApi()">
             Revérifier l’API
@@ -141,7 +142,6 @@ const logColor = (kind: 'info' | 'success' | 'error'): string =>
             <button type="button" class="cyber-btn" @click="store.disconnect()">Fermer</button>
           </template>
         </div>
-
         <p class="mt-2 font-mono text-[0.65rem] text-slate-500">
           état ws : {{ wsState }} · ping → <span class="text-slate-300">/app/ping</span> · pong ←
           <span class="text-slate-300">/topic/pong</span>
@@ -159,7 +159,6 @@ const logColor = (kind: 'info' | 'success' | 'error'): string =>
             effacer
           </button>
         </div>
-
         <ul class="mt-3 max-h-64 flex-1 space-y-1 overflow-y-auto font-mono text-[0.7rem]">
           <li v-if="!log.length" class="text-slate-500">Aucun événement pour le moment.</li>
           <li v-for="(entry, index) in log" :key="`${entry.at}-${index}`" :class="logColor(entry.kind)">
@@ -169,26 +168,30 @@ const logColor = (kind: 'info' | 'success' | 'error'): string =>
       </div>
     </section>
 
-    <!-- Rendu data-driven -->
     <section>
       <div class="mb-4 flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h2 class="cyber-title text-sm text-cyber-yellow">Cartes pilotées par les données</h2>
-          <p class="font-mono text-[0.7rem] text-slate-500">
-            Échantillon de démonstration — schéma réel dans docs/schemas/card.schema.json
-          </p>
+          <h2 class="cyber-title text-sm text-cyber-yellow">Catalogue de cartes</h2>
+          <p class="font-mono text-[0.7rem] text-slate-500">Données chargées depuis GET /api/cards</p>
         </div>
-        <span class="cyber-chip text-slate-400">{{ sampleCards.length }} cartes rendues</span>
+        <span v-if="cardsState === 'ready'" class="cyber-chip text-slate-400">{{ cards.length }} cartes</span>
       </div>
 
-      <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <div v-for="card in sampleCards" :key="card.id" data-animate="card">
+      <div v-if="cardsState === 'loading'" class="cyber-panel p-6 font-mono text-sm text-slate-400">
+        Chargement du catalogue…
+      </div>
+      <div v-else-if="cardsState === 'error'" class="cyber-panel p-6">
+        <p class="font-mono text-sm text-cyber-magenta">{{ cardsError }}</p>
+        <button type="button" class="cyber-btn mt-4" @click="loadCards()">Réessayer</button>
+      </div>
+      <div v-else-if="cards.length" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div v-for="card in cards" :key="card.id" data-animate="card">
           <CardPreview :card="card" />
         </div>
       </div>
+      <div v-else class="cyber-panel p-6 font-mono text-sm text-slate-400">Le catalogue est vide.</div>
     </section>
 
-    <!-- Suite -->
     <section class="cyber-panel p-5">
       <h2 class="cyber-title text-sm text-cyber-cyan">Prochaines étapes</h2>
       <ol class="mt-4 grid gap-2 md:grid-cols-2">

@@ -58,7 +58,7 @@ const { isWsConnected } = storeToRefs(store)
         </li>
         <li class="rounded border border-cyber-line/70 px-3 py-3">
           <p class="font-semibold text-slate-100">Fin de partie</p>
-          <p class="mt-1 text-slate-400">6 Gigs au début d'un tour = victoire ; récapitulatif.</p>
+          <p class="mt-1 text-slate-400">7 Gigs au début d'un tour = victoire ; une vente par tour ; réactions QUICK.</p>
         </li>
       </ul>
     </section>
