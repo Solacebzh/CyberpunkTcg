@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import gsap from 'gsap'
 
@@ -25,11 +26,13 @@ const stack = [
   { label: 'Cartes', value: 'GET /api/cards' },
 ]
 
+/** Écrans disponibles et chantiers suivants (feature 05 : frontend de jeu). */
 const nextSteps = [
-  { feature: '03', label: 'Comptes joueurs & deck builder (RAM, 3 Legends, 40-50 cartes)' },
-  { feature: '04', label: 'Lobby temps réel et partie 1v1 (serveur autoritaire)' },
-  { feature: '05', label: 'Moteur : 7 Gigs, une vente par tour, réactions QUICK' },
-  { feature: '06', label: 'Plateau de jeu animé (GSAP) et journal de partie' },
+  { feature: '→', label: 'Deck builder : catalogue, glisser-déposer, validation 3 Legends', to: '/deck' },
+  { feature: '→', label: 'Lobby temps réel : pseudo, code de salon, attente du 2e joueur', to: '/lobby' },
+  { feature: '→', label: 'Plateau de jeu : Gigs, phases, combat, animations GSAP, journal', to: '/game' },
+  { feature: '·', label: 'Polish : accessibilité clavier, tooltips de cartes, mode spectateur', to: null },
+  { feature: '·', label: 'Comptes joueurs et decks persistés côté serveur (RAM, 40-50 cartes)', to: null },
 ]
 
 let ctx: gsap.Context | null = null
@@ -193,7 +196,7 @@ const logColor = (kind: 'info' | 'success' | 'error'): string =>
     </section>
 
     <section class="cyber-panel p-5">
-      <h2 class="cyber-title text-sm text-cyber-cyan">Prochaines étapes</h2>
+      <h2 class="cyber-title text-sm text-cyber-cyan">Écrans et chantiers</h2>
       <ol class="mt-4 grid gap-2 md:grid-cols-2">
         <li
           v-for="step in nextSteps"
@@ -201,7 +204,10 @@ const logColor = (kind: 'info' | 'success' | 'error'): string =>
           class="flex items-center gap-3 rounded border border-cyber-line/70 px-3 py-2"
         >
           <span class="font-mono text-xs font-bold text-cyber-magenta">{{ step.feature }}</span>
-          <span class="text-xs text-slate-300">{{ step.label }}</span>
+          <RouterLink v-if="step.to" :to="step.to" class="text-xs text-cyber-cyan underline-offset-2 hover:underline">
+            {{ step.label }}
+          </RouterLink>
+          <span v-else class="text-xs text-slate-300">{{ step.label }}</span>
         </li>
       </ol>
     </section>

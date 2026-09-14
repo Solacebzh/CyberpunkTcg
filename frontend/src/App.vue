@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { RouterLink, RouterView } from 'vue-router'
 import ConnectionBadge from '@/components/ConnectionBadge.vue'
+import CyberToast from '@/components/ui/CyberToast.vue'
 
 const year = new Date().getFullYear()
 </script>
@@ -36,6 +37,13 @@ const year = new Date().getFullYear()
           >
             Lobby
           </RouterLink>
+          <RouterLink
+            to="/deck"
+            class="rounded px-3 py-1.5 text-slate-300 transition hover:bg-white/5 hover:text-cyber-cyan"
+            active-class="text-cyber-cyan"
+          >
+            Deck
+          </RouterLink>
         </nav>
 
         <div class="ml-auto">
@@ -47,6 +55,8 @@ const year = new Date().getFullYear()
     <main class="mx-auto w-full max-w-6xl flex-1 px-4 py-8">
       <RouterView />
     </main>
+
+    <CyberToast />
 
     <footer class="border-t border-cyber-line/70 py-5">
       <div class="mx-auto flex w-full max-w-6xl flex-col gap-1 px-4 font-mono text-[0.7rem] text-slate-500">
