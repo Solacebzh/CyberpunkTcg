@@ -1,8 +1,4 @@
-"""Fonctions de normalisation : du texte brut (HTML ou fixtures) vers le modèle de carte.
-
-Ces fonctions sont volontairement pures et testées (`tests/test_normalize.py`) :
-tout ce qui est « sale » dans l'extraction est isolé ici.
-"""
+"""Normalisation pure des valeurs exposées par l'API NetDeck."""
 
 from __future__ import annotations
 
@@ -11,12 +7,9 @@ import unicodedata
 
 from .models import CardColor, CardKeyword, CardRarity, CardType
 
-# --- Correspondances « texte du site » → valeurs du modèle --------------------
-
 TYPE_ALIASES: dict[str, CardType] = {
     "legend": CardType.LEGEND,
     "legends": CardType.LEGEND,
-    "leader": CardType.LEGEND,
     "unit": CardType.UNIT,
     "units": CardType.UNIT,
     "program": CardType.PROGRAM,
@@ -41,14 +34,22 @@ RARITY_ALIASES: dict[str, CardRarity] = {
     "uncommon": CardRarity.UNCOMMON,
     "peu commune": CardRarity.UNCOMMON,
     "rare": CardRarity.RARE,
-    "legendary": CardRarity.LEGENDARY,
-    "legendaire": CardRarity.LEGENDARY,
-    "légendaire": CardRarity.LEGENDARY,
+    "epic": CardRarity.EPIC,
+    "epique": CardRarity.EPIC,
+    "secret": CardRarity.SECRET,
+    "secret rare": CardRarity.SECRET,
+    "iconic": CardRarity.ICONIC,
+    "iconic rare": CardRarity.ICONIC,
+    "nova": CardRarity.NOVA,
+    "nova rare": CardRarity.NOVA,
+    "promo": CardRarity.PROMO,
+    "promotional": CardRarity.PROMO,
 }
 
 KEYWORD_ALIASES: dict[str, CardKeyword] = {
     "go solo": CardKeyword.GO_SOLO,
     "go_solo": CardKeyword.GO_SOLO,
+    "go-solo": CardKeyword.GO_SOLO,
     "blocker": CardKeyword.BLOCKER,
     "quick": CardKeyword.QUICK,
     "flip": CardKeyword.FLIP,
@@ -64,52 +65,39 @@ def strip_accents(value: str) -> str:
 
 
 def parse_int(value: str | int | float | None) -> int | None:
-    """Extrait le premier entier d'une chaîne (« RAM 2 », « 4 Eddies » → 2, 4)."""
-    if value is None:
-        return None
-    if isinstance(value, bool):
+    """Extrait le premier entier (``RAM 2`` et ``4 Eddies`` sont acceptés)."""
+    if value is None or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
         return int(value)
-
     match = INT_PATTERN.search(value)
     return int(match.group()) if match else None
 
 
 def normalize_type(raw: str | None) -> CardType | None:
-    if not raw:
-        return None
-    return TYPE_ALIASES.get(strip_accents(raw).strip().lower())
+    return TYPE_ALIASES.get(strip_accents(raw).strip().lower()) if raw else None
 
 
 def normalize_color(raw: str | None) -> CardColor | None:
-    if not raw:
-        return None
-    return COLOR_ALIASES.get(strip_accents(raw).strip().lower())
+    return COLOR_ALIASES.get(strip_accents(raw).strip().lower()) if raw else None
 
 
 def normalize_rarity(raw: str | None) -> CardRarity | None:
-    if not raw:
-        return None
-    return RARITY_ALIASES.get(strip_accents(raw).strip().lower())
+    return RARITY_ALIASES.get(strip_accents(raw).strip().lower()) if raw else None
 
 
 def normalize_keywords(*sources: str | None) -> list[CardKeyword]:
-    """Repère les mots-clés de règles mentionnés dans le texte ou les champs dédiés."""
+    """Détecte les mots-clés dans les champs ou le balisage ``{Quick}`` du texte."""
     found: list[CardKeyword] = []
-    haystack = " ".join(source for source in sources if source)
-    lowered = strip_accents(haystack).lower()
-
+    lowered = strip_accents(" ".join(source for source in sources if source)).lower()
     for alias, keyword in KEYWORD_ALIASES.items():
-        haystack_alias = strip_accents(alias).lower()
-        if re.search(rf"\b{re.escape(haystack_alias)}\b", lowered) and keyword not in found:
+        if re.search(rf"\b{re.escape(strip_accents(alias).lower())}\b", lowered) and keyword not in found:
             found.append(keyword)
-
     return found
 
 
 def split_tags(raw: str | None) -> list[str]:
-    """« Arasaka / Corpo, Mercs » → ['ARASAKA', 'CORPO', 'MERCS']."""
+    """``Arasaka / Corpo, Mercs`` devient trois tags."""
     if not raw:
         return []
     parts = re.split(r"[,/|·;]|\s{2,}", raw)
@@ -117,21 +105,31 @@ def split_tags(raw: str | None) -> list[str]:
 
 
 def clean_text(raw: str | None) -> str:
-    """Supprime les espaces multiples et les retours chariot issus du HTML."""
     if not raw:
         return ""
     return re.sub(r"\s+", " ", raw).strip()
 
 
+def split_abilities(raw: str | None) -> list[str]:
+    """Conserve chaque paragraphe d'effet dans l'ordre d'impression."""
+    if not raw:
+        return []
+    paragraphs = re.split(r"(?:\r?\n)+", raw)
+    return [clean_text(paragraph) for paragraph in paragraphs if clean_text(paragraph)]
+
+
+def normalize_set_code(raw: str | None) -> str:
+    """Normalise le code NetDeck en majuscules ASCII sans ponctuation."""
+    return re.sub(r"[^A-Z0-9]", "", strip_accents(raw or "").upper())
+
+
 def slugify(value: str) -> str:
-    """Identifiant lisible : accents retirés, minuscules, tirets (URL-safe)."""
     ascii_value = strip_accents(value).lower()
     value = re.sub(r"[^a-z0-9]+", "-", ascii_value).strip("-")
     return re.sub(r"-{2,}", "-", value)
 
 
 def build_card_id(set_code: str, collector_number: str, name: str, subtitle: str | None = None) -> str:
-    """Identifiant stable : `wtnc-a029-saburo-arasaka` (sous-titre inclus s'il existe)."""
     segments = [
         slugify(set_code),
         slugify(collector_number),

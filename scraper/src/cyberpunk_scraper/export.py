@@ -1,6 +1,6 @@
 """Écriture des exports : `cards.json`, `cards.jsonl`, `manifest.json` et provenance.
 
-- `cards.json` : tableau de cartes **conforme à `docs/schemas/card.schema.json`**, prêt à être
+- `cards.json` : tableau conforme à `backend/src/main/resources/schema/card-schema.json`, prêt à être
   importé par le backend.
 - `cards.jsonl` : une carte par ligne, pratique pour un import en flux ou une revue diff.
 - `manifest.json` : compte, empreintes SHA-256, source, horodatage, erreurs — la traçabilité
@@ -22,7 +22,15 @@ from jsonschema import Draft202012Validator
 from .models import GameCard
 from .parse import CardParseError
 
-DEFAULT_SCHEMA_PATH = Path(__file__).resolve().parents[3] / "docs" / "schemas" / "card.schema.json"
+DEFAULT_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "backend"
+    / "src"
+    / "main"
+    / "resources"
+    / "schema"
+    / "card-schema.json"
+)
 
 
 def load_json_schema(schema_path: Path = DEFAULT_SCHEMA_PATH) -> dict[str, Any]:

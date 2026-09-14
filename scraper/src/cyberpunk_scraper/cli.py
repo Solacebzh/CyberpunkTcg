@@ -51,7 +51,13 @@ def build_parser() -> argparse.ArgumentParser:
     cards.add_argument("--out", type=Path, default=DEFAULT_OUTPUT_DIR, help="dossier de sortie (défaut : output/)")
     cards.add_argument("--limit", type=int, default=None, help="ne traiter que les N premières cartes")
     cards.add_argument("--refresh", action="store_true", help="ignorer le cache HTTP")
-    cards.add_argument("--dump-html", action="store_true", help="écrire le HTML brut pour inspection")
+    cards.add_argument(
+        "--dump-source",
+        "--dump-html",
+        dest="dump_source",
+        action="store_true",
+        help="écrire les réponses API agrégées pour inspection (--dump-html est un alias historique)",
+    )
     cards.add_argument("--schema", type=Path, default=DEFAULT_SCHEMA_PATH, help="schéma JSON de référence")
     cards.add_argument(
         "--fail-on-reject",
@@ -74,8 +80,8 @@ def cmd_cards(args: argparse.Namespace) -> int:
         with HttpClient(refresh=args.refresh, cache_dir=Path(".cache/http")) as client:
             raw_cards = fetch_site_cards(
                 client,
-                url="https://cyberpunktcg.com/cards",
-                dump_dir=str(args.out) if args.dump_html else None,
+                url="https://api.netdeck.gg/api/cards/cyberpunk",
+                dump_dir=str(args.out) if args.dump_source else None,
             )
         provenance_note = "cyberpunktcg.com/cards"
     else:

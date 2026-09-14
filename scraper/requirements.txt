@@ -3,16 +3,13 @@
 #   python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 # =============================================================================
 
-# Client HTTP asynchrone (retries, timeouts, HTTP/2)
+# Client HTTP synchrone (retries, timeouts, cache local)
 httpx==0.28.1
-
-# Extraction HTML de la base de cartes
-beautifulsoup4==4.13.4
 
 # Modèle de carte typé + validation de sortie
 pydantic==2.11.9
 
-# Validation des exports contre docs/schemas/card.schema.json
+# Validation des exports contre backend/src/main/resources/schema/card-schema.json
 jsonschema==4.25.1
 
 # Tests

@@ -58,9 +58,11 @@ class HttpClient:
                 timeout=self.timeout,
                 follow_redirects=True,
                 headers={
-                    "User-Agent": self.user_agent,
-                    "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
+                    "User-Agent": "CyberpunkTCG-Scraper/1.0 (Educational Project)",
+                    "Accept": "application/json,text/html;q=0.8,*/*;q=0.5",
                     "Accept-Language": "en-US,en;q=0.8,fr;q=0.7",
+                    "Origin": "https://cyberpunktcg.com",
+                    "Referer": "https://cyberpunktcg.com/",
                 },
             )
         return self._client
@@ -113,4 +115,5 @@ class HttpClient:
     def _cache_path(self, url: str) -> Path:
         digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
         slug = "".join(char if char.isalnum() else "-" for char in url.split("//")[-1])[:60]
-        return self.cache_dir / f"{slug}-{digest}.html"
+        suffix = ".json" if "api.netdeck.gg" in url else ".html"
+        return self.cache_dir / f"{slug}-{digest}{suffix}"

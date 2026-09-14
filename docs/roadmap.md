@@ -14,19 +14,16 @@ Une PR par feature, jamais mergée sans relecture. Chaque feature part de `main`
 - scraper Python : pipeline `fetch → parse → models → export`, 31 tests, CLI, exports JSON/JSONL/manifeste ;
 - documentation complète (architecture, prise en main, modèle de données, règles, protocole STOMP, schéma de carte).
 
-**Reste à faire dans cette feature (suivi)**
+Le branchement à la source réelle des cartes et les tests d'import sont pris en charge par la feature 02.
 
-- `mvn test` et `mvn spring-boot:run` à valider sur une machine avec Java 21 (non exécutables dans
-  l'environnement de génération), puis ajuster si nécessaire ;
-- brancher les sélecteurs réels du parser HTML du site (reporté en feature 02).
+## 🟡 Feature 02 — Données de cartes *(PR en revue)*
 
-## 🔜 Feature 02 — Données de cartes
-
-- finaliser `site.py` sur le HTML réel (bloc JSON embarqué ou DOM) ;
-- endpoint `POST /api/cards/import` (import idempotent depuis `cards.json`) + `GET /api/cards` (filtres, pagination) ;
-- entités JPA `Card` + repository, chargement en base au démarrage si la table est vide ;
-- images : rapatriement dans notre stockage (ou cache) plutôt que lien direct vers le CDN tiers ;
-- tests d'intégration : import d'un jeu de 8 cartes puis lecture via l'API.
+- contrat JSON canonique dans `backend/src/main/resources/schema/card-schema.json`, avec `abilities[]` ;
+- scraper de l'API NetDeck utilisée par `cyberpunktcg.com` : pagination, cache, normalisation et tests pytest ;
+- entité JPA `Card`, repository et import idempotent de 5 cartes au démarrage ;
+- API `GET /api/cards` (filtres type/couleur), `GET /api/cards/{id}` et `GET /api/cards/stats` ;
+- frontend aligné sur le schéma, affichage des stats/tags/effets depuis l'API ;
+- documentation de référence dans `DATA-MODEL.md` et règles confirmées.
 
 ## 🔜 Feature 03 — Comptes et decks
 
@@ -57,7 +54,7 @@ couverture de tests élevée. Ordre prévu :
 8. `R9` effets de cartes (petit langage d'effets data-driven) ;
 9. `R10` rejeu déterministe (graine journalisée).
 
-Paramètres de règles externalisés dans `config/game-rules.json` (6 ou 7 Gigs, vente libre ou unique…).
+Invariants confirmés du moteur : victoire à 7 Gigs en début de tour, une vente par tour et réactions QUICK uniquement.
 
 ## 🔜 Feature 06 — Expérience de jeu
 

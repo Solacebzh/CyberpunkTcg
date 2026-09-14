@@ -7,12 +7,19 @@
  * pointer vers un backend distant.
  */
 
+import type { CardColor, CardType, GameCard } from '@/types/card'
+
 export interface HealthResponse {
   status: string
   service: string
   version: string
   database: string
   timestamp: string
+}
+
+export interface CardFilters {
+  type?: CardType
+  color?: CardColor
 }
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
@@ -63,4 +70,13 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 8000
 /** Sonde de santé du backend (et de sa base de données). */
 export function fetchHealth(): Promise<HealthResponse> {
   return request<HealthResponse>('/api/health', { method: 'GET' }, 5000)
+}
+
+/** Catalogue de cartes, éventuellement filtré par type et/ou couleur. */
+export function fetchCards(filters: CardFilters = {}): Promise<GameCard[]> {
+  const params = new URLSearchParams()
+  if (filters.type) params.set('type', filters.type)
+  if (filters.color) params.set('color', filters.color)
+  const query = params.size > 0 ? `?${params.toString()}` : ''
+  return request<GameCard[]>(`/api/cards${query}`, { method: 'GET' })
 }

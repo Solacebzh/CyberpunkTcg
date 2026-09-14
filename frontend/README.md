@@ -13,6 +13,8 @@ npm run dev        # http://localhost:5173
 
 Le backend doit tourner sur `http://localhost:8080` (voir `../backend/README.md`) :
 Vite proxifie `/api` et `/ws` vers cette cible, donc **aucun CORS ni URL absolue n'est nécessaire** en dev.
+La page d'accueil charge réellement `GET /api/cards`; elle affiche un état d'erreur et permet de réessayer si
+le backend n'est pas disponible.
 
 ## Scripts
 
