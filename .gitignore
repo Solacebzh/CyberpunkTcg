@@ -103,6 +103,9 @@ htmlcov/
 scraper/output/
 scraper/.cache/
 data/
+# Fixture versionnée chargée par CardDataInitializer.
+!backend/src/main/resources/data/
+!backend/src/main/resources/data/cards.json
 *.duckdb
 *.sqlite
 *.sqlite3
