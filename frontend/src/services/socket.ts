@@ -1,10 +1,15 @@
 /**
  * Client WebSocket STOMP.
  *
- * Enveloppe légère autour de `@stomp/stompjs` : reconnexion automatique, gestion des
- * abonnements et sérialisation JSON. Le contrat de destinations est décrit dans
- * `docs/websocket-protocol.md` — toutes les actions passent par `/app/...` et tous
- * les états diffusés par le serveur arrivent sur `/topic/...`.
+ * Enveloppe légère autour de `@stomp/stompjs` : reconnexion automatique avec
+ * back-off, gestion des abonnements et sérialisation JSON. Le contrat de
+ * destinations est décrit dans `docs/WEBSOCKET-PROTOCOL.md` — toutes les
+ * intentions partent sur `/app/...`, les états arrivent sur `/topic/...` ou
+ * `/user/queue/...`.
+ *
+ * Identité : le serveur exige un en-tête natif `pseudo` sur le frame CONNECT
+ * (doc §1.1-1.2). Il est passé via `connectHeaders` et ne figure JAMAIS dans
+ * les payloads envoyés.
  */
 import { Client, type IMessage, type StompSubscription } from '@stomp/stompjs'
 
@@ -13,9 +18,20 @@ export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'err
 export interface GameSocketCallbacks {
   onStateChange?: (state: ConnectionState, detail?: string) => void
   onError?: (message: string) => void
+  /** Appelé à chaque (re)connexion réussie ; `attempt` vaut 1 pour la première. */
+  onConnected?: (attempt: number) => void
+  /** Appelé quand le transport tombe (avant une nouvelle tentative). */
+  onConnectionLost?: () => void
 }
 
-type MessageHandler = (body: unknown) => void
+export interface GameSocketOptions extends GameSocketCallbacks {
+  /** En-têtes natifs du frame CONNECT (`{ pseudo: 'Johnny' }`). */
+  connectHeaders?: Record<string, string>
+  /** Factory WebSocket (tests / environnements sans WebSocket global). */
+  webSocketFactory?: () => WebSocket
+  /** Délai de base entre deux tentatives de reconnexion (ms). */
+  reconnectDelay?: number
+}
 
 /** URL du broker : `VITE_WS_URL` si définie, sinon même origine que la page (`/ws`). */
 export function resolveBrokerUrl(): string {
@@ -26,12 +42,24 @@ export function resolveBrokerUrl(): string {
   return `${protocol}//${window.location.host}/ws`
 }
 
+/** Back-off recommandé par la doc (§1) : 2 s → 5 s, puis plafonné. */
+const RECONNECT_BASE_DELAY = 2_000
+const RECONNECT_MAX_DELAY = 5_000
+const RECONNECT_FACTOR = 1.5
+
+type MessageHandler = (body: unknown) => void
+
 export class GameSocket {
   private client: Client | null = null
   private readonly handlers = new Map<string, MessageHandler>()
   private readonly subscriptions = new Map<string, StompSubscription>()
+  private connectAttempts = 0
+  private connectionLostNotified = false
+  private nextDelay: number
 
-  constructor(private readonly callbacks: GameSocketCallbacks = {}) {}
+  constructor(private readonly options: GameSocketOptions = {}) {
+    this.nextDelay = options.reconnectDelay ?? RECONNECT_BASE_DELAY
+  }
 
   get active(): boolean {
     return this.client?.active ?? false
@@ -41,15 +69,22 @@ export class GameSocket {
     return this.client?.connected ?? false
   }
 
+  /** Nombre de connexions réussies depuis la création du client. */
+  get attempts(): number {
+    return this.connectAttempts
+  }
+
   /** Ouvre la connexion (idempotent). La reconnexion est automatique. */
   connect(): void {
     if (this.client?.active) return
 
-    this.callbacks.onStateChange?.('connecting')
+    this.options.onStateChange?.('connecting')
 
     const client = new Client({
       brokerURL: resolveBrokerUrl(),
-      reconnectDelay: 4000,
+      connectHeaders: this.options.connectHeaders ?? {},
+      webSocketFactory: this.options.webSocketFactory,
+      reconnectDelay: this.nextDelay,
       heartbeatIncoming: 10_000,
       heartbeatOutgoing: 10_000,
       // Passer à `(msg) => console.debug('[stomp]', msg)` pour tracer le protocole.
@@ -57,30 +92,46 @@ export class GameSocket {
     })
 
     client.onConnect = (frame) => {
-      this.callbacks.onStateChange?.('connected', frame.headers['server'])
+      this.connectAttempts += 1
+      this.connectionLostNotified = false
+      this.nextDelay = this.options.reconnectDelay ?? RECONNECT_BASE_DELAY
+      client.reconnectDelay = this.nextDelay
+      this.options.onStateChange?.('connected', frame.headers['server'])
+      // Les abonnements mémorisés sont rejoués à chaque (re)connexion.
       this.flushSubscriptions()
+      this.options.onConnected?.(this.connectAttempts)
     }
 
     client.onDisconnect = () => {
       this.subscriptions.clear()
-      this.callbacks.onStateChange?.('disconnected')
+      this.options.onStateChange?.('disconnected')
+      this.notifyConnectionLost()
     }
 
     client.onWebSocketClose = () => {
       this.subscriptions.clear()
-      this.callbacks.onStateChange?.('disconnected')
+      if (this.client?.active) {
+        // Transport coupé alors que le client est encore actif : stompjs retente
+        // tout seul, on allonge progressivement le délai entre deux essais.
+        this.nextDelay = Math.min(this.nextDelay * RECONNECT_FACTOR, RECONNECT_MAX_DELAY)
+        client.reconnectDelay = this.nextDelay
+        this.options.onStateChange?.('connecting', `reconnexion dans ${Math.round(this.nextDelay / 1000)} s`)
+      } else {
+        this.options.onStateChange?.('disconnected')
+      }
+      this.notifyConnectionLost()
     }
 
     client.onStompError = (frame) => {
       const message = frame.headers['message'] ?? 'Erreur STOMP'
-      this.callbacks.onStateChange?.('error', message)
-      this.callbacks.onError?.(message)
+      this.options.onStateChange?.('error', message)
+      this.options.onError?.(message)
     }
 
     client.onWebSocketError = (event) => {
       const message = `WebSocket indisponible (${String((event as Event).type ?? 'error')})`
-      this.callbacks.onStateChange?.('error', message)
-      this.callbacks.onError?.(message)
+      this.options.onStateChange?.('error', message)
+      this.options.onError?.(message)
     }
 
     this.client = client
@@ -92,15 +143,16 @@ export class GameSocket {
     const client = this.client
     if (!client) return
 
+    this.handlers.clear()
     this.subscriptions.clear()
     this.client = null
-    void client.deactivate().finally(() => this.callbacks.onStateChange?.('disconnected'))
+    void client.deactivate().finally(() => this.options.onStateChange?.('disconnected'))
   }
 
   /**
    * S'abonne à une destination et renvoie une fonction de désabonnement.
    * Si la connexion n'est pas encore établie, l'abonnement est mémorisé
-   * et envoyé dès l'ouverture du canal.
+   * et envoyé dès l'ouverture du canal (ou à la reconnexion).
    */
   subscribe<T = unknown>(destination: string, handler: (body: T) => void): () => void {
     const wrapped: MessageHandler = (body) => handler(body as T)
@@ -128,6 +180,13 @@ export class GameSocket {
       headers: { 'content-type': 'application/json' },
     })
     return true
+  }
+
+  /** `onDisconnect` et `onWebSocketClose` peuvent se suivre : on notifie une seule fois. */
+  private notifyConnectionLost(): void {
+    if (this.connectionLostNotified) return
+    this.connectionLostNotified = true
+    this.options.onConnectionLost?.()
   }
 
   private subscribeOnClient(destination: string): void {
