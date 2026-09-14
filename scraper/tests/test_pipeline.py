@@ -35,7 +35,7 @@ def test_backend_bundled_cards_match_the_shared_contract():
     payload = json.loads((repo_root / "backend/src/main/resources/data/cards.json").read_text(encoding="utf-8"))
     cards = [GameCard.model_validate(card) for card in payload]
 
-    assert len(cards) == 5
+    assert len(cards) >= 100
     assert validate_against_schema(cards, load_json_schema()) == []
 
 
