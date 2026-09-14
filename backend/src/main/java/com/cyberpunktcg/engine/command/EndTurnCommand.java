@@ -22,8 +22,8 @@ import java.util.Optional;
  *   <li>phase {@code END} + déclencheurs {@code ON_TURN_END} du joueur sortant ;</li>
  *   <li>fermeture de la fenêtre de réaction ;</li>
  *   <li>passage du tour ;</li>
- *   <li><strong>victoire immédiate si le joueur entrant contrôle au moins
- *   {@link GameConstants#GIGS_TO_WIN} Gigs</strong> (avant pioche et Gig du tour) ;</li>
+ * <li><strong>victoire immédiate si le joueur entrant contrôle au moins
+ *   {@link GameConstants#GIGS_TO_WIN} Gigs</strong> (avant pioche et Gig du tour, jamais en continu après un vol) ;</li>
  *   <li>sinon : réinitialisation du joueur entrant, pioche 1 (deck vide → défaite),
  *   lancer d'un dé Gig, phase {@code MAIN}.</li>
  * </ol>
