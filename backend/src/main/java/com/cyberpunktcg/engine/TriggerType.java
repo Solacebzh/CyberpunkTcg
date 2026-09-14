@@ -1,0 +1,19 @@
+package com.cyberpunktcg.engine;
+
+/**
+ * Déclencheurs d'effets (V1).
+ */
+public enum TriggerType {
+    /** La carte est jouée (y compris un Program, résolu avant sa défausse). */
+    ON_PLAY,
+    /** L'Unit déclare une attaque (résolu avant la comparaison des puissances). */
+    ON_ATTACK,
+    /** L'Unit est vaincue (mise dans la défausse). */
+    ON_DEATH,
+    /** Fin du tour du contrôleur (déclenché par {@code EndTurnCommand}). */
+    ON_TURN_END,
+    /** Une Legend est retournée face visible (gratuit, sans coût Eddies). */
+    FLIP,
+    /** Carte {@code QUICK} jouée en réaction (fenêtre ouverte par une attaque). */
+    QUICK
+}

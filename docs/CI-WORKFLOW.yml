@@ -1,0 +1,40 @@
+# PROPOSITION de workflow CI (à activer : git mv docs/CI-WORKFLOW.yml .github/workflows/ci.yml).
+# Vérifie le backend (Maven, profil H2) et le scraper (pytest) à chaque push
+# et sur les PR vers main. Aucun service externe requis.
+name: CI
+
+on:
+  push:
+    branches: [main, "arena/**", "feature/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend (mvn clean test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Build et tests (H2)
+        run: cd backend && mvn -B clean test
+
+  scraper:
+    name: Scraper (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Installation et tests
+        run: |
+          cd scraper
+          pip install -r requirements.txt
+          pip install -e .
+          python -m pytest -q

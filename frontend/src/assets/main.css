@@ -1,0 +1,231 @@
+/* =============================================================================
+   Cyberpunk TCG Online — feuille de style globale
+   TailwindCSS v4 : la configuration du thème se fait ici (CSS-first), via @theme.
+   Aucun tailwind.config.js n'est nécessaire ; les classes utilitaires restent
+   auto-générées à partir des fichiers sources.
+   ============================================================================= */
+@import 'tailwindcss';
+
+/* --- Design tokens (accessibles en utilitaires : bg-cyber-panel, text-cyber-yellow…) --- */
+@theme {
+  --color-cyber-bg: #0a0a12;
+  --color-cyber-panel: #14141f;
+  --color-cyber-panel-light: #1c1c2b;
+  --color-cyber-line: #2a2a3d;
+
+  --color-cyber-yellow: #fcee0a;
+  --color-cyber-cyan: #05d9e8;
+  --color-cyber-magenta: #ff2a6d;
+  --color-cyber-green: #39ff88;
+  --color-cyber-red: #ff4d4d;
+
+  --font-display: 'Chakra Petch', 'Rajdhani', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+
+  --radius-cyber: 0.375rem;
+
+  --animate-scan: scan 6s linear infinite;
+  --animate-pulse-slow: pulse 3s ease-in-out infinite;
+}
+
+@keyframes scan {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100%);
+  }
+}
+
+/* --- Base --- */
+@layer base {
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-cyber-bg);
+    /* Grille « Night City » : fine grille cyan + halo magenta */
+    background-image:
+      radial-gradient(80rem 40rem at 50% -20%, rgba(255, 42, 109, 0.12), transparent 70%),
+      linear-gradient(rgba(5, 217, 232, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(5, 217, 232, 0.05) 1px, transparent 1px);
+    background-size: 100% 100%, 48px 48px, 48px 48px;
+    font-family: var(--font-display);
+    min-height: 100dvh;
+  }
+
+  h1,
+  h2,
+  h3 {
+    letter-spacing: 0.02em;
+  }
+
+  ::selection {
+    background: var(--color-cyber-yellow);
+    color: #0a0a12;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-cyber-bg);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-cyber-line);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-cyber-cyan);
+  }
+}
+
+/* --- Composants maison (CSS pur : lisible et sans dépendance à @apply) --- */
+@layer components {
+  .cyber-panel {
+    position: relative;
+    background: linear-gradient(160deg, var(--color-cyber-panel), var(--color-cyber-bg));
+    border: 1px solid var(--color-cyber-line);
+    border-radius: var(--radius-cyber);
+  }
+
+  /* Petit coin lumineux, façon UI de Night City */
+  .cyber-panel::before {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: -1px;
+    width: 18px;
+    height: 18px;
+    border-top: 2px solid var(--color-cyber-cyan);
+    border-left: 2px solid var(--color-cyber-cyan);
+    border-top-left-radius: var(--radius-cyber);
+    pointer-events: none;
+  }
+
+  .cyber-title {
+    text-transform: uppercase;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+  }
+
+  .cyber-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid var(--color-cyber-line);
+    background: rgba(255, 255, 255, 0.03);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .cyber-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius-cyber);
+    border: 1px solid var(--color-cyber-cyan);
+    color: var(--color-cyber-cyan);
+    background: rgba(5, 217, 232, 0.06);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    transition: all 0.18s ease;
+  }
+
+  .cyber-btn:hover:not(:disabled) {
+    background: rgba(5, 217, 232, 0.18);
+    box-shadow: 0 0 18px rgba(5, 217, 232, 0.35);
+  }
+
+  .cyber-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .cyber-btn--accent {
+    border-color: var(--color-cyber-yellow);
+    color: var(--color-cyber-yellow);
+    background: rgba(252, 238, 10, 0.07);
+  }
+
+  .cyber-btn--accent:hover:not(:disabled) {
+    background: rgba(252, 238, 10, 0.18);
+    box-shadow: 0 0 18px rgba(252, 238, 10, 0.35);
+  }
+}
+
+/* --- Feature 05 : plateau de jeu ------------------------------------------ */
+@layer components {
+  .cyber-btn--danger {
+    border-color: var(--color-cyber-magenta);
+    color: var(--color-cyber-magenta);
+    background: rgba(255, 42, 109, 0.07);
+  }
+
+  .cyber-btn--danger:hover:not(:disabled) {
+    background: rgba(255, 42, 109, 0.2);
+    box-shadow: 0 0 18px rgba(255, 42, 109, 0.4);
+  }
+
+  .cyber-btn--green {
+    border-color: var(--color-cyber-green);
+    color: var(--color-cyber-green);
+    background: rgba(57, 255, 136, 0.07);
+  }
+
+  .cyber-btn--green:hover:not(:disabled) {
+    background: rgba(57, 255, 136, 0.18);
+    box-shadow: 0 0 18px rgba(57, 255, 136, 0.4);
+  }
+
+  /* Barre de défilement discrète pour les zones à scrolling interne */
+  .cyber-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-cyber-line) transparent;
+  }
+
+  .cyber-scroll::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+  }
+
+  .cyber-scroll::-webkit-scrollbar-thumb {
+    background: var(--color-cyber-line);
+    border-radius: 999px;
+  }
+
+  /* Dos de carte (main adverse, Legends non révélées, cartes vendues) */
+  .cyber-cardback {
+    background:
+      repeating-linear-gradient(45deg, rgba(5, 217, 232, 0.09) 0 6px, transparent 6px 12px),
+      linear-gradient(160deg, #16162a, #0a0a12);
+    border-bottom: 1px solid var(--color-cyber-line);
+  }
+
+  /* Field : trame néon pour matérialiser la zone de combat */
+  .field-zone {
+    background:
+      radial-gradient(40rem 12rem at 50% 0%, rgba(5, 217, 232, 0.08), transparent 70%),
+      repeating-linear-gradient(90deg, rgba(42, 42, 61, 0.35) 0 1px, transparent 1px 34px);
+  }
+
+  /* Titre de zone (Main, Legends, Field…) */
+  .zone-label {
+    font-family: var(--font-mono);
+    font-size: 0.55rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: #64748b;
+  }
+}

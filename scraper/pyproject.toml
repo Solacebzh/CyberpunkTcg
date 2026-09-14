@@ -1,0 +1,28 @@
+[project]
+name = "cyberpunk-tcg-scraper"
+version = "0.1.0"
+description = "Récupération et normalisation des cartes du Cyberpunk TCG (export JSON pour le backend)"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx==0.28.1",
+    "pydantic==2.11.9",
+    "jsonschema==4.25.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.4.2"]
+
+[project.scripts]
+cyberpunk-scraper = "cyberpunk_scraper.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["src"]

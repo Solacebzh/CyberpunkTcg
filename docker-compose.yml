@@ -1,0 +1,45 @@
+# =============================================================================
+# Cyberpunk TCG Online — services d'infrastructure locale
+#   docker compose up -d db        # démarre PostgreSQL
+#   docker compose down            # arrête
+#   docker compose down -v         # arrête + supprime les données
+# =============================================================================
+name: cyberpunk-tcg
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: cyberpunk-tcg-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cyberpunk_tcg}
+      POSTGRES_USER: ${POSTGRES_USER:-cyberpunk}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cyberpunk}
+      # Encodage obligatoire pour les accents/traits d'union des noms de cartes
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cyberpunk} -d ${POSTGRES_DB:-cyberpunk_tcg}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Interface web d'administration (optionnelle) : docker compose --profile tools up -d
+  adminer:
+    image: adminer:4
+    container_name: cyberpunk-tcg-adminer
+    profiles: ["tools"]
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${ADMINER_PORT:-8081}:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+
+volumes:
+  db-data:
