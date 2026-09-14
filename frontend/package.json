@@ -12,7 +12,7 @@
     "build": "vue-tsc --build && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --build --force",
-    "mock:ws": "node tools/mock-server.mjs",
+    "mock:ws": "npx tsx tools/mock-server.mjs",
     "test:unit": "vitest run",
     "test:watch": "vitest"
   },
