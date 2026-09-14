@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyberpunktcg.local/schemas/card.schema.json",
+  "title": "Cyberpunk TCG — Card",
+  "description": "Contrat unique des cartes du jeu. Le scraper l'alimente, le backend l'importe, le frontend l'affiche. Toute évolution du schéma doit être répercutée dans scraper/src/cyberpunk_scraper/models.py et frontend/src/types/card.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name", "type", "color", "ram", "tags", "keywords", "text", "setCode", "collectorNumber"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 3,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "Identifiant stable et unique (slug), ex. « wtnc-a029-saburo-arasaka »."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Nom de la carte, ex. « Saburo Arasaka »."
+    },
+    "subtitle": {
+      "type": ["string", "null"],
+      "description": "Sous-titre / épithète, ex. « Stubborn Patriarch »."
+    },
+    "type": {
+      "type": "string",
+      "enum": ["legend", "unit", "program", "gear"],
+      "description": "Types officiels. Seules les Units combattent ; les Legends sont posées face cachée."
+    },
+    "color": {
+      "type": "string",
+      "enum": ["red", "green", "blue", "yellow"],
+      "description": "Couleur (système « Color Tree »), contrainte par les RAM des Legends du deck."
+    },
+    "ram": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 6,
+      "description": "Valeur de RAM de la carte : plafond cumulé fourni par les Legends."
+    },
+    "cost": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 20,
+      "description": "Coût en Eddies (générés en vendant des cartes de sa main). Nul pour les Legends."
+    },
+    "power": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 20,
+      "description": "Puissance de combat. Réservée aux Units."
+    },
+    "streetCred": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 20,
+      "description": "Exigence de Street Cred : nombre de dés Gig nécessaires pour jouer la carte."
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "Tags tribaux en majuscules (ARASAKA, MERCS, NETRUNNER…), référencés par les effets."
+    },
+    "keywords": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["go_solo", "blocker", "quick", "flip", "play", "attack"] },
+      "uniqueItems": true,
+      "description": "Mots-clés de règles reconnus par le moteur."
+    },
+    "text": {
+      "type": "string",
+      "description": "Texte de règle de la carte (peut être vide pour une carte sans effet)."
+    },
+    "flavorText": {
+      "type": ["string", "null"],
+      "description": "Texte d'ambiance, sans effet sur le jeu."
+    },
+    "setCode": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 8,
+      "pattern": "^[A-Z0-9]+$",
+      "description": "Code de l'extension, ex. « WTNC » (Welcome to Night City)."
+    },
+    "collectorNumber": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8,
+      "description": "Numéro de collection dans l'extension, ex. « A029 »."
+    },
+    "rarity": {
+      "type": ["string", "null"],
+      "enum": ["common", "uncommon", "rare", "legendary", null],
+      "description": "Rareté de la carte."
+    },
+    "imageUrl": {
+      "type": ["string", "null"],
+      "description": "URL de l'illustration. Le backend pourra la re-servir depuis son propre stockage."
+    }
+  }
+}
