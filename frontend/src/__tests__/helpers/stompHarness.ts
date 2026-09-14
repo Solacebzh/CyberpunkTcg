@@ -189,6 +189,11 @@ export class RawClient {
     )
   }
 
+  /** Fermeture brutale du socket (rafraîchissement de page, coupure réseau). */
+  disconnect(): void {
+    this.api.close()
+  }
+
   /** Enveloppes `GameStateMessage` reçues, dans l'ordre. */
   states(): Array<Record<string, unknown>> {
     return this.messages.filter((message) => message.body.type === 'STATE').map((message) => message.body)

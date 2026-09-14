@@ -10,6 +10,12 @@
  *   attaque (comparaison de puissances, interception BLOCKER, vol de Gig),
  *   fin de tour (pioche + lancer de dé Gig + victoire à 7 Gigs).
  *
+ * La **présence** est simulée comme le backend (`ws/GamePresenceService`) : la
+ * fermeture du socket libère le siège d'un salon WAITING et marque le joueur
+ * déconnecté dans une partie en cours (`PLAYER_DISCONNECTED`). Le minuteur de
+ * forfait de 120 s n'est pas chronométré ici : appelle `forfeitOfflinePlayer()`
+ * pour simuler son expiration.
+ *
  * Le module est volontairement **indépendant du transport** :
  * `createSession(send)` renvoie un objet `receive(text)` alimenté soit par une
  * vraie WebSocket (`tools/mock-server.mjs`), soit par une fausse socket en
@@ -65,6 +71,7 @@ interface Instance {
 interface MockPlayer {
   playerId: string
   name: string
+  connected: boolean
   deck: Instance[]
   hand: Instance[]
   field: Instance[]
@@ -282,10 +289,7 @@ export class MockGameServer {
     return {
       session,
       receive: (text: string) => this.onTransportText(session, text),
-      close: () => {
-        session.closed = true
-        this.sessions.delete(session)
-      },
+      close: () => this.releaseSession(session),
     }
   }
 
@@ -320,8 +324,7 @@ export class MockGameServer {
         if (frame.headers.receipt) {
           this.sendFrame(session, 'RECEIPT', { 'receipt-id': frame.headers.receipt })
         }
-        session.closed = true
-        this.sessions.delete(session)
+        this.releaseSession(session)
         return
       default:
         return
@@ -341,6 +344,7 @@ export class MockGameServer {
     }
     session.pseudo = pseudo
     this.sendFrame(session, 'CONNECTED', { version: '1.2', 'heart-beat': '0,0', server: 'mock-stomp/1.0' })
+    this.onPseudoConnected(pseudo)
   }
 
   onSend(session: Session, frame: { headers: Record<string, string>; body: string }): void {
@@ -555,19 +559,106 @@ export class MockGameServer {
       return
     }
 
-    if (room.hostPseudo === pseudo) {
-      room.status = 'CLOSED'
-      this.rooms.delete(room.code)
-      this.sendToPseudo(pseudo, '/user/queue/lobby', roomView(room))
-    } else {
-      room.players = room.players.filter((player) => player.pseudo !== pseudo)
-      this.publishRoom(room)
-    }
+    this.removeFromWaitingRoom(room, pseudo)
     this.broadcastRoomList()
   }
 
   roomOf(pseudo: string): MockRoom | null {
     return [...this.rooms.values()].find((room) => room.players.some((player) => player.pseudo === pseudo)) ?? null
+  }
+
+  /** Fermeture du socket ou trame DISCONNECT : libère la présence du pseudo. */
+  releaseSession(session: Session): void {
+    session.closed = true
+    this.sessions.delete(session)
+    const pseudo = session.pseudo
+    if (!pseudo) return
+    // Même pseudo encore connecté ailleurs (autre onglet) : on ne touche à rien.
+    if ([...this.sessions].some((other) => other.pseudo === pseudo)) return
+    this.onPseudoDisconnected(pseudo)
+  }
+
+  /** Miroir de `GamePresenceService.onDisconnected` côté backend. */
+  onPseudoDisconnected(pseudo: string): void {
+    const room = this.roomOf(pseudo)
+    if (!room) return
+    if (room.status === 'WAITING') {
+      this.removeFromWaitingRoom(room, pseudo)
+      this.broadcastRoomList()
+      return
+    }
+    if (room.status !== 'PLAYING' || !room.gameId) return
+    const game = this.games.get(room.gameId)
+    const player = game?.players.find((candidate) => candidate.playerId === pseudo)
+    if (!game || !player || game.gameOver) return
+    player.connected = false
+    this.broadcast(`/topic/game/${game.gameId}`, {
+      type: 'PLAYER_DISCONNECTED',
+      gameId: game.gameId,
+      playerId: player.playerId,
+      reconnectDeadInSeconds: 120,
+    })
+    this.pushStates(game.gameId, null, [])
+  }
+
+  /** Miroir de `GamePresenceService.onConnected` : annule la déconnexion. */
+  onPseudoConnected(pseudo: string): void {
+    const room = this.roomOf(pseudo)
+    if (!room) return
+    if (room.status === 'WAITING') {
+      this.publishRoom(room)
+      return
+    }
+    if (room.status !== 'PLAYING' || !room.gameId) return
+    const game = this.games.get(room.gameId)
+    const player = game?.players.find((candidate) => candidate.playerId === pseudo)
+    if (!game || !player || game.gameOver) return
+    const wasOffline = !player.connected
+    player.connected = true
+    if (wasOffline) {
+      this.broadcast(`/topic/game/${game.gameId}`, {
+        type: 'PLAYER_RECONNECTED',
+        gameId: game.gameId,
+        playerId: player.playerId,
+      })
+    }
+    this.pushStates(game.gameId, null, [])
+  }
+
+  /** Retire un joueur d'un salon en attente (départ volontaire ou socket fermé). */
+  removeFromWaitingRoom(room: MockRoom, pseudo: string): void {
+    if (room.hostPseudo === pseudo) {
+      room.status = 'CLOSED'
+      this.rooms.delete(room.code)
+      this.sendToPseudo(pseudo, '/user/queue/lobby', roomView(room))
+      return
+    }
+    room.players = room.players.filter((player) => player.pseudo !== pseudo)
+    this.publishRoom(room)
+  }
+
+  /**
+   * Simule l'expiration du minuteur de forfait (120 s dans le backend, non
+   * chronométré ici) : la partie se termine sur un abandon du joueur absent.
+   */
+  forfeitOfflinePlayer(gameId: string, pseudo: string): void {
+    const game = this.games.get(gameId)
+    if (!game || game.gameOver) return
+    const rival = game.players.find((player) => player.playerId !== pseudo)
+    if (!rival) return
+    game.winnerId = rival.playerId
+    game.endReason = `Forfait déconnexion de ${pseudo}`
+    game.gameOver = true
+    appendEvent(game, 'GAME_WON', rival.playerId, game.endReason)
+    const event = game.log[game.log.length - 1] as LogEntry
+    this.pushStates(gameId, null, [event])
+    this.broadcast(`/topic/game/${gameId}`, { type: 'GAME_OVER', gameId, winnerId: rival.playerId, endReason: game.endReason })
+    const room = [...this.rooms.values()].find((candidate) => candidate.gameId === gameId)
+    if (room) {
+      room.status = 'CLOSED'
+      this.rooms.delete(room.code)
+    }
+    this.broadcastRoomList()
   }
 
   publishRoom(room: MockRoom): void {
@@ -1006,6 +1097,7 @@ function buildPlayer(pseudo: string, deckIds: string[], server: MockGameServer):
   const player: MockPlayer = {
     playerId: pseudo,
     name: pseudo,
+    connected: true,
     deck: rest.map((card) => newInstance(card, pseudo, 'DECK')),
     hand: [],
     field: [],
@@ -1149,7 +1241,7 @@ function playerView(player: MockPlayer, viewerId: string): Record<string, unknow
   return {
     playerId: player.playerId,
     name: player.name,
-    connected: true,
+    connected: player.connected,
     deckCount: player.deck.length,
     hand: player.hand.map((card) => cardView(card, viewerId)),
     field: player.field.map((card) => cardView(card, viewerId)),

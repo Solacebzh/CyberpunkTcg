@@ -31,6 +31,8 @@ npm run dev        # dans un autre terminal
 
 Le serveur simulé (`devtools/mock-protocol.ts`) reproduit le contrat STOMP et un
 sous-ensemble de règles : suffisant pour jouer une partie complète à deux onglets.
+Il gère aussi la présence comme le backend : fermer un onglet libère son siège et
+signale `PLAYER_DISCONNECTED` à l'autre joueur.
 **Ce n'est pas le moteur de règles** — la référence reste le backend Spring.
 
 ## Scripts
@@ -42,7 +44,7 @@ sous-ensemble de règles : suffisant pour jouer une partie complète à deux ong
 | `npm run preview` | Sert le build de production localement |
 | `npm run typecheck` | Vérification TypeScript seule |
 | `npm run mock:ws` | Backend simulé (REST + STOMP) sur le port 8080 |
-| `npm run test:unit` | Tests Vitest (flux lobby → partie, deck builder, reconnexion) |
+| `npm run test:unit` | Tests Vitest (flux lobby → partie, deck builder, reconnexion, présence) |
 | `npm run test:watch` | Les mêmes tests en mode watch |
 
 ## Organisation

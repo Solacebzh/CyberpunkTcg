@@ -330,6 +330,15 @@ interception BLOCKER, vol de Gig), fin de tour (pioche + dé Gig + victoire à 7
 **Ce n'est pas le moteur de règles** — toute validation sérieuse passe par
 `cd backend && mvn test`.
 
+La **présence** est simulée comme le backend (`ws/GamePresenceService`) : la
+fermeture du socket (rafraîchissement de page, coupure réseau) libère le siège
+d'un salon en attente et, pendant une partie, marque le joueur déconnecté
+(`connected: false`) puis diffuse `PLAYER_DISCONNECTED` avec
+`reconnectDeadInSeconds: 120`. Une reconnexion avec le même pseudo diffuse
+`PLAYER_RECONNECTED` et repousse les états. Le minuteur de forfait n'est pas
+chronométré côté simulé : `server.forfeitOfflinePlayer(gameId, pseudo)` rejoue
+l'issue (abandon, `GAME_OVER`, salon fermé) sans attendre 120 s.
+
 Pour pointer le client vers un vrai backend : `npm run dev` suffit (proxy),
 ou `VITE_WS_URL` / `VITE_API_BASE_URL` pour une origine distante.
 
@@ -352,6 +361,10 @@ sur le serveur simulé (`src/__tests__/helpers/stompHarness.ts`).
 * `frontendFlow.spec.ts` : deck builder (catalogue `/api/cards`, ajout, doublons,
   validation, glisser-déposer, persistance) et bascule en reconnexion
   automatique quand le transport tombe.
+* `presence.spec.ts` : fermeture d'un socket — siège d'un salon en attente
+  libéré (le même pseudo peut recréer un salon), `PLAYER_DISCONNECTED` puis
+  `PLAYER_RECONNECTED` reçus par le joueur resté en ligne (minuteur de 120 s
+  démarré puis annulé, `connected` à jour), et fin de partie sur forfait.
 
 `npm run build` exécute `vue-tsc` sur `src/**` **et** `devtools/**` : les tests
 sont donc aussi vérifiés typiquement.
