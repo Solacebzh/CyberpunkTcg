@@ -18,7 +18,7 @@ import java.util.UUID;
 /**
  * Joue une carte :
  * <ul>
- *   <li>Legend face cachée de la Legends Area → retournée gratuitement (effet {@code FLIP}) ;</li>
+   *   <li>Legend face cachée de la Legends Area → retournée gratuitement (effet {@code FLIP}, pas {@code ON_PLAY}), pas de coût Eddies ;</li>
  *   <li>Unit de la main → Field (mal d'invocation sauf {@code GO_SOLO}), coût payé ;</li>
  *   <li>Program de la main → effet {@code ON_PLAY} puis défausse, coût payé ;</li>
  *   <li>Gear de la main → attaché à une Unit alliée du Field, coût payé.</li>

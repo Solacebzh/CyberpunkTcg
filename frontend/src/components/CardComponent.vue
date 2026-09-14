@@ -104,7 +104,7 @@ function onClick(): void {
     :data-instance-id="card.instanceId"
     :data-card-zone="card.zone"
     :data-card-side="side"
-    class="relative shrink-0 select-none rounded border-2 bg-cyber-panel/90 transition-[transform,box-shadow,opacity] duration-150"
+    class="relative shrink-0 select-none rounded-xl overflow-hidden shadow-[inset_0_0_30px_rgba(255,215,0,0.15)] border-2 bg-gradient-to-b from-[#18182b] to-[#0d0d18] transition-[transform,box-shadow,opacity] duration-150"
     :class="[
       size.box,
       FRAME[card.color],
@@ -172,7 +172,7 @@ function onClick(): void {
       <div class="flex flex-col gap-1 px-1.5 py-1">
         <p class="truncate font-semibold leading-tight text-slate-100" :class="size.name">{{ card.name }}</p>
 
-        <div class="flex items-center justify-between font-mono" :class="size.stat">
+        <div class="flex items-end justify-between gap-2 font-mono" :class="size.stat">
           <span v-if="card.power !== undefined" class="flex items-center gap-1">
             <span class="text-slate-400">PWR</span>
             <span

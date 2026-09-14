@@ -18,7 +18,7 @@ import java.util.UUID;
  * elle rapporte exactement 1 Eddie quel que soit son coût imprimé.
  *
  * <p>Règle imposée : {@link GameConstants#SALES_PER_TURN} vente par tour maximum,
- * en phase {@code MAIN}.</p>
+ * en phase {@code MAIN}. Aucune deuxième vente n'est autorisée durant ce tour.</p>
  */
 public class SellCardCommand implements GameCommand {
 

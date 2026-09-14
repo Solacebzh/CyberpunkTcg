@@ -25,8 +25,9 @@ import java.util.UUID;
  *   (sauf {@code GO_SOLO}) ; attaquer l'épuise ;</li>
  *   <li>la première attaque fait passer la phase {@code MAIN → COMBAT} ;</li>
  *   <li>chaque attaque ouvre une fenêtre de réaction pour le défenseur
- *   (voir {@link PlayCardCommand}) ;</li>
+ *   (<strong>QUICK uniquement</strong> ; seules les cartes avec le mot-clé quick peuvent être jouées en réaction) ;</li>
  *   <li>les déclencheurs {@code ON_ATTACK} se résolvent avant le combat ;</li>
+ *   <li><strong>BLOCKER intercepte</strong> : si un BLOCKER rival prêt existe, l'attaquant doit le cibler (interception) et le vol direct de Gig est interdit ;</li>
  *   <li>le combat compare les puissances totales (Unit + Gears) : à égalité,
  *   les deux Units sont vaincues ;</li>
  *   <li>un {@code BLOCKER} rival prêt doit être ciblé (interception) et interdit
