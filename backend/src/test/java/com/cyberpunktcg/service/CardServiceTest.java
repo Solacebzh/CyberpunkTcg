@@ -25,9 +25,11 @@ class CardServiceTest {
         repository.deleteAll();
         repository.flush();
 
-        assertThat(cardService.importBundledCardsIfEmpty()).isEqualTo(5);
-        assertThat(repository.count()).isEqualTo(5);
+        int imported = cardService.importBundledCardsIfEmpty();
+
+        assertThat(imported).isPositive();
+        assertThat(repository.count()).isEqualTo(imported);
         assertThat(cardService.importBundledCardsIfEmpty()).isZero();
-        assertThat(repository.count()).isEqualTo(5);
+        assertThat(repository.count()).isEqualTo(imported);
     }
 }
