@@ -22,7 +22,7 @@ FIXTURE_CARDS: list[dict[str, Any]] = [
         "flavorText": "« La loyauté se construit sur des décennies. »",
         "setCode": "WTNC",
         "collectorNumber": "A029",
-        "rarity": "Legendary",
+        "rarity": "Epic",
         "imageUrl": "https://ik.imagekit.io/cardnexus/production/cyberpunk/a029.png",
     },
     {

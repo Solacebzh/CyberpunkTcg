@@ -51,8 +51,9 @@ def test_normalize_color(raw, expected):
     assert (result.value if result else None) == expected
 
 
-def test_normalize_rarity_accepts_accents():
-    assert normalize_rarity("Légendaire").value == "legendary"
+def test_normalize_rarity_accepts_official_tiers_and_accents():
+    assert normalize_rarity("Épique").value == "epic"
+    assert normalize_rarity("Iconic Rare").value == "iconic"
     assert normalize_rarity("peu commune").value == "uncommon"
     assert normalize_rarity(None) is None
 
@@ -119,19 +120,22 @@ def test_raw_to_card_rejects_unknown_color():
     assert "couleur inconnue" in str(error.value)
 
 
-def test_legend_cannot_have_a_cost():
+def test_legend_keeps_printed_cost_and_power():
     card = raw_to_card(
         {
-            "name": "Saburo Arasaka",
+            "name": "Adam Smasher",
+            "subtitle": "Ender of Legends",
             "type": "Legend",
-            "color": "Green",
+            "color": "Red",
             "ram": "2",
-            "cost": "2",  # incohérent : une Legend est posée face cachée
+            "cost": "9",
+            "power": "9",
             "setCode": "WTNC",
-            "collectorNumber": "A029",
+            "collectorNumber": "001",
         }
     )
-    assert card.cost is None
+    assert card.cost == 9
+    assert card.power == 9
 
 
 def test_parse_all_collects_errors_instead_of_failing():

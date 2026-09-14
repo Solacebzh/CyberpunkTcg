@@ -1,8 +1,9 @@
-"""Conversion « carte brute » (issue du site ou des fixtures) → `GameCard` validée."""
+"""Conversion d'un enregistrement NetDeck brut vers une ``GameCard`` validée."""
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -13,14 +14,16 @@ from .normalize import (
     normalize_color,
     normalize_keywords,
     normalize_rarity,
+    normalize_set_code,
     normalize_type,
     parse_int,
+    split_abilities,
     split_tags,
 )
 
 
 class CardParseError(ValueError):
-    """Carte inexploitable : on la signale sans interrompre tout le scraping."""
+    """Carte inexploitable, collectée sans interrompre le reste du catalogue."""
 
     def __init__(self, label: str, reason: str) -> None:
         super().__init__(f"{label} : {reason}")
@@ -29,7 +32,6 @@ class CardParseError(ValueError):
 
 
 def _first(raw: Mapping[str, Any], *keys: str) -> Any:
-    """Première valeur non vide parmi plusieurs noms de champs possibles."""
     for key in keys:
         value = raw.get(key)
         if value not in (None, "", []):
@@ -37,33 +39,42 @@ def _first(raw: Mapping[str, Any], *keys: str) -> Any:
     return None
 
 
-def raw_to_card(raw: Mapping[str, Any]) -> GameCard:
-    """Normalise une carte brute et la valide contre le modèle.
+def _strings(value: Any) -> list[str]:
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return [clean_text(str(item)) for item in value if clean_text(str(item))]
+    return split_tags(str(value)) if value else []
 
-    :raises CardParseError: si un champ indispensable manque ou est incohérent.
-    """
+
+def raw_to_card(raw: Mapping[str, Any]) -> GameCard:
+    """Normalise et valide une carte de l'API officielle."""
     name = clean_text(_first(raw, "name", "title", "cardName"))
     if not name:
         raise CardParseError("<carte sans nom>", "nom manquant")
 
-    subtitle = clean_text(_first(raw, "subtitle", "epithet")) or None
-    type_ = normalize_type(str(_first(raw, "type", "cardType") or ""))
+    subtitle = clean_text(_first(raw, "subtitle", "subname", "epithet")) or None
+    type_ = normalize_type(str(_first(raw, "type", "cardType", "card_type") or ""))
     color = normalize_color(str(_first(raw, "color", "colour", "faction") or ""))
-
     if type_ is None:
-        raise CardParseError(name, f"type inconnu ({_first(raw, 'type', 'cardType')!r})")
+        raise CardParseError(name, f"type inconnu ({_first(raw, 'type', 'cardType', 'card_type')!r})")
     if color is None:
-        raise CardParseError(name, f"couleur inconnue ({_first(raw, 'color', 'colour')!r})")
+        raise CardParseError(name, f"couleur inconnue ({_first(raw, 'color', 'colour', 'faction')!r})")
 
-    set_code = clean_text(_first(raw, "setCode", "set", "set_code") or "").upper()
-    collector_number = clean_text(_first(raw, "collectorNumber", "number", "cardNumber") or "")
+    set_code = normalize_set_code(str(_first(raw, "setCode", "set", "set_code") or ""))
+    collector_number = clean_text(_first(raw, "collectorNumber", "printNumber", "print_number", "number") or "")
     if not set_code or not collector_number:
         raise CardParseError(name, "setCode/collectorNumber manquant")
 
-    text = clean_text(_first(raw, "text", "rulesText", "effect", "ability"))
+    raw_text = str(_first(raw, "text", "rulesText", "rules_text", "effect", "ability") or "")
+    text = clean_text(raw_text)
+    supplied_abilities = _first(raw, "abilities")
+    abilities = _strings(supplied_abilities) if supplied_abilities else split_abilities(raw_text)
+    raw_tags = _first(raw, "tags", "traits", "classifications")
+    tags = _strings(raw_tags)
+    raw_keywords = _first(raw, "keywords", "keyword")
+    keyword_source = " ".join(_strings(raw_keywords)) if raw_keywords else ""
 
     payload: dict[str, Any] = {
-        "id": clean_text(_first(raw, "id")) or build_card_id(set_code, collector_number, name, subtitle),
+        "id": clean_text(_first(raw, "id", "slug")) or build_card_id(set_code, collector_number, name, subtitle),
         "name": name,
         "subtitle": subtitle,
         "type": type_.value,
@@ -72,25 +83,15 @@ def raw_to_card(raw: Mapping[str, Any]) -> GameCard:
         "cost": parse_int(_first(raw, "cost", "eddies", "costEddies")),
         "power": parse_int(_first(raw, "power", "strength")),
         "streetCred": parse_int(_first(raw, "streetCred", "street_cred", "cred")),
-        "tags": split_tags(str(_first(raw, "tags", "traits") or "")),
-        "keywords": [
-            keyword.value
-            for keyword in normalize_keywords(
-                str(_first(raw, "keywords", "keyword") or ""),
-                text,
-            )
-        ],
+        "tags": tags,
+        "keywords": [keyword.value for keyword in normalize_keywords(keyword_source, text)],
         "text": text,
-        "flavorText": clean_text(_first(raw, "flavorText", "flavor", "flavour")) or None,
+        "abilities": abilities,
+        "imageUrl": _first(raw, "imageUrl", "source_image_url", "image", "image_url"),
         "setCode": set_code,
         "collectorNumber": collector_number,
         "rarity": (rarity.value if (rarity := normalize_rarity(str(_first(raw, "rarity") or ""))) else None),
-        "imageUrl": _first(raw, "imageUrl", "image", "image_url"),
     }
-
-    # Une Legend est jouée face cachée : pas de coût en Eddies dans les données.
-    if type_.value == "legend":
-        payload["cost"] = None
 
     try:
         return GameCard.model_validate(payload)
@@ -100,13 +101,18 @@ def raw_to_card(raw: Mapping[str, Any]) -> GameCard:
 
 
 def parse_all(raw_cards: list[Mapping[str, Any]]) -> tuple[list[GameCard], list[CardParseError]]:
-    """Convertit une liste de cartes brutes, en collectant les erreurs rencontrées."""
+    """Convertit le catalogue en collectant cartes invalides et identifiants dupliqués."""
     cards: list[GameCard] = []
     errors: list[CardParseError] = []
+    seen_ids: set[str] = set()
 
     for raw in raw_cards:
         try:
-            cards.append(raw_to_card(raw))
+            card = raw_to_card(raw)
+            if card.id in seen_ids:
+                raise CardParseError(card.name, f"identifiant dupliqué ({card.id})")
+            seen_ids.add(card.id)
+            cards.append(card)
         except CardParseError as error:
             errors.append(error)
 

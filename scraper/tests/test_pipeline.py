@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from cyberpunk_scraper.export import load_json_schema, validate_against_schema, write_exports
+from cyberpunk_scraper.models import GameCard
 from cyberpunk_scraper.fixtures import load_fixture_cards
 from cyberpunk_scraper.parse import parse_all
 
@@ -25,6 +27,15 @@ def test_fixtures_produce_cards_and_one_expected_rejection():
 
 def test_every_card_matches_the_json_schema():
     cards, _ = _build_cards()
+    assert validate_against_schema(cards, load_json_schema()) == []
+
+
+def test_backend_bundled_cards_match_the_shared_contract():
+    repo_root = Path(__file__).resolve().parents[2]
+    payload = json.loads((repo_root / "backend/src/main/resources/data/cards.json").read_text(encoding="utf-8"))
+    cards = [GameCard.model_validate(card) for card in payload]
+
+    assert len(cards) == 5
     assert validate_against_schema(cards, load_json_schema()) == []
 
 
