@@ -1,12 +1,15 @@
 package com.cyberpunktcg.engine.command;
 
+import com.cyberpunktcg.domain.card.CardColor;
 import com.cyberpunktcg.domain.game.CardInstance;
 import com.cyberpunktcg.domain.game.GameEvent;
 import com.cyberpunktcg.domain.game.GameEventType;
+import com.cyberpunktcg.domain.game.GameLog;
 import com.cyberpunktcg.domain.game.GameState;
 import com.cyberpunktcg.domain.game.Phase;
 import com.cyberpunktcg.domain.game.Player;
 import com.cyberpunktcg.domain.game.Zone;
+import com.cyberpunktcg.engine.GameConstants;
 import com.cyberpunktcg.engine.GameRuleException;
 import com.cyberpunktcg.engine.RuleEngine;
 import com.cyberpunktcg.engine.TriggerType;
@@ -61,6 +64,23 @@ public class PlayCardCommand implements GameCommand {
         return playerId;
     }
 
+    @Override
+    public String actionType() {
+        return "PLAY_CARD";
+    }
+
+    @Override
+    public String describe() {
+        return "jouer une carte";
+    }
+
+    @Override
+    public String describe(GameState state) {
+        return state.findInstance(cardInstanceId)
+                .map(card -> "jouer " + card.getName())
+                .orElse("jouer une carte inconnue");
+    }
+
     public UUID getCardInstanceId() {
         return cardInstanceId;
     }
@@ -102,6 +122,7 @@ public class PlayCardCommand implements GameCommand {
             throw new GameRuleException("Cette carte n'est pas jouable depuis " + card.getZone());
         }
         requireStreetCred(player, card);
+        requireRamCeiling(player, card);
         int toPay = Math.max(0, card.getEffectiveCost() - player.getCostDiscount());
         if (player.getAvailableEddies() < toPay) {
             throw new GameRuleException("Eddies insuffisants : " + player.getAvailableEddies()
@@ -128,6 +149,11 @@ public class PlayCardCommand implements GameCommand {
             card.setFaceDown(false);
             state.appendEvent(GameEventType.LEGEND_FLIPPED, playerId,
                     "legend retournée : " + card.getName());
+            state.logSuccess(playerId, actionType(),
+                    "Joueur " + playerId + " retourne la Legend " + card.getName()
+                            + " (gratuit, effet FLIP — pas ON_PLAY)",
+                    GameLog.details("card", card.getName(), "cardId", card.getCardId(),
+                            "eddiesPaid", 0, "trigger", "FLIP"));
             engine.resolveEffects(state, card, TriggerType.FLIP, null);
             return GameCommand.eventsSince(state, mark);
         }
@@ -150,6 +176,7 @@ public class PlayCardCommand implements GameCommand {
             card.setSummoningSickness(!card.hasGoSolo());
             state.appendEvent(GameEventType.CARD_PLAYED, playerId,
                     "unit jouée : " + card.getName() + " (coût " + toPay + ")");
+            logPlay(state, player, card, toPay, "Unit");
             engine.resolveEffects(state, card, TriggerType.ON_PLAY, effectTarget);
             if (reacting && card.isQuick()) {
                 engine.resolveEffects(state, card, TriggerType.QUICK, effectTarget);
@@ -160,6 +187,7 @@ public class PlayCardCommand implements GameCommand {
         if (card.isProgram()) {
             state.appendEvent(GameEventType.CARD_PLAYED, playerId,
                     "program joué : " + card.getName() + " (coût " + toPay + ")");
+            logPlay(state, player, card, toPay, "Program");
             engine.resolveEffects(state, card, TriggerType.ON_PLAY, effectTarget);
             if (reacting && card.isQuick()) {
                 engine.resolveEffects(state, card, TriggerType.QUICK, effectTarget);
@@ -180,6 +208,7 @@ public class PlayCardCommand implements GameCommand {
         host.getAttachments().add(card.getInstanceId());
         state.appendEvent(GameEventType.CARD_PLAYED, playerId,
                 "gear équipé : " + card.getName() + " (coût " + toPay + ")");
+        logPlay(state, player, card, toPay, "Gear → " + host.getName());
         engine.resolveEffects(state, card, TriggerType.ON_PLAY, host);
         if (reacting && card.isQuick()) {
             engine.resolveEffects(state, card, TriggerType.QUICK, host);
@@ -201,6 +230,47 @@ public class PlayCardCommand implements GameCommand {
             throw new GameRuleException("Carte introuvable ou contrôlée par le rival");
         }
         throw new GameRuleException("Cette carte n'est pas jouable depuis sa zone");
+    }
+
+    /**
+     * Plafond de RAM par couleur (arbitrage joueur, feature 6.5) : la RAM n'est
+     * pas une ressource consommée — c'est la <em>valeur maximale</em> autorisée
+     * par couleur, dérivée des Legends du joueur (règles officielles §2). Jouer
+     * cinq cartes rouges à 2 RAM est donc légal, jouer une carte rouge à 3 RAM
+     * avec un plafond rouge de 2 ne l'est pas. Les duels sans Legends (tests,
+     * parties d'entraînement) n'appliquent aucun plafond.
+     */
+    private void requireRamCeiling(Player player, CardInstance card) throws GameRuleException {
+        if (!GameConstants.RAM_CEILING_ENFORCED || !player.hasLegendCeiling()) {
+            return;
+        }
+        CardColor color = card.getColor();
+        if (color == null) {
+            return;
+        }
+        int ceiling = player.ramCeilingFor(color);
+        if (card.getRam() > ceiling) {
+            throw new GameRuleException("RAM " + color.label() + " insuffisante : la carte demande "
+                    + card.getRam() + " RAM, plafond de vos Legends : " + ceiling);
+        }
+    }
+
+    /** Ligne de journal détaillée pour la pose d'une carte (coût Eddies + RAM). */
+    private void logPlay(GameState state, Player player, CardInstance card, int paid, String kind) {
+        StringBuilder description = new StringBuilder()
+                .append("Joueur ").append(playerId).append(" joue ").append(card.getName())
+                .append(" (coût: ").append(paid).append(" Eddies");
+        if (card.getRam() > 0) {
+            description.append(", ").append(card.getRam()).append(" RAM ")
+                    .append(card.getColor() == null ? "?" : card.getColor().label());
+        }
+        description.append(')');
+        state.logSuccess(playerId, actionType(), description.toString(),
+                GameLog.details("card", card.getName(), "cardId", card.getCardId(),
+                        "type", card.getType() == null ? null : card.getType().value(),
+                        "color", card.getColor() == null ? null : card.getColor().value(),
+                        "ram", card.getRam(), "cost", card.getEffectiveCost(), "paid", paid,
+                        "eddiesLeft", player.getEddies(), "kind", kind));
     }
 
     private void requireStreetCred(Player player, CardInstance card) throws GameRuleException {

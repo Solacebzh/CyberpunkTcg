@@ -34,6 +34,8 @@ public class GameState {
     private final Random random;
     private Instant createdAt;
     private final List<GameEvent> eventLog;
+    /** Journal de diagnostic (feature 6.5) : chaque action, y compris refusée. */
+    private final GameLog gameLog;
 
     /**
      * Nouvelle partie 1v1.
@@ -62,12 +64,14 @@ public class GameState {
         this.random = new Random(seed);
         this.createdAt = Instant.now();
         this.eventLog = new ArrayList<GameEvent>();
+        this.gameLog = new GameLog();
     }
 
     /** Constructeur interne des copies (vues masquées : tirages jamais utilisés). */
     private GameState(String gameId, List<Player> players, long seed, Random random,
                       Turn turn, ReactionWindow reactionWindow, String winnerId,
-                      String endReason, Instant createdAt, List<GameEvent> eventLog) {
+                      String endReason, Instant createdAt, List<GameEvent> eventLog,
+                      GameLog gameLog) {
         this.gameId = gameId;
         this.players = new LinkedHashMap<String, Player>();
         for (Player player : players) {
@@ -81,6 +85,7 @@ public class GameState {
         this.random = random;
         this.createdAt = createdAt;
         this.eventLog = eventLog;
+        this.gameLog = gameLog;
     }
 
     public String getGameId() {
@@ -169,6 +174,73 @@ public class GameState {
 
     public void appendEvent(GameEventType type, String playerId, String description) {
         eventLog.add(new GameEvent(type, playerId, description));
+    }
+
+    // ------------------------------------------------------------------
+    // Journal de diagnostic (feature 6.5)
+    // ------------------------------------------------------------------
+
+    /** Journal de diagnostic de la partie (borné, lecture seule). */
+    public GameLog getGameLog() {
+        return gameLog;
+    }
+
+    /**
+     * Consigne une action dans le journal de diagnostic.
+     *
+     * @param playerId    joueur à l'origine de l'action ({@code null} = système)
+     * @param actionType  type technique ({@code PLAY_CARD}, {@code ATTACK}, {@code VICTORY}…)
+     * @param description libellé lisible (« Joueur V joue … »)
+     * @param result      verdict ({@code SUCCESS}, {@code FAILED}, {@code ILLEGAL}, {@code INFO})
+     * @param details     contexte JSON-compatible (coûts, cibles, ressources), peut être {@code null}
+     * @return l'entrée consignée
+     */
+    public GameLogEntry log(String playerId, String actionType, String description,
+                            GameActionResult result, Map<String, Object> details) {
+        return gameLog.append(turn.getNumber(), turn.getPhase(), playerId, actionType, description,
+                result, details);
+    }
+
+    /** Ligne narrative (phase, vérification de victoire…). */
+    public GameLogEntry logInfo(String playerId, String actionType, String description,
+                                Map<String, Object> details) {
+        return log(playerId, actionType, description, GameActionResult.INFO, details);
+    }
+
+    /** Action acceptée. */
+    public GameLogEntry logSuccess(String playerId, String actionType, String description,
+                                   Map<String, Object> details) {
+        return log(playerId, actionType, description, GameActionResult.SUCCESS, details);
+    }
+
+    /** Action légale sans effet (cible invalide, plus rien à voler…). */
+    public GameLogEntry logFailed(String playerId, String actionType, String description,
+                                  Map<String, Object> details) {
+        return log(playerId, actionType, description, GameActionResult.FAILED, details);
+    }
+
+    /** Action refusée par le moteur : aucune mutation n'a eu lieu. */
+    public GameLogEntry logIllegal(String playerId, String actionType, String description,
+                                   Map<String, Object> details) {
+        return log(playerId, actionType, description, GameActionResult.ILLEGAL, details);
+    }
+
+    /**
+     * Photographie courte de l'état, utilisée comme {@code details} par défaut des
+     * entrées de journal (phase, tour, ressources des deux joueurs).
+     */
+    public Map<String, Object> snapshotDetails() {
+        Map<String, Object> details = new LinkedHashMap<String, Object>();
+        details.put("turn", turn.getNumber());
+        details.put("phase", turn.getPhase().name());
+        details.put("activePlayerId", turn.getActivePlayerId());
+        for (Player player : players.values()) {
+            details.put(player.getId() + ".gigs", player.getGigCount());
+            details.put(player.getId() + ".eddies", player.getEddies());
+            details.put(player.getId() + ".hand", player.getHand().size());
+            details.put(player.getId() + ".deck", player.getDeck().size());
+        }
+        return details;
     }
 
     // ------------------------------------------------------------------
@@ -319,7 +391,7 @@ public class GameState {
         List<GameEvent> events = new ArrayList<GameEvent>(eventLog);
         return new GameState(gameId, copies, seed, new Random(), turn.copy(),
                 reactionWindow == null ? null : reactionWindow.copy(),
-                winnerId, endReason, createdAt, events);
+                winnerId, endReason, createdAt, events, gameLog.copy());
     }
 
     @Override

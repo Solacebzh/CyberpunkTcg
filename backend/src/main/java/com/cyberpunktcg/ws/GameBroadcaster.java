@@ -1,11 +1,14 @@
 package com.cyberpunktcg.ws;
 
+import com.cyberpunktcg.api.dto.ws.GameActionLogDTO;
 import com.cyberpunktcg.api.dto.ws.GameLogEntryDTO;
+import com.cyberpunktcg.api.dto.ws.GameLogMessage;
 import com.cyberpunktcg.api.dto.ws.GameNotice;
 import com.cyberpunktcg.api.dto.ws.GameStateDTO;
 import com.cyberpunktcg.api.dto.ws.GameStateMessage;
 import com.cyberpunktcg.api.dto.ws.WsError;
 import com.cyberpunktcg.domain.game.GameEvent;
+import com.cyberpunktcg.domain.game.GameLogEntry;
 import com.cyberpunktcg.domain.game.GameState;
 import com.cyberpunktcg.domain.game.Player;
 import com.cyberpunktcg.service.GameService;
@@ -27,6 +30,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * <ul>
  *   <li>états masqués PERSONNELS sur {@code /topic/game/{gameId}/{pseudo}} ;</li>
  *   <li>notifications publiques sur {@code /topic/game/{gameId}} ;</li>
+ *   <li>journal de diagnostic public (y compris les actions refusées) sur
+ *   {@code /topic/game/{gameId}/log} ;</li>
  *   <li>erreurs privées sur {@code /user/queue/errors}.</li>
  * </ul>
  * La même poussée d'état est reconstruite pour chaque joueur avec son propre
@@ -44,6 +49,8 @@ public class GameBroadcaster {
 
     /** Numéro de séquence monotone par partie (détection de perte côté client). */
     private final Map<String, AtomicLong> sequences = new ConcurrentHashMap<>();
+    /** Dernier index de journal diffusé par partie (diffusion incrémentale). */
+    private final Map<String, Integer> lastLogIndex = new ConcurrentHashMap<>();
 
     public GameBroadcaster(SimpMessagingTemplate messagingTemplate,
                            GameService gameService,
@@ -57,6 +64,7 @@ public class GameBroadcaster {
     public void gameStarted(String gameId) {
         messagingTemplate.convertAndSend(WsDestinations.game(gameId), GameNotice.gameStarted(gameId));
         pushStates(gameId, null, List.of());
+        pushLog(gameId);
     }
 
     /**
@@ -65,6 +73,7 @@ public class GameBroadcaster {
      */
     public void afterAction(String gameId, String clientRequestId, List<GameEvent> producedEvents) {
         pushStates(gameId, clientRequestId, producedEvents);
+        pushLog(gameId);
         GameState internal = gameService.getGameStateInternal(gameId);
         if (internal.isGameOver()) {
             messagingTemplate.convertAndSend(WsDestinations.game(gameId),
@@ -105,9 +114,42 @@ public class GameBroadcaster {
         messagingTemplate.convertAndSendToUser(pseudo, WsDestinations.ERRORS_QUEUE, error);
     }
 
+    /**
+     * Diffuse les nouvelles entrées du journal de diagnostic sur
+     * {@code /topic/game/{gameId}/log} (feature 6.5).
+     *
+     * <p>La diffusion est incrémentale : seul l'index de la dernière entrée
+     * envoyée est mémorisé par partie, ce qui évite de renvoyer tout le journal à
+     * chaque action tout en restant robuste (les entrées évincées par la borne du
+     * journal ne sont jamais rediffusées).</p>
+     */
+    public void pushLog(String gameId) {
+        GameState internal;
+        try {
+            internal = gameService.getGameStateInternal(gameId);
+        } catch (RuntimeException error) {
+            return;
+        }
+        int from = lastLogIndex.getOrDefault(gameId, 0);
+        List<GameLogEntry> fresh = internal.getGameLog().since(from);
+        if (fresh.isEmpty()) {
+            return;
+        }
+        List<GameActionLogDTO> entries = new ArrayList<>(fresh.size());
+        int highest = from;
+        for (GameLogEntry entry : fresh) {
+            entries.add(GameActionLogDTO.from(entry));
+            highest = Math.max(highest, entry.getIndex());
+        }
+        lastLogIndex.put(gameId, highest);
+        messagingTemplate.convertAndSend(WsDestinations.gameLog(gameId),
+                GameLogMessage.of(gameId, List.copyOf(entries)));
+    }
+
     /** Retire les compteurs d'une partie terminée (nettoyage mémoire). */
     public void dispose(String gameId) {
         sequences.remove(gameId);
+        lastLogIndex.remove(gameId);
     }
 
     private AtomicLong sequenceOf(String gameId) {

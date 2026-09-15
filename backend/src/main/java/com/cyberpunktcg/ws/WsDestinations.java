@@ -26,6 +26,17 @@ public final class WsDestinations {
     public static final String GAME_TOPIC_TEMPLATE = "/topic/game/%s";
     /** États masqués d'une partie pour UN joueur (dernier segment = pseudo). */
     public static final String GAME_STATE_TOPIC_TEMPLATE = "/topic/game/%s/%s";
+    /**
+     * Journal de diagnostic d'une partie (feature 6.5) : chaque action, y compris
+     * refusée, arrive ici en temps réel (panneau de debug).
+     *
+     * <p>Attention : ce chemin partage le préfixe des états personnels
+     * ({@code /topic/game/{gameId}/{pseudo}}). Les messages de journal portent
+     * {@code type: "LOG"} et les états {@code type: "STATE"} : le client doit donc
+     * discriminer par le champ {@code type} (un joueur dont le pseudo serait
+     * {@code log} recevrait les deux flux sur la même destination).</p>
+     */
+    public static final String GAME_LOG_TOPIC_TEMPLATE = "/topic/game/%s/log";
 
     /** Files privées (chemins relatifs pour convertAndSendToUser). */
     public static final String ERRORS_QUEUE = "/queue/errors";
@@ -45,5 +56,10 @@ public final class WsDestinations {
 
     public static String gameState(String gameId, String pseudo) {
         return GAME_STATE_TOPIC_TEMPLATE.formatted(gameId, pseudo);
+    }
+
+    /** Journal de diagnostic d'une partie (temps réel). */
+    public static String gameLog(String gameId) {
+        return GAME_LOG_TOPIC_TEMPLATE.formatted(gameId);
     }
 }
