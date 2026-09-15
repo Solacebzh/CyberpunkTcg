@@ -52,9 +52,11 @@ Légende : `- [x]` = à faire, `- [x]` = test écrit + impl + vert + documenté.
 - [x] **R5.1** Limite : 1 par tour — *Source: § MAIN PHASE “SELL FOR EDDIE (ONCE PER TURN)” + § GLOSSARY SELL “Once per turn”*
 - [x] **R5.2** Révéler la carte à l'adversaire — *Source: § MAIN PHASE “reveal it to your opponent”*
 - [x] **R5.3** Poser face cachée dans zone EDDIES_AREA (pas trash, pas discard) — *Source: § EDDIES AREA + § SELL “place it face-down in the Eddies area”*
-- [x] **R5.4** +1 Eddie immédiat (ressource du tour) — *Source: Task R5 spec + § Eddies “only worth 1 €$ per turn”*
-- [x] **R5.5** La carte reste en zone Eddies comme ressource future (spendable chaque tour) — *Source: § EDDIES “Each face-down card in your Eddies area is 1 Eddie. Spend them ... to pay”*
-- [x] **R5.6** Test : vendre → `EDDIES_AREA`, `faceDown`, `+1 eddies`, `hasSoldThisTurn` — *Impl: `SellCardCommand`*
+- [x] **R5.4** ~~+1 Eddie immédiat~~ → **aucun Eddie immédiat** (Mini-Feature 3, 2026-09-15) : la vente *crée* la ressource, l'Eddie est gagné en l'inclinant (R6) — *Source: § MAIN PHASE “place it face-down in the Eddies area” + § Eddies “it's only worth 1 €$ per turn as an Eddie” (aucun gain immédiat dans le Guide)*
+- [x] **R5.5** La carte reste en zone Eddies comme ressource (spendable chaque tour, **y compris le tour de la vente** car posée `exhausted = false`) — *Source: § EDDIES “Each face-down card in your Eddies area is 1 Eddie. Spend them ... to pay”*
+- [x] **R5.6** Test : vendre → `EDDIES_AREA`, `faceDown = true`, `exhausted = false`, `eddies` inchangé, `hasSoldThisTurn` — *Impl: `SellCardCommand`* — *Tests: `SellCardCommandTest.testR3_SellCard_GoesToEddiesArea_FaceDown_NotExhausted`, `SellCardCommandTest.testR3_SellCard_LimitOnePerTurn`, `testR5_Sell_*`*
+
+**Implémentation attendue (Mini-Feature 3 — « Vente = Création de ressource ») :** `SellCardCommand.execute` = révélation (`CARD_REVEALED` + événement `EFFECT_RESOLVED`) → `Player.moveToZone(card, EDDIES_AREA)` → `card.setFaceDown(true)` + `card.setExhausted(false)` → `player.setHasSoldThisTurn(true)`. **Aucun `player.addEddy()`** ; le gain d'Eddie passe exclusivement par `SpendEddiesCommand` (R6.1). Limite `GameConstants.SALES_PER_TURN = 1` vérifiée dans `validate`, refus journalisé `ILLEGAL`.
 
 ---
 

@@ -281,12 +281,17 @@ class GameIntegrationTest {
         CardInstance leg = state.getPlayer("p1").legendsAvailableForEddies().get(0);
         execute(state, new SpendLegendCommand("p1", leg.getInstanceId()));
         assertThat(state.getPlayer("p1").getEddies()).isEqualTo(1);
-        // Source Eddies card (après vente)
+        // Source Eddies card : la vente ne crédite RIEN, elle crée la ressource
+        // (Mini-Feature 3) — posée face cachée et déjà prête à être inclinée.
         CardInstance toSell = GameFixtures.handCard(state, "p1", GameFixtures.coloredUnit("sell-src", CardColor.RED,1,2,2));
         execute(state, new SellCardCommand("p1", toSell.getInstanceId()));
-        // Vente donne +1 immédiat, total 2 (mais eddiesArea card est exhausted, pas encore tappable)
+        assertThat(state.getPlayer("p1").getEddies()).isEqualTo(1); // Legend seule
+        assertThat(toSell.getZone()).isEqualTo(Zone.EDDIES_AREA);
+        assertThat(toSell.isExhausted()).isFalse();
+        // La ressource créée vaut 1 €$ par tour : inclinable dès ce tour.
+        execute(state, new SpendEddiesCommand("p1", toSell.getInstanceId()));
         assertThat(state.getPlayer("p1").getEddies()).isEqualTo(2);
-        // Prochain tour : la carte Eddies devient tappable pour +1 supplémentaire
+        // Prochain tour : réserve remise à 0, la carte Eddies est redressée.
         execute(state, new EndTurnCommand("p1"));
         execute(state, new EndTurnCommand("p2"));
         // p1 début tour 2 : eddies reset 0, legends et eddies cards redressées
@@ -405,20 +410,24 @@ class GameIntegrationTest {
 
     // ------------------------------------------------------------------
     // R5 — Vente de carte
+    // (Mini-Feature 3 : la vente CRÉE une ressource, aucun Eddie immédiat.
+    //  Tests dédiés : com.cyberpunktcg.engine.command.SellCardCommandTest —
+    //  testR3_SellCard_GoesToEddiesArea_FaceDown_NotExhausted / testR3_SellCard_LimitOnePerTurn)
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("R5 - Vente 1 par tour, révélée, face cachée en Eddies Area, +1 Eddie")
+    @DisplayName("R5 - Vente 1 par tour, révélée, face cachée en Eddies Area, prête (0 Eddie immédiat)")
     void testR5_Sell_OnePerTurn_FaceDownEddiesArea() {
         GameState state = newGame();
         CardInstance first = GameFixtures.handCard(state, "p1", GameFixtures.coloredUnit("sell-1", CardColor.RED,1,2,2));
         CardInstance second = GameFixtures.handCard(state, "p1", GameFixtures.coloredUnit("sell-2", CardColor.RED,1,3,3));
 
         execute(state, new SellCardCommand("p1", first.getInstanceId()));
-        assertThat(state.getPlayer("p1").getEddies()).isEqualTo(1);
+        // Aucun Eddie crédité : la vente transforme la carte en ressource, elle ne paie pas.
+        assertThat(state.getPlayer("p1").getEddies()).isZero();
         assertThat(first.getZone()).isEqualTo(Zone.EDDIES_AREA);
         assertThat(first.isFaceDown()).isTrue();
-        assertThat(first.isExhausted()).isTrue(); // immédiate +1, donc exhausted ce tour
+        assertThat(first.isExhausted()).isFalse(); // posée prête : inclinable dès ce tour (R6)
         assertThat(state.getPlayer("p1").hasSoldThisTurn()).isTrue();
         assertThat(state.getGameLog().getEntries()).anyMatch(e -> "CARD_REVEALED".equals(e.getActionType()));
 
@@ -429,13 +438,18 @@ class GameIntegrationTest {
     }
 
     @Test
-    @DisplayName("R5 - Carte vendue reste en Eddies Area comme ressource future")
+    @DisplayName("R5 - Carte vendue = ressource : prête dès la vente, inclinable chaque tour")
     void testR5_Sell_StaysAsFutureResource() {
         GameState state = newGame();
         CardInstance toSell = GameFixtures.handCard(state, "p1", GameFixtures.coloredUnit("future", CardColor.RED,1,1,1));
         execute(state, new SellCardCommand("p1", toSell.getInstanceId()));
         assertThat(toSell.getZone()).isEqualTo(Zone.EDDIES_AREA);
-        // Tour suivant : redressée et spendable
+        assertThat(state.getPlayer("p1").getEddies()).isZero();
+        assertThat(toSell.isExhausted()).isFalse();
+        // Inclinable immédiatement : la ressource créée vaut 1 €$ ce tour-ci.
+        execute(state, new SpendEddiesCommand("p1", toSell.getInstanceId()));
+        assertThat(state.getPlayer("p1").getEddies()).isEqualTo(1);
+        // Tour suivant : redressée et de nouveau spendable
         execute(state, new EndTurnCommand("p1"));
         execute(state, new EndTurnCommand("p2"));
         assertThat(toSell.isExhausted()).isFalse();
@@ -456,7 +470,10 @@ class GameIntegrationTest {
         // p1 nouveau tour : peut revendre
         assertThat(state.getPlayer("p1").hasSoldThisTurn()).isFalse();
         execute(state, new SellCardCommand("p1", b.getInstanceId()));
-        assertThat(state.getPlayer("p1").getEddies()).isEqualTo(1); // reset 0 +1
+        // Deux ventes sur deux tours = deux ressources, toujours 0 Eddie crédité.
+        assertThat(state.getPlayer("p1").getEddies()).isZero();
+        assertThat(state.getPlayer("p1").getEddiesArea()).contains(a, b);
+        assertThat(b.isExhausted()).isFalse();
     }
 
     // ------------------------------------------------------------------

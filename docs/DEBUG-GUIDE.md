@@ -56,7 +56,7 @@ plus anciennes sont évincées, l'index continue de croître.
 #2  [INFO ] SETUP           Mise en place de Joueur Val : 6 cartes en main, 3 Legends (premier joueur : 2 Legends déjà inclinées → 1 dispo), 6 dés Gig
 #3  [OK   ] SPEND_LEGEND    Joueur Val incline Legend face-down → +1 Eddie (total 1, Legends prêtes 0/3)
 #3b [OK   ] SPEND_EDDIES    Joueur Val incline Eddies card → +1 Eddie (total 2)
-#3c [OK   ] SELL_CARD       Joueur Val vend une carte révélée → EDDIES_AREA face cachée +1 Eddie persistant
+#3c [OK   ] SELL_CARD       Joueur Val vend une carte révélée → EDDIES_AREA face cachée, prête (0 Eddie immédiat : à incliner via SPEND_EDDIES)
 #4  [OK   ] PLAY_CARD       Joueur Val flip Legend (Call : coût 1 Eddie, une fois par tour) — 6th Street Recruits reste en Legends Area
 #5  [REFUSÉ] SELL_CARD      Joueur Val : vendre une carte → REFUSÉ (Une seule vente par tour)
 #5b [REFUSÉ] PLAY_CARD      Joueur Val : flip Legend → REFUSÉ (Call une seule fois par tour)
@@ -165,7 +165,7 @@ utile quand on ne connaît pas le `gameId`.
 | Symptôme | Marche à suivre |
 | --- | --- |
 | « Mon action ne fait rien » | Panneau Debug → chercher la ligne rouge (`REFUSÉ`). Le champ `details.reason` donne la règle violée ; `details.command` indique la commande concernée. |
-| « Je n'ai pas assez d'Eddies » | Ligne `SPEND_LEGEND` / `SPEND_EDDIES` / `SELL_CARD` du tour : les Eddies disponibles n'apparaissent qu'après l'inclinaison d'une Legend, d'une Eddies card, ou une vente (0 au début, perdus à la fin). `GET /api/debug/…/player/{id}` montre `eddies`, `legendsReady`, `eddiesAreaReady`. |
+| « Je n'ai pas assez d'Eddies » | Ligne `SPEND_LEGEND` / `SPEND_EDDIES` du tour : les Eddies disponibles n'apparaissent qu'après l'inclinaison d'une Legend ou d'une carte de l'Eddies Area (0 au début, perdus à la fin). **Une vente (`SELL_CARD`) ne crédite rien** : elle pose la carte face cachée et prête en Eddies Area — il faut ensuite l'incliner (`SPEND_EDDIES`) pour 1 €$. `GET /api/debug/…/player/{id}` montre `eddies`, `legendsReady`, `eddiesAreaReady`. |
 | « Je ne peux pas jouer une carte » | Vérifier `eddies` (coût) — **la RAM n'est PLUS vérifiée en partie** (uniquement deckbuilder). Si une carte à 6 Eddies est refusée, la source est `Eddies insuffisants`. |
 | « Mon attaque ne vole pas de Gig » | Chercher `REACTION_WINDOW` puis la ligne `ATTACK` : un **BLOCKER** prêt intercepte (`Un BLOCKER rival doit intercepter cette attaque`) et interdit le vol direct. |
 | « Le combat n'a pas tué la bonne Unit » | Ligne `UNIT_DEFEATED` + la ligne `ATTACK` de combat (puissances comparées) : à égalité, **les deux** Units sont vaincues. |

@@ -15,12 +15,31 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Vend une carte de la main : elle est <strong>montrée au rival</strong> (révélation),
- * puis placée face cachée dans l'Eddies Area (le joueur l'« incline » pour encaisser
- * l'Eddie) et rapporte exactement {@code 1} Eddie, quel que soit son coût imprimé.
+ * Vend une carte de la main — Mini-Feature 3 : <strong>la vente crée une ressource</strong>,
+ * elle ne rapporte aucun Eddie immédiatement.
  *
- * <p>Règle imposée : {@link GameConstants#SALES_PER_TURN} vente par tour maximum,
- * en phase {@code MAIN}. Une deuxième vente durant le même tour est illégale.</p>
+ * <p>Déroulé officiel imposé (Guide § MAIN PHASE — « SELL FOR EDDIE (ONCE PER TURN) »
+ * et § GLOSSARY — SELL : « reveal it to your Rival, then place it face-down in the
+ * Eddies area ») :</p>
+ * <ol>
+ *   <li>la carte est <strong>révélée au rival</strong> — tracée par le journal
+ *   ({@code CARD_REVEALED}, ligne {@code INFO}, et événement {@code EFFECT_RESOLVED}) ;</li>
+ *   <li>elle est <strong>retirée de la main</strong> et placée dans
+ *   {@link Zone#EDDIES_AREA} (ni {@code TRASH}, ni {@code FIELD}) ;</li>
+ *   <li>elle y est posée {@code faceDown = true} (identité secrète pour le rival) et
+ *   {@code exhausted = false} : elle est <strong>prête à être utilisée</strong>.</li>
+ * </ol>
+ *
+ * <p>Aucun Eddie n'est crédité par cette commande : quel que soit son coût imprimé,
+ * une carte vendue ne vaut que {@code 1} €$ <em>par tour</em>, obtenu en l'inclinant
+ * ({@link SpendEddiesCommand}, R6). Comme elle est posée prête, elle peut être
+ * inclinée dès le tour de la vente.</p>
+ *
+ * <p>Limites : {@link GameConstants#SALES_PER_TURN} vente par tour et par joueur
+ * (marqueur {@link Player#hasSoldThisTurn()}, réinitialisé par {@code Player.startTurn()}),
+ * en phase {@code MAIN} uniquement, par le joueur actif, sur une partie en cours.</p>
+ *
+ * @see SpendEddiesCommand incliner une carte de l'Eddies Area pour gagner 1 €$
  */
 public class SellCardCommand implements GameCommand {
 
@@ -64,6 +83,8 @@ public class SellCardCommand implements GameCommand {
         if (state.getPhase() != Phase.MAIN) {
             throw new GameRuleException("On ne vend qu'en phase Main");
         }
+        // R3.1 : GameConstants.SALES_PER_TURN (= 1) vente par tour, marqueur remis à
+        // zéro au début du tour du joueur (Player.startTurn).
         if (player.hasSoldThisTurn()) {
             throw new GameRuleException("Une seule vente par tour (déjà effectuée)");
         }
@@ -78,7 +99,7 @@ public class SellCardCommand implements GameCommand {
         Player player = state.getPlayer(playerId);
         CardInstance card = player.findIn(Zone.HAND, cardInstanceId).get();
 
-        int saleNumber = player.hasSoldThisTurn() ? 2 : 1;
+        // 1. Révélation au rival : seule étape publique de la vente.
         state.appendEvent(GameEventType.EFFECT_RESOLVED, playerId,
                 "carte révélée au rival : " + card.getName());
         state.logInfo(playerId, "CARD_REVEALED",
@@ -87,19 +108,29 @@ public class SellCardCommand implements GameCommand {
                         "cost", card.getEffectiveCost(), "color", card.getColor() == null
                                 ? null : card.getColor().value()));
 
+        // 2. La carte quitte la main et rejoint l'Eddies Area.
         player.moveToZone(card, Zone.EDDIES_AREA);
+
+        // 3. Elle y devient une ressource : face cachée et PRÊTE (exhausted = false),
+        //    donc inclinable pour 1 €$ — y compris dès ce tour. Aucun Eddie crédité ici.
         card.setFaceDown(true);
-        card.setExhausted(true);
-        player.addEddy();
+        card.setExhausted(false);
         player.setHasSoldThisTurn(true);
+
         state.appendEvent(GameEventType.CARD_SOLD, playerId,
-                "vente de " + card.getName() + " (+1 Eddie, total " + player.getEddies() + ")");
+                "vente de " + card.getName() + " → Eddies Area (ressource face cachée, prête)");
         state.logSuccess(playerId, actionType(),
-                "Joueur " + playerId + " vend " + card.getName() + " → +1 Eddie (total "
-                        + player.getEddies() + " Eddies, " + GameConstants.SALES_PER_TURN + " vente/tour)",
+                "Joueur " + playerId + " vend " + card.getName() + " → Eddies Area face cachée,"
+                        + " prête à incliner (0 Eddie immédiat, total " + player.getEddies()
+                        + " Eddies, " + GameConstants.SALES_PER_TURN + " vente/tour)",
                 GameLog.details("card", card.getName(), "cardId", card.getCardId(),
-                        "eddieGained", 1, "eddiesTotal", player.getEddies(),
-                        "saleNumber", saleNumber, "salesPerTurn", GameConstants.SALES_PER_TURN));
+                        "zone", Zone.EDDIES_AREA.name(), "faceDown", card.isFaceDown(),
+                        "exhausted", card.isExhausted(),
+                        // eddieGained = 0 : la vente crée la ressource, l'Eddie est gagné
+                        // en l'inclinant (SPEND_EDDIES, R6).
+                        "eddieGained", 0, "eddiesTotal", player.getEddies(),
+                        "eddiesReady", player.eddiesAvailableForEddies().size(),
+                        "salesPerTurn", GameConstants.SALES_PER_TURN));
         return GameCommand.eventsSince(state, mark);
     }
 }

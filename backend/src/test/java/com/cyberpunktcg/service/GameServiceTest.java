@@ -10,6 +10,7 @@ import com.cyberpunktcg.domain.game.GameActionResult;
 import com.cyberpunktcg.domain.game.GameEvent;
 import com.cyberpunktcg.domain.game.GameState;
 import com.cyberpunktcg.domain.game.Phase;
+import com.cyberpunktcg.domain.game.Zone;
 import com.cyberpunktcg.engine.GameConstants;
 import com.cyberpunktcg.engine.GameRuleException;
 import com.cyberpunktcg.engine.command.PlayCardCommand;
@@ -128,8 +129,13 @@ class GameServiceTest {
                 new SellCardCommand(active, toSell.getInstanceId()));
 
         assertThat(events).isNotEmpty();
+        // Mini-Feature 3 : la vente ne crédite aucun Eddie — la carte devient une
+        // ressource de l'Eddies Area (face cachée, prête à être inclinée pour 1 €$).
+        assertThat(toSell.getZone()).isEqualTo(Zone.EDDIES_AREA);
+        assertThat(toSell.isFaceDown()).isTrue();
+        assertThat(toSell.isExhausted()).isFalse();
         assertThat(gameService.getGameStateInternal(state.getGameId())
-                .getPlayer(active).getEddies()).isEqualTo(1);
+                .getPlayer(active).getEddies()).isZero();
         // La vente est consignée dans le journal de diagnostic.
         assertThat(gameService.getGameLog(state.getGameId(), 20)).anyMatch(entry ->
                 "SELL_CARD".equals(entry.getActionType())

@@ -16,7 +16,10 @@ public enum Zone {
     FIELD,
     /** Défausse (Trash). Information publique. */
     TRASH,
-    /** Cartes vendues face cachée, 1 Eddie chacune. Visible par le propriétaire. */
+    /**
+     * Cartes vendues, posées face cachée : chaque carte y vaut {@code 1} €$
+     * <em>par tour</em>, obtenu en l'inclinant (R6). Visible par le propriétaire.
+     */
     EDDIES_AREA,
     /** Les 3 Legends, face cachée au départ. Visible par le propriétaire. */
     LEGENDS_AREA,
