@@ -19,7 +19,17 @@ export type Zone = 'DECK' | 'HAND' | 'FIELD' | 'TRASH' | 'EDDIES_AREA' | 'LEGEND
 export type RoomStatus = 'WAITING' | 'PLAYING' | 'CLOSED'
 
 /** Actions acceptées par `SEND /app/game/{gameId}/action` (doc §5.1). */
-export type GameAction = 'PLAY_CARD' | 'ATTACK' | 'SELL_CARD' | 'END_TURN' | 'CONCEDE'
+export type GameAction =
+  | 'PLAY_CARD'
+  | 'ATTACK'
+  | 'SELL_CARD'
+  /** Mini-Feature 4 (R4) : incliner une Legend ou une carte de l'Eddies Area pour +1 Eddie. */
+  | 'SPEND_RESOURCE'
+  /** Aliases historiques de `SPEND_RESOURCE` (cible unique dans une zone précise). */
+  | 'SPEND_LEGEND'
+  | 'SPEND_EDDIES'
+  | 'END_TURN'
+  | 'CONCEDE'
 
 export type GameEventType =
   | 'TURN_STARTED'

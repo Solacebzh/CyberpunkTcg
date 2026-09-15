@@ -1,5 +1,5 @@
 /**
- * Test de flux : Lobby → Partie → Vendre → Jouer → Attaquer → Fin de tour.
+ * Test de flux : Lobby → Partie → Vendre → Incliner (R4) → Jouer → Attaquer → Fin de tour.
  *
  * Ce qui est réellement exercé : les composants (`LobbyView`, `GameView`,
  * `CardComponent`, `TargetingOverlay`, `PlayerBoard`), les stores Pinia
@@ -242,13 +242,19 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     // 6 dés Gig par camp dans la colonne Fixer.
     expect(wrapper.findAll('[data-zone="FIXER"] [data-fixer-die]')).toHaveLength(12)
 
-    // --- 4. Vente : 1 carte de la main → +1 Eddie -------------------------
+    // --- 4. Vente (Mini-Feature 3) : 1 carte de la main → ressource, 0 ¤ immédiat ---
     const sold = game.me?.hand[0] as CardInstance
     await wrapper.get(`[data-instance-id="${sold.instanceId}"]`).trigger('click')
     expect(game.selectedInstanceId).toBe(sold.instanceId)
 
     await buttonWith(wrapper, 'Vendre').trigger('click')
-    await waitFor(() => (game.me?.eddies ?? 0) === 1, 'Eddie reçu après vente')
+    await waitFor(() => (game.me?.eddiesArea?.length ?? 0) === 1, 'ressource posée en Eddies Area')
+    // La vente ne crédite AUCUN Eddie : elle crée la ressource (face cachée, prête).
+    expect(game.me?.eddies).toBe(0)
+    const soldInArea = (game.me?.eddiesArea ?? []).find((c) => c.instanceId === sold.instanceId)
+    expect(soldInArea?.zone).toBe('EDDIES_AREA')
+    expect(soldInArea?.faceDown).toBe(true)
+    expect(soldInArea?.exhausted).toBe(false)
 
     const actions = () => commandsTo(server, `/app/game/${gameId}/action`)
     const sellCommand = actions().find((command) => command.action === 'SELL_CARD')
@@ -256,6 +262,27 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     expect(typeof sellCommand?.clientRequestId).toBe('string')
     expect(game.me?.hand).toHaveLength(5)
     expect(game.me?.hasSoldThisTurn).toBe(true)
+
+    // --- 4 bis. R4 (Mini-Feature 4) : incliner la ressource → +1 Eddie -----
+    // La carte vendue est rendue individuellement (face cachée) : on la sélectionne
+    // puis on l'incline via le bouton « Incliner (+1 ¤) ». Chaque STATE remplace
+    // l'état local : on relit donc toujours les exemplaires depuis `game.me`.
+    await wrapper.get(`[data-instance-id="${sold.instanceId}"]`).trigger('click')
+    expect(game.selectedInstanceId).toBe(sold.instanceId)
+    const spentReady = (game.me?.eddiesArea ?? []).find((c) => c.instanceId === sold.instanceId)
+    expect(spentReady).toBeTruthy()
+    expect(game.canSpendCard(spentReady as CardInstance)).toBeNull()
+
+    await buttonWith(wrapper, 'Incliner').trigger('click')
+    await waitFor(() => (game.me?.eddies ?? 0) === 1, 'Eddie reçu après inclinaison (R4)')
+
+    const spendCommand = actions().find((command) => command.action === 'SPEND_RESOURCE')
+    expect(spendCommand).toMatchObject({ action: 'SPEND_RESOURCE', instanceId: sold.instanceId })
+    const spent = (game.me?.eddiesArea ?? []).find((c) => c.instanceId === sold.instanceId)
+    expect(spent?.exhausted).toBe(true)
+    expect(spent?.zone).toBe('EDDIES_AREA') // la ressource reste dans sa zone
+    // Deuxième inclinaison de la même carte : refusé (1 €$ par tour et par carte).
+    expect(game.canSpendCard(spent as CardInstance)).toMatch(/déjà inclinée/)
 
     // --- 4 bis. Journal de diagnostic : actions et refus tracés -------------
     await waitFor(
@@ -302,8 +329,16 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     bravo.send(`/app/game/${gameId}/resync`, {})
     await waitFor(() => bravo.lastState() !== null, 'STATE reçue par Bravo')
     const bravoHand = playerOf(bravo.lastState(), 'Bravo').hand
-    bravo.send(`/app/game/${gameId}/action`, { action: 'SELL_CARD', instanceId: bravoHand[0]?.instanceId })
-    await waitFor(() => playerOf(bravo.lastState(), 'Bravo').eddies === 1, 'Eddie de Bravo')
+    const bravoSoldId = bravoHand[0]?.instanceId
+    bravo.send(`/app/game/${gameId}/action`, { action: 'SELL_CARD', instanceId: bravoSoldId })
+    await waitFor(
+      () => playerOf(bravo.lastState(), 'Bravo').eddiesArea.some((c) => c.instanceId === bravoSoldId),
+      'ressource de Bravo posée en Eddies Area',
+    )
+    expect(playerOf(bravo.lastState(), 'Bravo').eddies).toBe(0) // 0 ¤ immédiat (MF3)
+    // R4 : Bravo incline sa ressource pour financer sa Unit.
+    bravo.send(`/app/game/${gameId}/action`, { action: 'SPEND_RESOURCE', instanceId: bravoSoldId })
+    await waitFor(() => playerOf(bravo.lastState(), 'Bravo').eddies === 1, 'Eddie de Bravo (après inclinaison)')
 
     const bravoUnit = playerOf(bravo.lastState(), 'Bravo').hand.find((card) => card.type === 'unit') as CardInstance
     bravo.send(`/app/game/${gameId}/action`, { action: 'PLAY_CARD', instanceId: bravoUnit.instanceId })
