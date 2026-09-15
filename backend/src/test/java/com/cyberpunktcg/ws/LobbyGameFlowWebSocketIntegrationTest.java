@@ -10,6 +10,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 
@@ -73,6 +74,9 @@ class LobbyGameFlowWebSocketIntegrationTest {
             BlockingQueue<JsonNode> guestNotices = guest.subscribe("/topic/game/" + gameId);
             BlockingQueue<JsonNode> hostStates = host.subscribe("/topic/game/" + gameId + "/" + HOST);
             BlockingQueue<JsonNode> guestStates = guest.subscribe("/topic/game/" + gameId + "/" + GUEST);
+            // Journal de diagnostic (feature 6.5) : public, donc reçu par les deux joueurs.
+            BlockingQueue<JsonNode> hostLogs = host.subscribe("/topic/game/" + gameId + "/log");
+            BlockingQueue<JsonNode> guestLogs = guest.subscribe("/topic/game/" + gameId + "/log");
             // Le démarrage pousse déjà un état (best effort) ; on s'abonne puis on resync.
             guest.sendEmpty("/app/game/" + gameId + "/resync");
             host.sendEmpty("/app/game/" + gameId + "/resync");
@@ -81,42 +85,84 @@ class LobbyGameFlowWebSocketIntegrationTest {
             JsonNode guestState = guest.await(guestStates, this::isState, 10);
             assertInitialMaskedState(hostState, guestState, gameId);
 
-            // --- L'hôte termine son tour : les deux reçoivent le nouvel état ---
-            host.send("/app/game/" + gameId + "/action",
-                    new GameCommandDTO("END_TURN", null, null, null, null, null, null, null, "req-end-1"));
-            JsonNode hostAfter = host.await(hostStates,
-                    node -> isState(node) && node.path("state").path("turn").path("number").asInt() == 2, 10);
-            JsonNode guestAfter = guest.await(guestStates,
-                    node -> isState(node) && node.path("state").path("turn").path("number").asInt() == 2, 10);
-            assertThat(hostAfter).isNotNull();
-            assertThat(guestAfter).isNotNull();
-            assertThat(hostAfter.path("state").path("turn").path("activePlayerId").asText()).isEqualTo(GUEST);
-            assertThat(hostAfter.path("clientRequestId").asText()).isEqualTo("req-end-1");
-            assertThat(hostAfter.path("newEvents")).isNotEmpty();
+            // Le premier joueur est tiré au sort (feature 6.5) : on le lit dans l'état.
+            String starter = hostState.path("state").path("turn").path("activePlayerId").asText();
+            assertThat(starter).isIn(HOST, GUEST);
+            String otherPseudo = HOST.equals(starter) ? GUEST : HOST;
+            StompTestClient starterClient = HOST.equals(starter) ? host : guest;
+            StompTestClient otherClient = HOST.equals(starter) ? guest : host;
+            BlockingQueue<JsonNode> starterStates = HOST.equals(starter) ? hostStates : guestStates;
+            BlockingQueue<JsonNode> otherStates = HOST.equals(starter) ? guestStates : hostStates;
+            BlockingQueue<JsonNode> starterErrors = HOST.equals(starter) ? hostErrors : guestErrors;
+            BlockingQueue<JsonNode> otherErrors = HOST.equals(starter) ? guestErrors : hostErrors;
 
-            // --- Une action illégale de l'invité n'erre QUE chez lui ---
-            guest.send("/app/game/" + gameId + "/action",
+            // --- Le premier joueur termine son tour : les deux reçoivent le nouvel état ---
+            starterClient.send("/app/game/" + gameId + "/action",
+                    new GameCommandDTO("END_TURN", null, null, null, null, null, null, null, "req-end-1"));
+            JsonNode starterAfter = starterClient.await(starterStates,
+                    node -> isState(node) && node.path("state").path("turn").path("number").asInt() == 2, 10);
+            JsonNode otherAfter = otherClient.await(otherStates,
+                    node -> isState(node) && node.path("state").path("turn").path("number").asInt() == 2, 10);
+            assertThat(starterAfter).as("état du premier joueur attendu").isNotNull();
+            assertThat(otherAfter).as("état de l'adversaire attendu").isNotNull();
+            assertThat(starterAfter.path("state").path("turn").path("activePlayerId").asText())
+                    .isEqualTo(otherPseudo);
+            assertThat(starterAfter.path("clientRequestId").asText()).isEqualTo("req-end-1");
+            assertThat(starterAfter.path("newEvents")).isNotEmpty();
+
+            // --- Le journal de diagnostic est diffusé en temps réel aux deux joueurs ---
+            JsonNode hostLog = host.await(hostLogs, this::isLog, 10);
+            JsonNode guestLog = guest.await(guestLogs, this::isLog, 10);
+            assertThat(hostLog).as("journal poussé à l'hôte attendu").isNotNull();
+            assertThat(guestLog).as("journal poussé à l'invité attendu").isNotNull();
+            assertThat(hostLog.path("gameId").asText()).isEqualTo(gameId);
+            assertThat(hostLog.path("entries")).isNotEmpty();
+            List<String> actionTypes = fieldOf(hostLog.path("entries"), "actionType");
+            List<String> descriptions = fieldOf(hostLog.path("entries"), "description");
+            // La fin de tour journalise la phase END, la vérification de victoire,
+            // la phase DRAW (pioche) et le lancer de Gig (cf. docs/DEBUG-GUIDE.md).
+            assertThat(actionTypes).contains("DRAW", "VICTORY_CHECK", "GIG_ROLL");
+            assertThat(descriptions).anyMatch(line -> line.contains("Phase DRAW"));
+            assertThat(descriptions).anyMatch(line -> line.contains("Vérification victoire"));
+            assertThat(descriptions).anyMatch(line -> line.contains("Lancer de Gig"));
+            assertThat(fieldOf(hostLog.path("entries"), "result")).doesNotContain("ILLEGAL");
+            // L'état complet embarque le journal : le panneau de debug s'amorce après un resync.
+            assertThat(starterAfter.path("state").path("gameLog")).isNotEmpty();
+            assertThat(fieldOf(starterAfter.path("state").path("gameLog"), "description"))
+                    .anyMatch(line -> line.contains("Vérification victoire"));
+
+            // --- Une action illégale du joueur actif n'erre QUE chez lui ---
+            otherClient.send("/app/game/" + gameId + "/action",
                     new GameCommandDTO("PLAY_CARD", UUID.randomUUID(), null, null,
                             null, null, null, null, "req-bad"));
-            JsonNode error = guest.await(guestErrors,
+            JsonNode error = otherClient.await(otherErrors,
                     node -> "ERROR".equals(node.path("type").asText())
                             && "ILLEGAL_ACTION".equals(node.path("code").asText()), 10);
-            assertThat(error).as("l'invité fautif doit recevoir une erreur privée").isNotNull();
+            assertThat(error).as("le joueur fautif doit recevoir une erreur privée").isNotNull();
             assertThat(error.path("clientRequestId").asText()).isEqualTo("req-bad");
-            assertThat(hostErrors.poll(500, java.util.concurrent.TimeUnit.MILLISECONDS)).isNull();
+            assertThat(starterErrors.poll(500, java.util.concurrent.TimeUnit.MILLISECONDS)).isNull();
 
-            // --- L'hôte ne peut pas jouer hors de son tour ---
-            host.send("/app/game/" + gameId + "/action",
+            // Le refus est consigné dans le journal de diagnostic et diffusé (ILLEGAL + motif).
+            JsonNode refusalLog = host.await(hostLogs, node -> isLog(node) && hasIllegal(node), 10);
+            assertThat(refusalLog).as("refus journalisé et diffusé attendu").isNotNull();
+            JsonNode refusal = illegalEntry(refusalLog.path("entries"));
+            assertThat(refusal.path("description").asText()).contains("REFUSÉ");
+            assertThat(refusal.path("result").asText()).isEqualTo("ILLEGAL");
+            assertThat(refusal.path("details").path("reason").asText()).isNotBlank();
+            assertThat(refusal.path("playerId").asText()).isEqualTo(otherPseudo);
+
+            // --- Un joueur ne peut pas jouer hors de son tour ---
+            starterClient.send("/app/game/" + gameId + "/action",
                     new GameCommandDTO("END_TURN", null, null, null, null, null, null, null, null));
-            JsonNode hostError = host.await(hostErrors,
+            JsonNode outOfTurnError = starterClient.await(starterErrors,
                     node -> "ILLEGAL_ACTION".equals(node.path("code").asText()), 10);
-            assertThat(hostError).isNotNull();
-            assertThat(guestErrors.poll(300, java.util.concurrent.TimeUnit.MILLISECONDS)).isNull();
+            assertThat(outOfTurnError).isNotNull();
+            assertThat(otherErrors.poll(300, java.util.concurrent.TimeUnit.MILLISECONDS)).isNull();
 
             // --- Action inconnue ---
-            guest.send("/app/game/" + gameId + "/action",
+            otherClient.send("/app/game/" + gameId + "/action",
                     new GameCommandDTO("DANCE", null, null, null, null, null, null, null, null));
-            assertThat(guest.await(guestErrors,
+            assertThat(otherClient.await(otherErrors,
                     node -> "ILLEGAL_ACTION".equals(node.path("code").asText())
                             && node.path("message").asText().contains("inconnue"), 10)).isNotNull();
 
@@ -157,6 +203,37 @@ class LobbyGameFlowWebSocketIntegrationTest {
         return "STATE".equals(node.path("type").asText());
     }
 
+    /** Message du journal de diagnostic (`/topic/game/{gameId}/log`). */
+    private boolean isLog(JsonNode node) {
+        return "LOG".equals(node.path("type").asText());
+    }
+
+    private boolean hasIllegal(JsonNode logMessage) {
+        for (JsonNode entry : logMessage.path("entries")) {
+            if ("ILLEGAL".equals(entry.path("result").asText())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private JsonNode illegalEntry(JsonNode entries) {
+        for (JsonNode entry : entries) {
+            if ("ILLEGAL".equals(entry.path("result").asText())) {
+                return entry;
+            }
+        }
+        throw new IllegalStateException("Aucune entrée ILLEGAL dans : " + entries);
+    }
+
+    private List<String> fieldOf(JsonNode array, String field) {
+        List<String> values = new java.util.ArrayList<String>();
+        for (JsonNode node : array) {
+            values.add(node.path(field).asText());
+        }
+        return values;
+    }
+
     private void assertInitialMaskedState(JsonNode hostState, JsonNode guestState, String gameId) {
         assertThat(hostState).as("état de l'hôte attendu").isNotNull();
         assertThat(guestState).as("état de l'invité attendu").isNotNull();
@@ -167,7 +244,9 @@ class LobbyGameFlowWebSocketIntegrationTest {
         assertThat(guest.path("yourPlayerId").asText()).isEqualTo(GUEST);
         assertThat(host.path("phase").asText()).isEqualTo("MAIN");
         assertThat(host.path("gameOver").asBoolean()).isFalse();
-        assertThat(host.path("turn").path("activePlayerId").asText()).isEqualTo(HOST);
+        // Le premier joueur est tiré au sort : le tour 1 appartient à l'un des deux joueurs.
+        assertThat(host.path("turn").path("activePlayerId").asText()).isIn(HOST, GUEST);
+        assertThat(host.path("turn").path("number").asInt()).isEqualTo(1);
 
         JsonNode hostViewOfHost = player(host, HOST);
         JsonNode hostViewOfGuest = player(host, GUEST);

@@ -28,11 +28,52 @@ public final class GameFixtures {
     /** Définition de carte synthétique (texte = capacités jointes). */
     public static Card card(String id, CardType type, Integer cost, Integer power,
                             List<CardKeyword> keywords, List<String> abilities) {
+        return coloredCard(id, type, CardColor.RED, 1, cost, power, keywords, abilities);
+    }
+
+    /**
+     * Définition de carte synthétique avec couleur et RAM explicites.
+     *
+     * <p>La RAM n'est pas une ressource consommée : c'est la valeur imprimée qui
+     * doit rester sous le plafond de la couleur (somme des RAM des Legends).</p>
+     */
+    public static Card coloredCard(String id, CardType type, CardColor color, int ram,
+                                   Integer cost, Integer power, List<CardKeyword> keywords,
+                                   List<String> abilities) {
         String text = abilities.isEmpty() ? "test card" : String.join(" ", abilities);
         List<String> tags = new ArrayList<String>();
-        return new Card(id, "Test " + id, null, type, CardColor.RED, 1,
-                cost, power, null, tags, keywords, text,
+        return new Card(id, "Test " + id, null, type, color, ram,
+                cost, power, null, tags, new ArrayList<CardKeyword>(keywords), text,
                 new ArrayList<String>(abilities), null, "TEST", "001", CardRarity.COMMON);
+    }
+
+    /** Unit colorée (RAM explicite). */
+    public static Card coloredUnit(String id, CardColor color, int ram, int cost, int power,
+                                   CardKeyword... keywords) {
+        return coloredCard(id, CardType.UNIT, color, ram, cost, power,
+                Arrays.asList(keywords), Collections.<String>emptyList());
+    }
+
+    /** Program coloré (RAM explicite). */
+    public static Card coloredProgram(String id, CardColor color, int ram, int cost, String ability,
+                                      CardKeyword... keywords) {
+        List<String> abilities = new ArrayList<String>();
+        if (ability != null) {
+            abilities.add(ability);
+        }
+        return coloredCard(id, CardType.PROGRAM, color, ram, cost, null,
+                Arrays.asList(keywords), abilities);
+    }
+
+    /** Legend colorée de RAM explicite (aucun coût en Eddies). */
+    public static Card coloredLegend(String id, CardColor color, int ram, String ability,
+                                     CardKeyword... keywords) {
+        List<String> abilities = new ArrayList<String>();
+        if (ability != null) {
+            abilities.add(ability);
+        }
+        return coloredCard(id, CardType.LEGEND, color, ram, null, 2,
+                Arrays.asList(keywords), abilities);
     }
 
     public static Card unit(String id, int cost, int power, CardKeyword... keywords) {
