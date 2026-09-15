@@ -73,6 +73,10 @@ tools/mock-server.mjs      # `npm run mock:ws` : /api/* + ws://…/ws
 - Les classes Tailwind dynamiques doivent être écrites en toutes lettres (le scanner ne lit pas les chaînes construites).
 - Les attributs `data-instance-id` / `data-anim="…"` sont les points d'accroche des
   animations GSAP : ne pas les renommer sans mettre à jour `useGameAnimations`.
+- La disposition du plateau est celle du **tapis officiel** : une seule grille CSS
+  (`.playmat-grid` dans `src/assets/main.css`, zones `data-zone="FIXER|FIELD|DECK|LEGENDS|
+  EDDIES|TRASH"`, compteurs de Gigs en haut). Détails et mapping serveur →
+  [`../docs/FRONTEND-ARCHITECTURE.md`](../docs/FRONTEND-ARCHITECTURE.md) § 6 bis.
 - Une seule connexion STOMP par page, partagée via `useGameSocket()`.
 
 ## Jouer une partie en local

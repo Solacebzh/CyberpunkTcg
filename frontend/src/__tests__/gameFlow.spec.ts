@@ -2,7 +2,7 @@
  * Test de flux : Lobby → Partie → Vendre → Jouer → Attaquer → Fin de tour.
  *
  * Ce qui est réellement exercé : les composants (`LobbyView`, `GameView`,
- * `CardComponent`, `TargetingOverlay`, `PlayerArea`), les stores Pinia
+ * `CardComponent`, `TargetingOverlay`, `PlayerBoard`), les stores Pinia
  * (`lobby`, `game`, `deck`, `ui`) et le composable `useGameSocket` avec le vrai
  * client `@stomp/stompjs`. Seule l'extrémité réseau est simulée
  * (`devtools/mock-protocol.ts`, contrat de docs/WEBSOCKET-PROTOCOL.md).
@@ -224,6 +224,23 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     ).toBe('Carte masquée')
     expect(game.isMyTurn).toBe(true)
     expect(game.turnNumber).toBe(1)
+
+    // Tapis officiel : les deux demi-plateaux exposent les 6 zones imprimées et le
+    // bandeau « Rival Gigs / Friendly Gigs » coiffe le tout (mini-feature playmat).
+    for (const side of ['me', 'opponent'] as const) {
+      expect(wrapper.findAll(`[data-board="${side}"] .playmat-grid`)).toHaveLength(1)
+      for (const zone of ['FIXER', 'FIELD', 'DECK', 'LEGENDS', 'EDDIES', 'TRASH']) {
+        expect(wrapper.findAll(`[data-board="${side}"] [data-zone="${zone}"]`)).toHaveLength(1)
+      }
+    }
+    expect(wrapper.findAll('[data-zone="GIGS"]')).toHaveLength(1)
+    expect(wrapper.get('[data-zone="GIGS"]').text()).toContain('Rival Gigs')
+    expect(wrapper.get('[data-zone="GIGS"]').text()).toContain('Friendly Gigs')
+    // 3 slots de Legends remplis par camp (règle : exactement 3 Legends).
+    expect(wrapper.findAll('[data-zone="LEGENDS"] [data-slot]')).toHaveLength(6)
+    expect(wrapper.findAll('[data-zone="LEGENDS"] [data-slot][data-filled="true"]')).toHaveLength(6)
+    // 6 dés Gig par camp dans la colonne Fixer.
+    expect(wrapper.findAll('[data-zone="FIXER"] [data-fixer-die]')).toHaveLength(12)
 
     // --- 4. Vente : 1 carte de la main → +1 Eddie -------------------------
     const sold = game.me?.hand[0] as CardInstance

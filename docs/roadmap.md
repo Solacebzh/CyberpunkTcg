@@ -59,6 +59,9 @@ Invariants confirmés du moteur : victoire à 7 Gigs en début de tour, une vent
 ## 🔜 Feature 06 — Expérience de jeu
 
 - plateau : Fixer Area, Legends, Field, Eddies, Gigs alliés/adverses, journal de partie ;
+  *(mini-feature livrée : la disposition du plateau suit le tapis officiel — grille CSS
+  `.playmat-grid`, 3 slots de Legends, colonne Fixer d20 → d4, bandeau Rival/Friendly Gigs ;
+  voir `FRONTEND-ARCHITECTURE.md` § 6 bis)* ;
 - animations GSAP : pose, attaque, vols de Gig, retournement de Legend ;
 - mode spectateur, historique et rejeu d'une partie ;
 - responsive et accessibilité (contraste, navigation clavier, préférence `prefers-reduced-motion`).
