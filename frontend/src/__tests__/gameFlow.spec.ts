@@ -18,7 +18,7 @@ import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 
 import GameView from '@/views/GameView.vue'
 import LobbyView from '@/views/LobbyView.vue'
-import { __resetGameSocketForTests } from '@/composables/useGameSocket'
+import { __resetGameSocketForTests, useGameSocket } from '@/composables/useGameSocket'
 import { useDeckStore } from '@/stores/deck'
 import { useGameStore } from '@/stores/game'
 import { useLobbyStore } from '@/stores/lobby'
@@ -168,6 +168,7 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     const lobby = useLobbyStore()
     const game = useGameStore()
     const decks = useDeckStore()
+    const socket = useGameSocket()
 
     // --- 1. Connexion + deck personnalisé --------------------------------
     await wrapper.get('input[placeholder="Johnny"]').setValue('Alpha')
@@ -209,6 +210,8 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
       .map((frame) => frame.headers.destination)
     expect(subscribed).toContain(`/topic/game/${gameId}/Alpha`)
     expect(subscribed).toContain(`/topic/game/${gameId}`)
+    // Journal de diagnostic (feature 6.5) : topic public souscrit par le client.
+    expect(subscribed).toContain(`/topic/game/${gameId}/log`)
     expect(commandsTo(server, '/app/game/' + gameId + '/resync')).toHaveLength(1)
 
     // Plateau rendu : 6 cartes en main, main adverse masquée, 3 Legends.
@@ -235,6 +238,25 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     expect(sellCommand).toMatchObject({ action: 'SELL_CARD', instanceId: sold.instanceId })
     expect(typeof sellCommand?.clientRequestId).toBe('string')
     expect(game.me?.hand).toHaveLength(5)
+    expect(game.me?.hasSoldThisTurn).toBe(true)
+
+    // --- 4 bis. Journal de diagnostic : actions et refus tracés -------------
+    await waitFor(
+      () => game.debugLog.some((entry) => entry.actionType === 'SELL_CARD' && entry.result === 'SUCCESS'),
+      'vente journalisée (SUCCESS)',
+    )
+    expect(game.debugLog.some((entry) => entry.actionType === 'GAME_START')).toBe(true)
+
+    // Une seconde vente est illégale : le refus est journalisé et diffusé (ILLEGAL).
+    const secondCard = game.me?.hand[0] as CardInstance
+    socket.sendAction(gameId, { action: 'SELL_CARD', instanceId: secondCard.instanceId })
+    await waitFor(
+      () => game.debugLog.some((entry) => entry.result === 'ILLEGAL'),
+      'refus journalisé (ILLEGAL)',
+    )
+    const refusal = game.debugLog.find((entry) => entry.result === 'ILLEGAL')
+    expect(refusal?.description).toContain('REFUSÉ')
+    expect(refusal?.phase).toBeTruthy()
     expect(game.me?.hasSoldThisTurn).toBe(true)
 
     // --- 5. Pose d'une Unit (coût 1) -------------------------------------

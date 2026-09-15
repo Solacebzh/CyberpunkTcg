@@ -5,13 +5,17 @@ import com.cyberpunktcg.domain.card.CardType;
 import com.cyberpunktcg.domain.game.CardInstance;
 import com.cyberpunktcg.domain.game.GameEvent;
 import com.cyberpunktcg.domain.game.GameEventType;
+import com.cyberpunktcg.domain.game.GameLog;
+import com.cyberpunktcg.domain.game.GameLogEntry;
 import com.cyberpunktcg.domain.game.GameState;
+import com.cyberpunktcg.domain.game.Phase;
 import com.cyberpunktcg.domain.game.Player;
 import com.cyberpunktcg.domain.game.Zone;
 import com.cyberpunktcg.engine.GameConstants;
 import com.cyberpunktcg.engine.GameRuleException;
 import com.cyberpunktcg.engine.command.GameCommand;
 import com.cyberpunktcg.repository.CardRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,23 +38,41 @@ import java.util.concurrent.ConcurrentHashMap;
  * qui valident, exécutent et détectent la victoire. Les vues exposées aux
  * joueurs sont systématiquement masquées (voir
  * {@link GameState#maskedCopyFor(String)}).</p>
+ *
+ * <p>Depuis la feature 6.5, le service tient aussi le <strong>journal de
+ * diagnostic</strong> ({@link GameLog}) : chaque action acceptée y est consignée
+ * par la commande, et chaque action refusée par le service (avec son motif), ce
+ * qui rend les règles observables en jeu (panneau de debug, {@code /api/debug}).</p>
  */
 @Service
 public class GameService {
 
     private final CardRepository cardRepository;
     private final Map<String, GameState> games = new ConcurrentHashMap<String, GameState>();
+    /** Graine dédiée aux choix de mise en place (premier joueur) — jamais exposée. */
+    private final Random setupRandom;
 
+    /** Constructeur Spring : graine de mise en place aléatoire. */
+    @Autowired
     public GameService(CardRepository cardRepository) {
+        this(cardRepository, new Random());
+    }
+
+    /** Constructeur de test : permet de fixer la graine de mise en place. */
+    public GameService(CardRepository cardRepository, Random setupRandom) {
         this.cardRepository = cardRepository;
+        this.setupRandom = setupRandom == null ? new Random() : setupRandom;
     }
 
     /**
      * Crée une partie 1v1 : les IDs de type {@code legend} rejoignent la Legends Area
      * (face cachée), les autres forment le deck (mélangé). Chaque joueur reçoit
-     * {@link GameConstants#STARTING_HAND_SIZE} cartes. Le joueur 1 commence en phase Main.
+     * {@link GameConstants#STARTING_HAND_SIZE} cartes. Le <strong>premier joueur est
+     * tiré au sort</strong> ; il commence en phase {@code MAIN} et subit le malus de
+     * mise en place (deux Legends déjà inclinées, il ne peut donc encaisser qu'un
+     * Eddie en inclinant la troisième).
      *
-     * @param playerOneId    joueur 1 (commence)
+     * @param playerOneId    joueur 1 (candidat au premier tour)
      * @param playerTwoId    joueur 2
      * @param deckOneCardIds définitions du joueur 1 (legends + deck principal)
      * @param deckTwoCardIds définitions du joueur 2 (legends + deck principal)
@@ -72,12 +94,26 @@ public class GameService {
         Player playerOne = buildPlayer(playerOneId, deckOneCardIds, new Random(seed));
         Player playerTwo = buildPlayer(playerTwoId, deckTwoCardIds, new Random(seed + 1));
 
+        // Premier joueur tiré au sort (règle de mise en place, feature 6.5).
+        boolean playerOneStarts = setupRandom.nextBoolean();
+        Player starter = playerOneStarts ? playerOne : playerTwo;
+        Player second = playerOneStarts ? playerTwo : playerOne;
+
+        applyFirstPlayerPenalty(starter);
+
         List<Player> players = new ArrayList<Player>();
-        players.add(playerOne);
-        players.add(playerTwo);
+        players.add(starter);
+        players.add(second);
         GameState state = new GameState(UUID.randomUUID().toString(), players, seed);
-        state.appendEvent(GameEventType.TURN_STARTED, playerOneId,
-                "début de la partie (tour 1, " + playerOneId + " commence)");
+
+        state.appendEvent(GameEventType.TURN_STARTED, starter.getId(),
+                "début de la partie (tour 1, " + starter.getId() + " commence)");
+        state.logInfo(null, "GAME_START",
+                "Nouvelle partie : Joueur " + starter.getId() + " commence (premier joueur tiré au sort)",
+                GameLog.details("starter", starter.getId(), "second", second.getId(),
+                        "seed", seed, "phase", state.getPhase().name()));
+        logSetup(state, starter, true);
+        logSetup(state, second, false);
         games.put(state.getGameId(), state);
         return state;
     }
@@ -85,14 +121,52 @@ public class GameService {
     /**
      * Valide puis exécute une commande sur une partie.
      *
+     * <p>Toute action — acceptée ou refusée — produit une entrée dans le journal
+     * de diagnostic ({@link GameState#getGameLog()}), ce qui permet de comprendre
+     * en jeu pourquoi une action ne fonctionne pas.</p>
+     *
      * @return les événements produits
      * @throws ResponseStatusException 404 si la partie est inconnue
      * @throws GameRuleException si la commande est illégale
      */
     public List<GameEvent> executeCommand(String gameId, GameCommand command) {
         GameState state = requireGame(gameId);
-        command.validate(state);
-        return command.execute(state);
+        if (command == null) {
+            throw new IllegalArgumentException("Commande obligatoire");
+        }
+        String playerId = command.getPlayerId();
+        try {
+            command.validate(state);
+        } catch (GameRuleException error) {
+            logRefusal(state, playerId, command, error.getMessage());
+            throw error;
+        }
+        try {
+            List<GameEvent> events = command.execute(state);
+            if (events.isEmpty()) {
+                state.log(playerId, command.actionType(), command.describe(state) + " → aucun effet",
+                        com.cyberpunktcg.domain.game.GameActionResult.FAILED, state.snapshotDetails());
+            }
+            return events;
+        } catch (GameRuleException error) {
+            logRefusal(state, playerId, command, error.getMessage());
+            throw error;
+        }
+    }
+
+    /**
+     * Consigne une action refusée hors du moteur (transport STOMP : action
+     * inconnue, cible illisible…). Aucune mutation d'état.
+     *
+     * @return l'entrée consignée, ou {@code null} si la partie est inconnue
+     */
+    public GameLogEntry logExternalRefusal(String gameId, String playerId, String actionType,
+                                           String description, Map<String, Object> details) {
+        GameState state = games.get(gameId);
+        if (state == null) {
+            return null;
+        }
+        return state.logIllegal(playerId, actionType, description, details);
     }
 
     /**
@@ -112,6 +186,9 @@ public class GameService {
         String endReason = reason + " de " + playerId;
         state.setWinner(winner.getId(), endReason);
         state.appendEvent(GameEventType.GAME_WON, winner.getId(), endReason);
+        state.logSuccess(winner.getId(), "CONCEDE", "FIN DE PARTIE : " + endReason
+                        + " → victoire de Joueur " + winner.getId(),
+                GameLog.details("reason", endReason, "winner", winner.getId(), "loser", playerId));
         return new GameEvent(GameEventType.GAME_WON, winner.getId(), endReason);
     }
 
@@ -127,12 +204,87 @@ public class GameService {
 
     /**
      * État serveur non masqué, réservé au serveur et aux tests.
-     * Ne jamais l'exposer tel quel aux clients.
+     * Ne jamais l'exposer tel quel aux clients (sauf {@code /api/debug}, profil test/dev).
      *
      * @throws ResponseStatusException 404 si la partie est inconnue
      */
     public GameState getGameStateInternal(String gameId) {
         return requireGame(gameId);
+    }
+
+    /** Dernières entrées du journal de diagnostic ({@code limit} au plus). */
+    public List<GameLogEntry> getGameLog(String gameId, int limit) {
+        return requireGame(gameId).getGameLog().recent(limit);
+    }
+
+    /** Identifiants des parties en mémoire (ordre d'insertion, pour le debug). */
+    public List<String> listGameIds() {
+        return new ArrayList<String>(games.keySet());
+    }
+
+    /**
+     * Force la phase d'une partie — <strong>réservé au debug</strong>
+     * ({@code POST /api/debug/game/{gameId}/force-phase}) : permet de tester une
+     * règle sans rejouer les phases précédentes. La manipulation est journalisée.
+     *
+     * @param gameId  partie visée
+     * @param phase   phase cible
+     * @param actorId joueur au nom duquel l'opération est journalisée (peut être {@code null})
+     * @return l'état (serveur) après forçage
+     */
+    public GameState forcePhase(String gameId, Phase phase, String actorId) {
+        GameState state = requireGame(gameId);
+        if (phase == null) {
+            throw new IllegalArgumentException("Phase cible obligatoire (DRAW, MAIN, COMBAT, END)");
+        }
+        Phase previous = state.getPhase();
+        state.setPhase(phase);
+        state.appendEvent(GameEventType.PHASE_CHANGED, actorId,
+                "phase forcée (debug) : " + previous + " → " + phase);
+        state.logInfo(actorId, "DEBUG_FORCE_PHASE",
+                "DEBUG : phase forcée " + previous + " → " + phase,
+                GameLog.details("from", previous.name(), "to", phase.name(), "debug", true));
+        return state;
+    }
+
+    // ------------------------------------------------------------------
+    // Journalisation interne
+    // ------------------------------------------------------------------
+
+    private void logRefusal(GameState state, String playerId, GameCommand command, String reason) {
+        state.logIllegal(playerId, command.actionType(),
+                "Joueur " + playerId + " : " + command.describe(state) + " → REFUSÉ (" + reason + ")",
+                GameLog.details("reason", reason, "intent", command.describe(state),
+                        "command", command.getClass().getSimpleName()));
+    }
+
+    private void logSetup(GameState state, Player player, boolean starter) {
+        Map<String, Object> details = new HashMap<String, Object>();
+        details.put("hand", player.getHand().size());
+        details.put("deck", player.getDeck().size());
+        details.put("legends", player.getLegendsArea().size());
+        details.put("legendsSpent", player.countSpentLegends());
+        if (starter) {
+            details.put("firstPlayerPenalty", GameConstants.FIRST_PLAYER_SPENT_LEGENDS);
+        }
+        state.logInfo(player.getId(), "SETUP",
+                "Mise en place de Joueur " + player.getId() + " : " + player.getHand().size()
+                        + " cartes en main, " + player.getLegendsArea().size() + " Legends"
+                        + (starter ? " (premier joueur : " + player.countSpentLegends()
+                        + " Legends déjà inclinées)" : "")
+                        + ", " + player.getFixerDice().size() + " dés Gig",
+                details);
+    }
+
+    private void applyFirstPlayerPenalty(Player starter) {
+        int spent = 0;
+        for (CardInstance legend : starter.getLegendsArea()) {
+            if (spent >= GameConstants.FIRST_PLAYER_SPENT_LEGENDS) {
+                break;
+            }
+            legend.setExhausted(true);
+            spent++;
+        }
     }
 
     private Player buildPlayer(String playerId, List<String> cardIds, Random shuffle) {

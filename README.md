@@ -44,6 +44,8 @@ CyberpunkTcg/                  # racine du monorepo (= racine du dépôt git)
 │   ├── RULE-ENGINE.md
 │   ├── WEBSOCKET-PROTOCOL.md
 │   ├── FRONTEND-ARCHITECTURE.md
+│   ├── DEBUG-GUIDE.md         # journal de diagnostic + endpoints /api/debug (feature 6.5)
+│   ├── INTEGRATION-TEST.md    # les 7 tests d'intégration critiques (feature 6.5)
 │   └── roadmap.md
 ├── docker-compose.yml         # PostgreSQL local
 ├── Makefile                   # Raccourcis de développement

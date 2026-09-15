@@ -1,7 +1,9 @@
 package com.cyberpunktcg.engine;
 
+import com.cyberpunktcg.domain.card.CardColor;
 import com.cyberpunktcg.domain.game.CardInstance;
 import com.cyberpunktcg.domain.game.GameEventType;
+import com.cyberpunktcg.domain.game.GameLogEntry;
 import com.cyberpunktcg.domain.game.GameState;
 import com.cyberpunktcg.domain.game.Player;
 import com.cyberpunktcg.domain.game.Zone;
@@ -43,6 +45,9 @@ public class RuleEngine {
         registered.put(EffectType.GRANT_POWER, new GrantPowerHandler());
         registered.put(EffectType.STEAL_GIG, new StealGigHandler());
         registered.put(EffectType.REDUCE_COST, new ReduceCostHandler());
+        registered.put(EffectType.DEFEAT_UNIT, new DefeatUnitHandler());
+        registered.put(EffectType.BOOST_GIG, new BoostGigHandler());
+        registered.put(EffectType.REDUCE_GIG, new ReduceGigHandler());
         this.handlers = Collections.unmodifiableMap(registered);
         this.triggerDepth = 0;
     }
@@ -97,9 +102,15 @@ public class RuleEngine {
         if (handler == null) {
             state.appendEvent(GameEventType.EFFECT_RESOLVED, source.getOwnerId(),
                     "effet non implémenté : " + effect.getType());
+            state.logFailed(source.getOwnerId(), "EFFECT", "Effet non implémenté : " + effect.getType(),
+                    detail("effect", effect.getType()));
             return;
         }
         handler.apply(state, source, effect, target);
+        state.logSuccess(source.getOwnerId(), "EFFECT",
+                "Effet résolu : " + source.getName() + " → " + effect,
+                detail("source", source.getName(), "effect", effect.toString(),
+                        "target", target == null ? null : target.getName()));
     }
 
     /**
@@ -141,6 +152,9 @@ public class RuleEngine {
         owner.get().moveToZone(actual, Zone.TRASH);
         state.appendEvent(GameEventType.UNIT_DEFEATED, owner.get().getId(),
                 "unit vaincue (" + followers.size() + " gear(s) défaussé(s) avec elle)");
+        state.logSuccess(owner.get().getId(), "UNIT_DEFEATED",
+                "Unit vaincue : " + actual.getName() + " (propriétaire " + owner.get().getId() + ")",
+                detail("cardId", actual.getCardId(), "gears", followers.size()));
         resolveEffects(state, actual, TriggerType.ON_DEATH, null);
     }
 
@@ -165,6 +179,10 @@ public class RuleEngine {
                 return single;
             case EACH_RIVAL_UNIT:
                 return rivalUnitsOnField(state, source);
+            case FRIENDLY_UNIT:
+                return strongestFriendlyUnit(state, source);
+            case RIVAL_UNIT:
+                return strongestRivalUnit(state, source, 0);
             case SELF_PLAYER:
             case RIVAL_PLAYER:
             default:
@@ -330,5 +348,174 @@ public class RuleEngine {
                     "REDUCE_COST +" + effect.getValue() + " (remise active "
                             + player.getCostDiscount() + ")");
         }
+    }
+
+    /** Unit alliée la plus puissante du Field (choix déterministe). */
+    private List<CardInstance> strongestFriendlyUnit(GameState state, CardInstance source) {
+        Player owner = state.getPlayer(source.getOwnerId());
+        List<CardInstance> units = new ArrayList<CardInstance>();
+        for (CardInstance card : owner.getField()) {
+            if (card.isUnit()) {
+                units.add(card);
+            }
+        }
+        return best(units);
+    }
+
+    /**
+     * Unit rivale la plus puissante du Field, éventuellement plafonnée en
+     * puissance ({@code maxPower = 0} → aucun plafond).
+     */
+    private List<CardInstance> strongestRivalUnit(GameState state, CardInstance source, int maxPower) {
+        List<CardInstance> units = new ArrayList<CardInstance>();
+        for (CardInstance card : rivalUnitsOnField(state, source)) {
+            if (maxPower <= 0 || card.getEffectivePowerOrZero() <= maxPower) {
+                units.add(card);
+            }
+        }
+        return best(units);
+    }
+
+    /** Garde uniquement l'exemplaire de plus grande puissance effective (premier en cas d'égalité). */
+    private List<CardInstance> best(List<CardInstance> candidates) {
+        CardInstance best = null;
+        for (CardInstance candidate : candidates) {
+            if (best == null || candidate.getEffectivePowerOrZero() > best.getEffectivePowerOrZero()) {
+                best = candidate;
+            }
+        }
+        return best == null ? Collections.<CardInstance>emptyList() : Collections.singletonList(best);
+    }
+
+    /** Détails null-safe pour le journal de diagnostic. */
+    private static java.util.Map<String, Object> detail(Object... keyValues) {
+        java.util.Map<String, Object> map = new java.util.LinkedHashMap<String, Object>();
+        for (int i = 0; i + 1 < keyValues.length; i += 2) {
+            if (keyValues[i + 1] != null) {
+                map.put(String.valueOf(keyValues[i]), keyValues[i + 1]);
+            }
+        }
+        return map;
+    }
+
+    /**
+     * Gère l'effet {@code DEFEAT_UNIT} : vainc une Unit (la plus puissante
+     * éligible, ou la cible désignée). La valeur de l'effet est un plafond de
+     * puissance ({@code 0} = aucun).
+     */
+    private class DefeatUnitHandler implements EffectHandler {
+        @Override
+        public void apply(GameState state, CardInstance source, GameEffect effect, CardInstance target) {
+            List<CardInstance> victims;
+            if (effect.getTarget() == EffectTarget.TARGET_UNIT) {
+                victims = resolveUnitTargets(state, source, effect, target);
+            } else {
+                victims = strongestRivalUnit(state, source, effect.getValue());
+            }
+            if (victims.isEmpty()) {
+                state.appendEvent(GameEventType.EFFECT_RESOLVED, source.getOwnerId(),
+                        "DEFEAT_UNIT sans cible valide (plafond de puissance " + effect.getValue() + ")");
+                return;
+            }
+            for (CardInstance victim : victims) {
+                state.appendEvent(GameEventType.EFFECT_RESOLVED, source.getOwnerId(),
+                        "DEFEAT_UNIT : " + victim.getName() + " vaincue");
+                defeatUnit(state, victim);
+                if (state.isGameOver()) {
+                    return;
+                }
+            }
+        }
+    }
+
+    /** Gère l'effet {@code BOOST_GIG} : augmente un Gig du bénéficiaire (« by up to N » = N). */
+    private class BoostGigHandler implements EffectHandler {
+        @Override
+        public void apply(GameState state, CardInstance source, GameEffect effect, CardInstance target) {
+            Player beneficiary = state.getPlayer(source.getOwnerId());
+            if (effect.getTarget() == EffectTarget.RIVAL_PLAYER) {
+                beneficiary = state.getOpponent(source.getOwnerId());
+            }
+            Optional<Integer> upgraded = boostGig(beneficiary, effect.getValue());
+            if (!upgraded.isPresent()) {
+                state.appendEvent(GameEventType.EFFECT_RESOLVED, source.getOwnerId(),
+                        "BOOST_GIG sans effet (aucun Gig à augmenter)");
+                return;
+            }
+            state.appendEvent(GameEventType.EFFECT_RESOLVED, beneficiary.getId(),
+                    "Gig augmenté de " + effect.getValue() + " (nouvelle valeur " + upgraded.get()
+                            + ", Street Cred " + beneficiary.getStreetCred() + ")");
+        }
+    }
+
+    /** Gère l'effet {@code REDUCE_GIG} : diminue un Gig du bénéficiaire (jamais sous 1). */
+    private class ReduceGigHandler implements EffectHandler {
+        @Override
+        public void apply(GameState state, CardInstance source, GameEffect effect, CardInstance target) {
+            Player victim = state.getOpponent(source.getOwnerId());
+            if (effect.getTarget() == EffectTarget.SELF_PLAYER) {
+                victim = state.getPlayer(source.getOwnerId());
+            }
+            Optional<Integer> lowered = reduceGig(victim, effect.getValue());
+            if (!lowered.isPresent()) {
+                state.appendEvent(GameEventType.EFFECT_RESOLVED, source.getOwnerId(),
+                        "REDUCE_GIG sans effet (aucun Gig à diminuer)");
+                return;
+            }
+            state.appendEvent(GameEventType.EFFECT_RESOLVED, victim.getId(),
+                    "Gig diminué (nouvelle valeur " + lowered.get()
+                            + ", Street Cred " + victim.getStreetCred() + ")");
+        }
+    }
+
+    /**
+     * Augmente le Gig de plus faible valeur (« by up to N » : la valeur maximale
+     * est appliquée, choix déterministe).
+     *
+     * @return la nouvelle valeur, ou vide si le joueur ne contrôle aucun Gig
+     */
+    Optional<Integer> boostGig(Player player, int amount) {
+        if (player.getGigs().isEmpty() || amount <= 0) {
+            return Optional.empty();
+        }
+        int index = lowestGigIndex(player);
+        int updated = player.getGigs().get(index) + amount;
+        player.getGigs().set(index, updated);
+        return Optional.of(updated);
+    }
+
+    /**
+     * Diminue le Gig de plus forte valeur sans descendre sous 1.
+     *
+     * @return la nouvelle valeur, ou vide si le joueur ne contrôle aucun Gig
+     */
+    Optional<Integer> reduceGig(Player player, int amount) {
+        if (player.getGigs().isEmpty() || amount <= 0) {
+            return Optional.empty();
+        }
+        int index = highestGigIndex(player);
+        int updated = Math.max(1, player.getGigs().get(index) - amount);
+        player.getGigs().set(index, updated);
+        return Optional.of(updated);
+    }
+
+    private int lowestGigIndex(Player player) {
+        int index = 0;
+        for (int i = 1; i < player.getGigs().size(); i++) {
+            if (player.getGigs().get(i) < player.getGigs().get(index)) {
+                index = i;
+            }
+        }
+        return index;
+    }
+
+    private int highestGigIndex(Player player) {
+        int index = 0;
+        for (int i = 1; i < player.getGigs().size(); i++) {
+            if (player.getGigs().get(i) > player.getGigs().get(index)) {
+                index = i;
+            }
+        }
+        return index;
     }
 }

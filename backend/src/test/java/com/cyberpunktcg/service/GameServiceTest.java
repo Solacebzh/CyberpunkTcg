@@ -6,9 +6,11 @@ import com.cyberpunktcg.domain.card.CardKeyword;
 import com.cyberpunktcg.domain.card.CardRarity;
 import com.cyberpunktcg.domain.card.CardType;
 import com.cyberpunktcg.domain.game.CardInstance;
+import com.cyberpunktcg.domain.game.GameActionResult;
 import com.cyberpunktcg.domain.game.GameEvent;
 import com.cyberpunktcg.domain.game.GameState;
 import com.cyberpunktcg.domain.game.Phase;
+import com.cyberpunktcg.engine.GameConstants;
 import com.cyberpunktcg.engine.GameRuleException;
 import com.cyberpunktcg.engine.command.PlayCardCommand;
 import com.cyberpunktcg.engine.command.SellCardCommand;
@@ -25,6 +27,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Random;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -57,16 +60,44 @@ class GameServiceTest {
         GameState state = gameService.createGame("p1", "p2", idsOne, idsTwo);
 
         assertThat(state.getGameId()).isNotBlank();
-        assertThat(state.getTurn().getActivePlayerId()).isEqualTo("p1");
+        // Le premier joueur est tiré au sort (feature 6.5) : l'un des deux joueurs commence.
+        String starter = state.getTurn().getActivePlayerId();
+        assertThat(starter).isIn("p1", "p2");
+        String second = "p1".equals(starter) ? "p2" : "p1";
+        assertThat(state.getTurn().getNumber()).isEqualTo(1);
         assertThat(state.getPhase()).isEqualTo(Phase.MAIN);
-        assertThat(state.getPlayer("p1").getLegendsArea()).hasSize(3);
-        assertThat(state.getPlayer("p1").getLegendsArea())
-                .allMatch(CardInstance::isFaceDown);
-        assertThat(state.getPlayer("p1").getHand()).hasSize(6);
-        assertThat(state.getPlayer("p1").getDeck()).hasSize(4);
-        assertThat(state.getPlayer("p1").getFixerDice()).hasSize(6);
-        assertThat(state.getPlayer("p1").getGigs()).isEmpty();
-        assertThat(state.getPlayer("p2").getHand()).hasSize(6);
+        for (String playerId : List.of("p1", "p2")) {
+            assertThat(state.getPlayer(playerId).getLegendsArea()).hasSize(3);
+            assertThat(state.getPlayer(playerId).getLegendsArea())
+                    .allMatch(CardInstance::isFaceDown);
+            assertThat(state.getPlayer(playerId).getHand()).hasSize(6);
+            assertThat(state.getPlayer(playerId).getDeck()).hasSize(4);
+            assertThat(state.getPlayer(playerId).getFixerDice()).hasSize(6);
+            assertThat(state.getPlayer(playerId).getGigs()).isEmpty();
+        }
+        // Malus de mise en place : le premier joueur a 2 Legends déjà inclinées (1 seul Eddie).
+        assertThat(state.getPlayer(starter).countSpentLegends())
+                .isEqualTo(GameConstants.FIRST_PLAYER_SPENT_LEGENDS);
+        assertThat(state.getPlayer(starter).legendsAvailableForEddies()).hasSize(1);
+        assertThat(state.getPlayer(second).countSpentLegends()).isZero();
+        assertThat(state.getPlayer(second).legendsAvailableForEddies()).hasSize(3);
+        // Journal de diagnostic : la mise en place est consignée.
+        assertThat(state.getGameLog().size()).isGreaterThanOrEqualTo(3);
+        assertThat(state.getGameLog().getEntries()).anyMatch(entry ->
+                "GAME_START".equals(entry.getActionType()));
+    }
+
+    @Test
+    void createGame_tireLePremierJoueurAuSortEtAppliqueLeMalus() {
+        // Graine fixe : deux parties successives partent du même joueur, la troisième peut changer.
+        List<String> ids = deckIds("a");
+        stubCatalog(ids, ids);
+        GameService seeded = new GameService(cardRepository, new Random(7L));
+        GameState first = seeded.createGame("p1", "p2", ids, ids);
+        GameState second = seeded.createGame("p1", "p2", ids, ids);
+        assertThat(first.getTurn().getActivePlayerId())
+                .isEqualTo(second.getTurn().getActivePlayerId());
+        assertThat(first.getPlayer(first.getTurn().getActivePlayerId()).countSpentLegends()).isEqualTo(2);
     }
 
     @Test
@@ -90,18 +121,48 @@ class GameServiceTest {
         List<String> idsTwo = deckIds("b");
         stubCatalog(idsOne, idsTwo);
         GameState state = gameService.createGame("p1", "p2", idsOne, idsTwo);
-        CardInstance toSell = state.getPlayer("p1").getHand().get(0);
+        String active = state.getTurn().getActivePlayerId();
+        CardInstance toSell = state.getPlayer(active).getHand().get(0);
 
         List<GameEvent> events = gameService.executeCommand(state.getGameId(),
-                new SellCardCommand("p1", toSell.getInstanceId()));
+                new SellCardCommand(active, toSell.getInstanceId()));
 
         assertThat(events).isNotEmpty();
         assertThat(gameService.getGameStateInternal(state.getGameId())
-                .getPlayer("p1").getEddies()).isEqualTo(1);
+                .getPlayer(active).getEddies()).isEqualTo(1);
+        // La vente est consignée dans le journal de diagnostic.
+        assertThat(gameService.getGameLog(state.getGameId(), 20)).anyMatch(entry ->
+                "SELL_CARD".equals(entry.getActionType())
+                        && entry.getResult() == GameActionResult.SUCCESS);
 
         assertThatThrownBy(() -> gameService.executeCommand(state.getGameId(),
-                new PlayCardCommand("p1", UUID.randomUUID())))
+                new PlayCardCommand(active, UUID.randomUUID())))
                 .isInstanceOf(GameRuleException.class);
+        assertThat(gameService.getGameLog(state.getGameId(), 20)).anyMatch(entry ->
+                "ILLEGAL".equals(entry.getResult().name())
+                        && entry.getDescription().contains("REFUSÉ"));
+    }
+
+    @Test
+    void executeCommand_refus_estConsigneDansLeJournalDeDiagnostic() {
+        List<String> idsOne = deckIds("a");
+        List<String> idsTwo = deckIds("b");
+        stubCatalog(idsOne, idsTwo);
+        GameState state = gameService.createGame("p1", "p2", idsOne, idsTwo);
+        String idle = state.getOpponent(state.getTurn().getActivePlayerId()).getId();
+        CardInstance card = state.getPlayer(idle).getHand().get(0);
+
+        assertThatThrownBy(() -> gameService.executeCommand(state.getGameId(),
+                new SellCardCommand(idle, card.getInstanceId())))
+                .isInstanceOf(GameRuleException.class)
+                .hasMessageContaining("tour");
+
+        List<com.cyberpunktcg.domain.game.GameLogEntry> log =
+                gameService.getGameLog(state.getGameId(), 10);
+        assertThat(log).anyMatch(entry -> "SELL_CARD".equals(entry.getActionType())
+                && entry.getResult() == GameActionResult.ILLEGAL
+                && entry.getDescription().contains("REFUSÉ")
+                && entry.getDetails().containsKey("reason"));
     }
 
     @Test

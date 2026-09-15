@@ -6,17 +6,28 @@ import com.fasterxml.jackson.annotation.JsonValue;
 import java.util.Arrays;
 
 public enum CardColor {
-    RED("red"), GREEN("green"), BLUE("blue"), YELLOW("yellow");
+    RED("red", "rouge"),
+    GREEN("green", "vert"),
+    BLUE("blue", "bleu"),
+    YELLOW("yellow", "jaune");
 
     private final String value;
+    private final String label;
 
-    CardColor(String value) {
+    CardColor(String value, String label) {
         this.value = value;
+        this.label = label;
     }
 
+    /** Valeur JSON (anglais, stable pour l'API). */
     @JsonValue
     public String value() {
         return value;
+    }
+
+    /** Libellé français, pour les messages d'erreur et le journal de partie. */
+    public String label() {
+        return label;
     }
 
     @JsonCreator

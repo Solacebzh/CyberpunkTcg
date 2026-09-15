@@ -1,5 +1,7 @@
 package com.cyberpunktcg.domain.game;
 
+import com.cyberpunktcg.domain.card.CardColor;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -16,8 +18,16 @@ import java.util.UUID;
  *   <li>les dés Gig restants à lancer ({@code fixerDice}) sont dans l'ordre
  *   {@code d4, d6, d8, d10, d12, d20} : le {@code d20} est donc lancé en
  *   dernier, conformément aux règles ;</li>
- *   <li>les Eddies forment une réserve persistante : vendre ajoute 1,
- *   jouer une carte dépense son coût ;</li>
+ *   <li>les Eddies (notés « €$ ») forment une réserve persistante ; ils
+ *   s'obtiennent en inclinant une Legend (épuisée, +1 Eddie) ou en vendant une
+ *   carte de sa main (+1 Eddie, 1 vente par tour), et se dépensent pour payer
+ *   les coûts imprimés ;</li>
+ *   <li>la Legends Area sert aussi de réserve d'Eddies : une Legend inclinée
+ *   ({@link #spendLegendForEddies}) est dépensée jusqu'au début du tour suivant
+ *   ({@link #startTurn()} la redresse) ;</li>
+ *   <li>la RAM n'est pas une ressource consommée : chaque couleur a un
+ *   <em>plafond</em> dérivé des Legends ({@link #ramCeilingFor(CardColor)}),
+ *   qui borne la RAM imprimée des cartes jouables ;</li>
  *   <li>le Street Cred est dérivé (somme des dés de la Gig Area), jamais stocké.</li>
  * </ul>
  */
@@ -161,6 +171,80 @@ public class Player {
         this.eddies -= amount;
     }
 
+    /**
+     * Incline une Legend de la Legends Area pour gagner
+     * {@code GameConstants.EDDIES_PER_LEGEND} Eddie(s) (arbitrage joueur :
+     * « il suffit d'incliner la carte pour gagner 1 eddies »).
+     *
+     * @param legendInstanceId exemplaire présent dans la Legends Area
+     * @return la Legend inclinée
+     * @throws IllegalArgumentException si la carte n'est pas une Legend du joueur
+     * @throws IllegalStateException    si la Legend est déjà inclinée
+     */
+    public CardInstance spendLegendForEddies(java.util.UUID legendInstanceId) {
+        CardInstance legend = findIn(Zone.LEGENDS_AREA, legendInstanceId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Legend introuvable dans la Legends Area : " + legendInstanceId));
+        if (legend.isExhausted()) {
+            throw new IllegalStateException("Cette Legend est déjà inclinée (Eddies déjà perçus)");
+        }
+        legend.setExhausted(true);
+        this.eddies += 1;
+        return legend;
+    }
+
+    /** Legends de la Legends Area encore disponibles pour gagner un Eddie. */
+    public List<CardInstance> legendsAvailableForEddies() {
+        List<CardInstance> available = new ArrayList<CardInstance>();
+        for (CardInstance legend : legendsArea) {
+            if (!legend.isExhausted()) {
+                available.add(legend);
+            }
+        }
+        return available;
+    }
+
+    /** Nombre de Legends de la Legends Area actuellement inclinées. */
+    public int countSpentLegends() {
+        int spent = 0;
+        for (CardInstance legend : legendsArea) {
+            if (legend.isExhausted()) {
+                spent++;
+            }
+        }
+        return spent;
+    }
+
+    /**
+     * Plafond de RAM d'une couleur, dérivé des Legends (règles officielles §2 :
+     * les RAM des Legends s'additionnent par couleur). Une carte est jouable si
+     * sa RAM imprimée ne dépasse pas ce plafond.
+     *
+     * @return la somme des RAM des Legends de cette couleur ({@code 0} si la
+     *         couleur n'est couverte par aucune Legend)
+     */
+    public int ramCeilingFor(CardColor color) {
+        if (color == null) {
+            return 0;
+        }
+        int total = 0;
+        for (CardInstance legend : legendsArea) {
+            if (legend.getColor() == color) {
+                total += legend.getRam();
+            }
+        }
+        return total;
+    }
+
+    /**
+     * {@code true} si la Legends Area permet de calculer un plafond de RAM
+     * (parties créées par {@code GameService} : 3 Legends). Les duels de test
+     * sans Legends n'appliquent donc aucun plafond (V1 permissive).
+     */
+    public boolean hasLegendCeiling() {
+        return !legendsArea.isEmpty();
+    }
+
     /** Remise de coût active jusqu'au début du prochain tour du joueur (effet {@code REDUCE_COST}). */
     public int getCostDiscount() {
         return costDiscount;
@@ -290,7 +374,15 @@ public class Player {
         return !readyBlockers().isEmpty();
     }
 
-    /** Redresse les cartes du Field (début de tour). */
+    /**
+     * Redresse les cartes prêtes au début du tour (règles §4.4 : « redresser les
+     * cartes qui doivent être prêtes »).
+     *
+     * <p>Seules les cartes du Field sont redressées. Les Legends inclinées pour
+     * encaisser un Eddie ({@link #spendLegendForEddies}) restent inclinées : un
+     * joueur ne dispose que des Eddies de ses Legends restantes (3 au total, dont
+     * {@code FIRST_PLAYER_SPENT_LEGENDS} déjà inclinées pour le premier joueur).</p>
+     */
     public void readyAll() {
         for (CardInstance card : field) {
             card.setExhausted(false);
@@ -362,6 +454,7 @@ public class Player {
     @Override
     public String toString() {
         return "Player{id='" + id + "', hand=" + hand.size() + ", field=" + field.size()
-                + ", gigs=" + gigs.size() + ", eddies=" + eddies + '}';
+                + ", legends=" + legendsArea.size() + ", gigs=" + gigs.size()
+                + ", eddies=" + eddies + '}';
     }
 }

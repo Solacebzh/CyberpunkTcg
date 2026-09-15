@@ -10,6 +10,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import GameOverOverlay from '@/components/game/GameOverOverlay.vue'
+import DebugPanel from '@/components/game/DebugPanel.vue'
 import GameLogPanel from '@/components/game/GameLogPanel.vue'
 import PhaseIndicator from '@/components/game/PhaseIndicator.vue'
 import PlayerArea from '@/components/game/PlayerArea.vue'
@@ -38,6 +39,14 @@ const gameId = computed(() => (route.params.gameId as string | undefined) ?? lob
 
 const me = computed(() => game.me)
 const opponent = computed(() => game.opponent)
+
+/** Noms lisibles des deux sièges, pour les journaux (public et debug). */
+const playerNames = computed<Record<string, string>>(() => {
+  const names: Record<string, string> = {}
+  if (me.value) names[me.value.playerId] = me.value.name
+  if (opponent.value) names[opponent.value.playerId] = opponent.value.name
+  return names
+})
 
 /** Cartes sur lesquelles un clic a un sens pour moi. */
 const actionableIds = computed<string[]>(() => {
@@ -307,12 +316,20 @@ function onConcede(): void {
         />
       </div>
 
-      <div class="min-h-[22rem]">
+      <div class="min-h-[22rem] space-y-3">
         <GameLogPanel
           :entries="game.log"
           :me-id="game.myPlayerId"
           :player-name="me.name"
           :opponent-name="opponent?.name ?? '—'"
+        />
+
+        <!-- Panneau de debug (feature 6.5) : journal complet + état non masqué. -->
+        <DebugPanel
+          :game-id="game.gameId"
+          :entries="game.debugLog"
+          :player-id="game.myPlayerId"
+          :player-names="playerNames"
         />
       </div>
     </div>

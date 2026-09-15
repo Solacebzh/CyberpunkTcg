@@ -8,6 +8,7 @@
  */
 
 import type { CardColor, CardType, GameCard } from '@/types/card'
+import type { DebugGameState, DebugPhase, DebugPlayerState } from '@/types/debug'
 
 export interface HealthResponse {
   status: string
@@ -70,6 +71,40 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 8000
 /** Sonde de santé du backend (et de sa base de données). */
 export function fetchHealth(): Promise<HealthResponse> {
   return request<HealthResponse>('/api/health', { method: 'GET' }, 5000)
+}
+
+/**
+ * État complet **non masqué** d'une partie (debug). Route active uniquement sous
+ * les profils Spring `test`/`dev` : ailleurs, l'appel renvoie 404.
+ *
+ * @param logs nombre d'entrées du journal de diagnostic (défaut serveur : 20)
+ */
+export function fetchDebugGameState(gameId: string, logs = 50): Promise<DebugGameState> {
+  return request<DebugGameState>(
+    `/api/debug/game/${encodeURIComponent(gameId)}?logs=${logs}`,
+    { method: 'GET' },
+  )
+}
+
+/** Vue détaillée d'un joueur en debug (main et pioche visibles). */
+export function fetchDebugPlayerState(gameId: string, playerId: string): Promise<DebugPlayerState> {
+  return request<DebugPlayerState>(
+    `/api/debug/game/${encodeURIComponent(gameId)}/player/${encodeURIComponent(playerId)}`,
+    { method: 'GET' },
+  )
+}
+
+/** Force la phase courante (test d'une règle sans rejouer la partie). */
+export function forceDebugPhase(
+  gameId: string,
+  phase: DebugPhase,
+  playerId?: string | null,
+): Promise<DebugGameState> {
+  return request<DebugGameState>(`/api/debug/game/${encodeURIComponent(gameId)}/force-phase`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phase, playerId: playerId ?? null }),
+  })
 }
 
 /** Catalogue de cartes, éventuellement filtré par type et/ou couleur. */

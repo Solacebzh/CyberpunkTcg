@@ -19,8 +19,11 @@ import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.cyberpunktcg.domain.game.GameLog;
+
 import java.security.Principal;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Endpoints STOMP d'une partie (préfixe {@code /app}).
@@ -74,13 +77,18 @@ public class GameWsController {
             broadcaster.afterAction(gameId, requestId, events);
             closeRoomIfFinished(gameId);
         } catch (GameRuleException error) {
+            // Le refus est déjà consigné par GameService ; on diffuse le journal à jour.
+            broadcaster.pushLog(gameId);
             sendError(pseudo, "ILLEGAL_ACTION", error.getMessage(), destination, gameId, requestId);
         } catch (ResponseStatusException error) {
             String code = error.getStatusCode() == HttpStatus.NOT_FOUND ? "GAME_NOT_FOUND" : "ACTION_REJECTED";
             sendError(pseudo, code, reasonOf(error), destination, gameId, requestId);
         } catch (IllegalArgumentException error) {
+            logRefusal(gameId, pseudo, payload, error.getMessage());
+            broadcaster.pushLog(gameId);
             sendError(pseudo, "BAD_REQUEST", error.getMessage(), destination, gameId, requestId);
         } catch (RuntimeException error) {
+            logRefusal(gameId, pseudo, payload, "erreur interne : " + error.getMessage());
             log.error("Action {} en échec sur la partie {}", payload == null ? "?" : payload.action(), gameId, error);
             sendError(pseudo, "INTERNAL_ERROR",
                     "Erreur interne lors du traitement de l'action", destination, gameId, requestId);
@@ -101,6 +109,16 @@ public class GameWsController {
             String code = error.getStatusCode() == HttpStatus.NOT_FOUND ? "GAME_NOT_FOUND" : "ACTION_REJECTED";
             sendError(pseudo, code, reasonOf(error), destination, gameId, null);
         }
+    }
+
+    /** Consigne un refus de transport (action inconnue, payload illisible) dans le journal de partie. */
+    private void logRefusal(String gameId, String pseudo, GameCommandDTO payload, String reason) {
+        Map<String, Object> details = GameLog.details(
+                "reason", reason,
+                "action", payload == null ? null : payload.action());
+        gameService.logExternalRefusal(gameId, pseudo,
+                payload == null || payload.action() == null ? "UNKNOWN_ACTION" : payload.action(),
+                "Joueur " + pseudo + " : action refusée → REFUSÉ (" + reason + ")", details);
     }
 
     private void handleConcede(String gameId, String pseudo, String requestId) {

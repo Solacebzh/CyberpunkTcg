@@ -31,6 +31,8 @@ public class CardInstance {
     private String name;
     private CardType type;
     private CardColor color;
+    /** RAM imprimée (plafond de deckbuilding par couleur, voir {@code Player#ramCeilingFor}). */
+    private int ram;
     private Integer baseCost;
     private Integer basePower;
     private Integer streetCredThreshold;
@@ -57,7 +59,7 @@ public class CardInstance {
     private List<UUID> attachments;
 
     public CardInstance(UUID instanceId, String cardId, String name, CardType type, CardColor color,
-                        Integer baseCost, Integer basePower, Integer streetCredThreshold,
+                        int ram, Integer baseCost, Integer basePower, Integer streetCredThreshold,
                         Set<CardKeyword> keywords, List<String> abilities, String ownerId, Zone zone) {
         if (instanceId == null) {
             throw new IllegalArgumentException("L'identifiant d'exemplaire est obligatoire");
@@ -79,6 +81,7 @@ public class CardInstance {
         this.name = name;
         this.type = type;
         this.color = color;
+        this.ram = Math.max(0, ram);
         this.baseCost = baseCost;
         this.basePower = basePower;
         this.streetCredThreshold = streetCredThreshold;
@@ -116,6 +119,7 @@ public class CardInstance {
                 card.getName(),
                 card.getType(),
                 card.getColor(),
+                card.getRam(),
                 card.getCost(),
                 card.getPower(),
                 card.getStreetCred(),
@@ -155,6 +159,11 @@ public class CardInstance {
 
     public CardColor getColor() {
         return color;
+    }
+
+    /** RAM imprimée de la carte (0 si aucune : Legends, par exemple). */
+    public int getRam() {
+        return ram;
     }
 
     public Integer getBaseCost() {
@@ -314,7 +323,7 @@ public class CardInstance {
     /** Copie profonde et détachée. */
     public CardInstance copy() {
         CardInstance copy = new CardInstance(
-                instanceId, cardId, name, type, color, baseCost, basePower, streetCredThreshold,
+                instanceId, cardId, name, type, color, ram, baseCost, basePower, streetCredThreshold,
                 keywords.isEmpty() ? EnumSet.noneOf(CardKeyword.class) : EnumSet.copyOf(keywords),
                 new ArrayList<String>(abilities), ownerId, zone);
         copy.powerBonus = this.powerBonus;
@@ -336,6 +345,7 @@ public class CardInstance {
         CardInstance copy = copy();
         copy.cardId = "hidden";
         copy.name = "Carte masquée";
+        copy.ram = 0;
         copy.baseCost = null;
         copy.basePower = null;
         copy.streetCredThreshold = null;

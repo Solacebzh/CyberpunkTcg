@@ -3,6 +3,7 @@ package com.cyberpunktcg.engine.command;
 import com.cyberpunktcg.domain.game.CardInstance;
 import com.cyberpunktcg.domain.game.GameEvent;
 import com.cyberpunktcg.domain.game.GameEventType;
+import com.cyberpunktcg.domain.game.GameLog;
 import com.cyberpunktcg.domain.game.GameState;
 import com.cyberpunktcg.domain.game.Phase;
 import com.cyberpunktcg.domain.game.Player;
@@ -61,6 +62,30 @@ public class AttackCommand implements GameCommand {
     @Override
     public String getPlayerId() {
         return playerId;
+    }
+
+    @Override
+    public String actionType() {
+        return "ATTACK";
+    }
+
+    @Override
+    public String describe() {
+        return isGigSteal() ? "attaquer la Gig Area adverse" : "attaquer une Unit adverse";
+    }
+
+    @Override
+    public String describe(GameState state) {
+        String attacker = state.findInstance(attackerInstanceId)
+                .map(CardInstance::getName)
+                .orElse("une Unit inconnue");
+        if (isGigSteal()) {
+            return "attaquer la Gig Area adverse avec " + attacker;
+        }
+        String target = state.findInstance(targetInstanceId)
+                .map(CardInstance::getName)
+                .orElse("une Unit inconnue");
+        return "attaquer " + target + " avec " + attacker;
     }
 
     public UUID getAttackerInstanceId() {
@@ -139,6 +164,12 @@ public class AttackCommand implements GameCommand {
         }
 
         attacker.setExhausted(true);
+        int attackerPower = state.totalPowerFor(attacker);
+        String targetName = null;
+        if (!isGigSteal()) {
+            Optional<CardInstance> declared = state.findInstance(targetInstanceId);
+            targetName = declared.map(CardInstance::getName).orElse("cible disparue");
+        }
         if (isGigSteal()) {
             state.appendEvent(GameEventType.ATTACK_DECLARED, playerId,
                     "attaque directe vers la Gig Area (" + attacker.getName() + ")");
@@ -146,10 +177,23 @@ public class AttackCommand implements GameCommand {
             state.appendEvent(GameEventType.ATTACK_DECLARED, playerId,
                     "attaque déclarée (" + attacker.getName() + ")");
         }
+        state.logSuccess(playerId, actionType(),
+                "Joueur " + playerId + " attaque avec " + attacker.getName() + " (power "
+                        + attackerPower + ") → cible: "
+                        + (isGigSteal() ? "Gig Area du rival" : targetName),
+                GameLog.details("attacker", attacker.getName(), "attackerId", attacker.getCardId(),
+                        "power", attackerPower,
+                        "target", isGigSteal() ? "GIG_AREA" : targetName,
+                        "targetInstanceId", targetInstanceId == null ? null : targetInstanceId.toString(),
+                        "defender", rival.getId()));
 
         state.openReactionWindow(rival.getId(), attacker.getInstanceId().toString());
         state.appendEvent(GameEventType.REACTION_WINDOW_OPENED, rival.getId(),
                 "fenêtre de réaction ouverte (QUICK uniquement)");
+        state.logInfo(rival.getId(), "REACTION_WINDOW",
+                "Fenêtre de réaction ouverte pour " + rival.getId()
+                        + " (cartes QUICK uniquement ; " + rival.getHand().size() + " carte(s) en main)",
+                GameLog.details("attacker", attacker.getName(), "rule", "QUICK_ONLY"));
 
         CardInstance target = null;
         if (!isGigSteal()) {
@@ -166,6 +210,11 @@ public class AttackCommand implements GameCommand {
                 state.appendEvent(GameEventType.GIG_STOLEN, playerId,
                         "vol d'un Gig de valeur " + stolen.get()
                                 + " (total " + player.getGigCount() + ")");
+                state.logSuccess(playerId, "GIG_STOLEN",
+                        "Joueur " + playerId + " vole un Gig de valeur " + stolen.get()
+                                + " (total " + player.getGigCount() + " Gigs)",
+                        GameLog.details("value", stolen.get(), "gigsTotal", player.getGigCount(),
+                                "rivalGigs", rival.getGigCount()));
             } else {
                 state.appendEvent(GameEventType.ATTACK_DECLARED, playerId,
                         "vol de Gig sans effet (plus aucun Gig adverse)");
@@ -182,14 +231,24 @@ public class AttackCommand implements GameCommand {
         CardInstance defender = stillThere.get();
         int attackPower = state.totalPowerFor(attacker);
         int defensePower = state.totalPowerFor(defender);
+        String outcome;
         if (attackPower > defensePower) {
+            outcome = attacker.getName() + " l'emporte (" + attackPower + " > " + defensePower + ")";
             engine.defeatUnit(state, defender);
         } else if (attackPower < defensePower) {
+            outcome = defender.getName() + " résiste (" + defensePower + " > " + attackPower + ")";
             engine.defeatUnit(state, attacker);
         } else {
+            outcome = "égalité à " + attackPower + " : les deux Units sont vaincues";
             engine.defeatUnit(state, defender);
             engine.defeatUnit(state, attacker);
         }
+        state.log(outcome.startsWith("égalité") ? playerId : playerId, actionType(),
+                "Combat : " + attacker.getName() + " (" + attackPower + ") vs " + defender.getName()
+                        + " (" + defensePower + ") → " + outcome,
+                com.cyberpunktcg.domain.game.GameActionResult.SUCCESS,
+                GameLog.details("attackerPower", attackPower, "defenderPower", defensePower,
+                        "outcome", outcome));
         return GameCommand.eventsSince(state, mark);
     }
 }

@@ -26,6 +26,32 @@ public interface GameCommand {
     String getPlayerId();
 
     /**
+     * Type technique de l'action, utilisé par le journal de diagnostic et les
+     * transports ({@code PLAY_CARD}, {@code ATTACK}, {@code SELL_CARD},
+     * {@code END_TURN}, {@code SPEND_LEGEND}…).
+     */
+    default String actionType() {
+        return "COMMAND";
+    }
+
+    /**
+     * Intention de l'ordonnateur en clair (« jouer 6th Street Recruits »,
+     * « vendre une 2e carte »…), utilisée par le journal de diagnostic pour
+     * décrire aussi bien les succès que les refus.
+     */
+    default String describe() {
+        return actionType();
+    }
+
+    /**
+     * Variante contextualisée : l'intention peut nommer la carte visée quand
+     * elle est encore trouvable dans l'état (journal des refus).
+     */
+    default String describe(GameState state) {
+        return describe();
+    }
+
+    /**
      * Vérifie la légalité de l'action sans muter l'état.
      *
      * @throws GameRuleException si l'action est illégale

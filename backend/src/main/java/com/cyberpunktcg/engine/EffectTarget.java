@@ -13,5 +13,15 @@ public enum EffectTarget {
     /** Le contrôleur de la source (joueur). */
     SELF_PLAYER,
     /** Le rival du contrôleur (joueur). */
-    RIVAL_PLAYER
+    RIVAL_PLAYER,
+    /**
+     * Une Unit alliée choisie automatiquement (la plus puissante du Field) :
+     * utilisé par les textes génériques « give a friendly Unit +N power ».
+     */
+    FRIENDLY_UNIT,
+    /**
+     * Une Unit rivale choisie automatiquement (la plus puissante éligible) :
+     * utilisé par les textes génériques « defeat a rival Unit [with power N or less] ».
+     */
+    RIVAL_UNIT
 }

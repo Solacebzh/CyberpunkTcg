@@ -10,8 +10,8 @@ réservées aux cartes **QUICK**. Ils ne doivent plus être traités comme des o
 | --- | --- |
 | **Fixer Area** | Contient au départ les 6 dés Gig du joueur (`d4`, `d6`, `d8`, `d10`, `d12`, `d20`). |
 | **Gig Area** | Contient les Gigs contrôlés, y compris ceux volés au rival. |
-| **Eddies Area** | Chaque carte vendue face cachée vaut 1 Eddie. |
-| **Legends Area** | Les 3 Legends du joueur commencent face cachée. |
+| **Eddies Area** | Chaque carte vendue face cachée vaut 1 Eddie ; la carte est révélée avant d'y être posée. |
+| **Legends Area** | Les 3 Legends du joueur commencent face cachée. Une Legend face cachée peut être **inclinée** (dépensée) pour gagner 1 Eddie : c'est la réserve d'Eddies du joueur, et l'inclinaison est définitive (une Legend inclinée n'est jamais redressée). |
 | **Field** | Units et cartes qui leur sont équipées. |
 | **Trash** | Cartes défaussées, vaincues ou résolues. |
 | **Street Cred** | Somme des valeurs visibles des dés dans la Gig Area. |
@@ -33,8 +33,11 @@ Exemple : deux Legends à 2 RAM vert et une Legend à 2 RAM rouge autorisent les
 1. mélanger les 3 Legends et les poser face cachée ;
 2. placer les 6 dés Gig dans la Fixer Area ;
 3. mélanger le deck principal et piocher 6 cartes ;
-4. chaque joueur peut effectuer au plus un mulligan ;
-5. déterminer le premier joueur selon le format de la partie.
+4. chaque joueur peut effectuer au plus un mulligan (non implémenté en V1 : limite assumée, voir
+   `RULE-ENGINE.md` §11) ;
+5. déterminer le premier joueur : le moteur le **tire au sort** ; le premier joueur subit le malus de mise
+   en place et commence avec **2 Legends déjà inclinées** (il ne peut donc obtenir qu'1 Eddie en inclinant
+   sa troisième Legend).
 
 ## 4. Tour de jeu
 
@@ -53,8 +56,14 @@ Le joueur actif peut jouer des cartes, activer des effets et attaquer dans l'ord
 vente. Elle est révélée puis placée face cachée dans l'Eddies Area et vaut exactement 1 Eddie, quel que soit
 son coût imprimé. Une deuxième vente pendant le même tour est illégale.
 
-Les Eddies et les Legends peuvent être dépensés pour payer les coûts. Le Street Cred est un seuil : il n'est
-pas consommé lorsqu'un effet vérifie sa valeur.
+**Eddies : incliner une Legend.** Une Legend face cachée de la Legends Area peut être inclinée à tout moment
+pour +1 Eddie (définitif). Les Eddies ainsi obtenus, comme ceux des ventes, sont dépensés pour payer les
+coûts : `coût payé = max(0, coût imprimé − remise)`. Le Street Cred est un seuil : il n'est pas consommé
+lorsqu'un effet vérifie sa valeur.
+
+**RAM en partie.** Le plafond de RAM par couleur (somme des RAM des Legends) est vérifié à la pose d'une
+carte : une carte dont la RAM imprimée dépasse le plafond de sa couleur est illégale. La RAM n'est jamais
+dépensée — plusieurs cartes à la RAM maximale restent jouables dans le même tour.
 
 ## 5. Attaque, combat et vol
 
@@ -106,5 +115,6 @@ Le scraper détecte ces mots-clés dans le champ API et dans le balisage du text
 - `gigsToWin = 7` ;
 - `salesPerTurn = 1` ;
 - une action dans la fenêtre de réaction exige `quick` ;
-- les limites RAM sont calculées par couleur lors de la validation du deck ;
+- les limites RAM sont calculées par couleur lors de la validation du deck **et** vérifiées à la pose ;
+- les Eddies proviennent des Legends inclinées (+1, définitif) et de la vente unique du tour (+1) ;
 - les tirages et lancers utilisent une graine journalisée pour permettre les replays déterministes.
