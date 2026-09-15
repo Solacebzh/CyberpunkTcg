@@ -69,8 +69,11 @@ public class GameService {
      * (face cachée), les autres forment le deck (mélangé). Chaque joueur reçoit
      * {@link GameConstants#STARTING_HAND_SIZE} cartes. Le <strong>premier joueur est
      * tiré au sort</strong> ; il commence en phase {@code MAIN} et subit le malus de
-     * mise en place (deux Legends déjà inclinées, il ne peut donc encaisser qu'un
-     * Eddie en inclinant la troisième).
+     * mise en place (R1.4 : ses 2 Legends les plus à gauche sont déjà inclinées, il
+     * ne peut donc encaisser qu'un Eddie en inclinant la troisième). Le second
+     * joueur ne subit aucun malus (R1.5 : ses 3 Legends sont prêtes). Le malus est
+     * levé dès le tour 2 du premier joueur : la phase {@code DRAW} redresse toutes
+     * les cartes dépensées et remet les Eddies à 0.
      *
      * @param playerOneId    joueur 1 (candidat au premier tour)
      * @param playerTwoId    joueur 2
@@ -99,7 +102,10 @@ public class GameService {
         Player starter = playerOneStarts ? playerOne : playerTwo;
         Player second = playerOneStarts ? playerTwo : playerOne;
 
-        applyFirstPlayerPenalty(starter);
+        // R1.4 : le premier joueur incline ses 2 Legends les plus à gauche (malus de
+        // mise en place, aucun Eddie gagné) ; R1.5 : le second joueur garde ses
+        // 3 Legends prêtes. La phase DRAW du tour suivant redresse tout le monde.
+        int firstPlayerPenalty = applyFirstPlayerPenalty(starter);
 
         List<Player> players = new ArrayList<Player>();
         players.add(starter);
@@ -112,8 +118,8 @@ public class GameService {
                 "Nouvelle partie : Joueur " + starter.getId() + " commence (premier joueur tiré au sort)",
                 GameLog.details("starter", starter.getId(), "second", second.getId(),
                         "seed", seed, "phase", state.getPhase().name()));
-        logSetup(state, starter, true);
-        logSetup(state, second, false);
+        logSetup(state, starter, true, firstPlayerPenalty);
+        logSetup(state, second, false, 0);
         games.put(state.getGameId(), state);
         return state;
     }
@@ -258,33 +264,52 @@ public class GameService {
                         "command", command.getClass().getSimpleName()));
     }
 
-    private void logSetup(GameState state, Player player, boolean starter) {
+    /**
+     * Consigne la mise en place d'un joueur (R1) : main, deck, Legends — dont le
+     * nombre effectivement incliné par le malus du premier joueur (R1.4/R1.5).
+     *
+     * @param appliedPenalty nombre de Legends inclinées par le malus ({@code 0} pour le second joueur)
+     */
+    private void logSetup(GameState state, Player player, boolean starter, int appliedPenalty) {
         Map<String, Object> details = new HashMap<String, Object>();
         details.put("hand", player.getHand().size());
         details.put("deck", player.getDeck().size());
         details.put("legends", player.getLegendsArea().size());
         details.put("legendsSpent", player.countSpentLegends());
         if (starter) {
-            details.put("firstPlayerPenalty", GameConstants.FIRST_PLAYER_SPENT_LEGENDS);
+            details.put("firstPlayerPenalty", appliedPenalty);
         }
         state.logInfo(player.getId(), "SETUP",
                 "Mise en place de Joueur " + player.getId() + " : " + player.getHand().size()
                         + " cartes en main, " + player.getLegendsArea().size() + " Legends"
-                        + (starter ? " (premier joueur : " + player.countSpentLegends()
-                        + " Legends déjà inclinées)" : "")
+                        + (starter
+                                ? " (premier joueur : " + appliedPenalty + " Legends déjà inclinées)"
+                                : " (second joueur : 0 Legend inclinée)")
                         + ", " + player.getFixerDice().size() + " dés Gig",
                 details);
     }
 
-    private void applyFirstPlayerPenalty(Player starter) {
-        int spent = 0;
-        for (CardInstance legend : starter.getLegendsArea()) {
-            if (spent >= GameConstants.FIRST_PLAYER_SPENT_LEGENDS) {
-                break;
-            }
-            legend.setExhausted(true);
-            spent++;
-        }
+    /**
+     * Applique le malus de mise en place du premier joueur (R1.4).
+     *
+     * <p>Règle officielle (§ SETUP · DETERMINE PLAY ORDER) : « The player going
+     * first spends their 2 leftmost Legends and doesn't ready them on their first
+     * turn. » Concrètement : 2 des 3 Legends de la Legends Area — les deux les
+     * plus à gauche — commencent la partie <strong>déjà inclinées</strong>
+     * ({@code exhausted = true}), sans avoir rapporté le moindre Eddie. Le
+     * premier joueur ne peut donc encaisser qu'un seul Eddie pendant son tour 1,
+     * en inclinant sa troisième Legend.</p>
+     *
+     * <p>Le second joueur ne subit aucun malus (R1.5) : ses 3 Legends sont prêtes.
+     * Le malus est levé au début du tour suivant du premier joueur, la phase DRAW
+     * redressant toutes les cartes dépensées (voir
+     * {@link com.cyberpunktcg.engine.command.EndTurnCommand}).</p>
+     *
+     * @param starter joueur qui commence la partie
+     * @return le nombre de Legends effectivement inclinées à la mise en place
+     */
+    private int applyFirstPlayerPenalty(Player starter) {
+        return starter.exhaustLeftmostLegends(GameConstants.FIRST_PLAYER_SPENT_LEGENDS);
     }
 
     private Player buildPlayer(String playerId, List<String> cardIds, Random shuffle) {

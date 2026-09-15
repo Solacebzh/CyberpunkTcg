@@ -134,6 +134,108 @@ class GameIntegrationTest {
         assertThat(state.getPlayer("p1").getHand()).hasSize(6);
     }
 
+    @Test
+    @DisplayName("R1 - Setup : le premier joueur a exactement 2 Legends inclinées sur 3")
+    void testR1_Setup_FirstPlayerHasTwoExhaustedLegends() {
+        GameState state = newGame();
+
+        // ALWAYS_TRUE => p1 commence ; on passe malgré tout par le joueur actif.
+        String starter = state.getTurn().getActivePlayerId();
+        assertThat(starter).isEqualTo("p1");
+        assertThat(state.getTurn().getNumber()).isEqualTo(1);
+        Player first = state.getPlayer(starter);
+
+        // R1.1 : 3 Legends face cachée dans la Legends Area
+        List<CardInstance> legends = first.getLegendsArea();
+        assertThat(legends).hasSize(GameConstants.REQUIRED_LEGENDS);
+        assertThat(legends).allMatch(CardInstance::isFaceDown);
+
+        // R1.4 : malus exact — 2 Legends sur 3 commencent DÉJÀ INCLINÉES
+        assertThat(first.countSpentLegends()).isEqualTo(GameConstants.FIRST_PLAYER_SPENT_LEGENDS);
+        assertThat(legends).filteredOn(CardInstance::isExhausted)
+                .hasSize(GameConstants.FIRST_PLAYER_SPENT_LEGENDS);
+        assertThat(first.legendsAvailableForEddies()).hasSize(1);
+        // Ce sont les 2 Legends les plus à gauche (« spends their 2 leftmost Legends »)
+        assertThat(legends.get(0).isExhausted()).isTrue();
+        assertThat(legends.get(1).isExhausted()).isTrue();
+        assertThat(legends.get(2).isExhausted()).isFalse();
+
+        // Le malus ne rapporte rien : la réserve d'Eddies démarre à 0
+        assertThat(first.getEddies()).isZero();
+
+        // Conséquence en jeu : un seul Eddie encaissable pendant le tour 1
+        execute(state, new SpendLegendCommand(starter, legends.get(2).getInstanceId()));
+        assertThat(first.getEddies()).isEqualTo(1);
+        assertThat(first.legendsAvailableForEddies()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("R1 - Setup : le second joueur a 0 Legend inclinée sur 3")
+    void testR1_Setup_SecondPlayerHasZeroExhaustedLegends() {
+        GameState state = newGame();
+
+        String starter = state.getTurn().getActivePlayerId();
+        String secondId = state.getOpponent(starter).getId();
+        assertThat(secondId).isEqualTo("p2");
+        Player second = state.getPlayer(secondId);
+
+        // R1.5 : aucune Legend inclinée à la mise en place
+        List<CardInstance> legends = second.getLegendsArea();
+        assertThat(legends).hasSize(GameConstants.REQUIRED_LEGENDS);
+        assertThat(second.countSpentLegends()).isZero();
+        assertThat(legends).allMatch(legend -> !legend.isExhausted());
+        assertThat(second.legendsAvailableForEddies()).hasSize(GameConstants.REQUIRED_LEGENDS);
+        assertThat(second.getEddies()).isZero();
+
+        // Le second joueur n'est pas actif au tour 1 : rien ne peut être incliné maintenant
+        expectRefusal(state, new SpendLegendCommand(secondId, legends.get(0).getInstanceId()));
+        assertThat(second.countSpentLegends()).isZero();
+
+        // À l'ouverture de son tour, ses 3 Legends sont toujours prêtes
+        execute(state, new EndTurnCommand(starter));
+        assertThat(state.getTurn().getActivePlayerId()).isEqualTo(secondId);
+        assertThat(second.countSpentLegends()).isZero();
+        assertThat(second.legendsAvailableForEddies()).hasSize(GameConstants.REQUIRED_LEGENDS);
+    }
+
+    @Test
+    @DisplayName("R1 - Phase DRAW : toutes les Legends sont redressées (malus levé au tour 2)")
+    void testR1_DrawPhase_ReadiesAllLegends() {
+        GameState state = newGame();
+        String starter = state.getTurn().getActivePlayerId();
+        String secondId = state.getOpponent(starter).getId();
+        Player first = state.getPlayer(starter);
+        List<CardInstance> legends = first.getLegendsArea();
+
+        // Tour 1 : 2 Legends inclinées par le malus, on incline aussi la troisième
+        assertThat(first.countSpentLegends()).isEqualTo(2);
+        execute(state, new SpendLegendCommand(starter, legends.get(2).getInstanceId()));
+        assertThat(legends).allMatch(CardInstance::isExhausted);
+        assertThat(first.getEddies()).isEqualTo(1);
+
+        // Le malus tient tout le tour 1 : rien n'est redressé avant le tour suivant
+        execute(state, new EndTurnCommand(starter));
+        assertThat(state.getTurn().getActivePlayerId()).isEqualTo(secondId);
+        assertThat(first.countSpentLegends()).isEqualTo(GameConstants.REQUIRED_LEGENDS);
+
+        // Retour du premier joueur — phase DRAW : ON REDRESSE TOUT, Eddies à 0
+        execute(state, new EndTurnCommand(secondId));
+        assertThat(state.getTurn().getActivePlayerId()).isEqualTo(starter);
+        assertThat(state.getTurn().getNumber()).isEqualTo(3);
+        assertThat(state.getPhase()).isEqualTo(Phase.MAIN); // DRAW résolue automatiquement
+        assertThat(legends).allMatch(legend -> !legend.isExhausted());
+        assertThat(first.countSpentLegends()).isZero();
+        assertThat(first.legendsAvailableForEddies()).hasSize(GameConstants.REQUIRED_LEGENDS);
+        assertThat(first.getEddies()).isZero();
+
+        // Une Legend redressée est de nouveau dépensable (+1 Eddie)
+        execute(state, new SpendLegendCommand(starter, legends.get(0).getInstanceId()));
+        assertThat(first.getEddies()).isEqualTo(1);
+
+        // Le redressement est tracé dans le journal de diagnostic
+        assertThat(descriptions(state, 50)).anyMatch(line -> line.contains("cartes redressées"));
+    }
+
     // ------------------------------------------------------------------
     // R2 — Cycle des Eddies
     // ------------------------------------------------------------------
@@ -764,17 +866,19 @@ class GameIntegrationTest {
     @DisplayName("R12 - Gigs via vol et dés")
     void testR12_GigsViaDiceAndSteal() {
         GameState state = newGame();
-        // p1 gagne Gig via dice
+        // p1 gagne Gig via dice (lancer de la phase DRAW de son tour 2)
         assertThat(state.getPlayer("p1").getGigCount()).isZero();
         execute(state, new EndTurnCommand("p1"));
         execute(state, new EndTurnCommand("p2"));
         assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(1);
-        // Vol
+        // Vol — p2 a déjà gagné 1 Gig en ouvrant son propre tour, on en ajoute un 2e
         GameFixtures.addGigs(state, "p2", 3);
+        int p2GigsBefore = state.getPlayer("p2").getGigCount();
+        assertThat(p2GigsBefore).isEqualTo(2);
         CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("stealer",1,2));
         execute(state, new AttackCommand("p1", attacker.getInstanceId()));
         assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(2);
-        assertThat(state.getPlayer("p2").getGigCount()).isZero();
+        assertThat(state.getPlayer("p2").getGigCount()).isEqualTo(p2GigsBefore - 1);
     }
 
     @Test
@@ -899,7 +1003,10 @@ class GameIntegrationTest {
                 GameFixtures.coloredProgram("discard", CardColor.RED,1,1,"ON_PLAY:DISCARD:2"));
         execute(state, new PlayCardCommand("p1", discardCard.getInstanceId()));
         assertThat(state.getPlayer("p1").getDeck()).hasSize(deckBefore -2);
-        assertThat(state.getPlayer("p1").getTrash()).hasSize(2);
+        // 2 cartes défaussées + le Program lui-même : un Program résout son effet puis
+        // part immédiatement à la défausse (Guide § PROGRAM).
+        assertThat(state.getPlayer("p1").getTrash()).hasSize(3);
+        assertThat(state.getPlayer("p1").getTrash()).contains(discardCard);
     }
 
     @Test

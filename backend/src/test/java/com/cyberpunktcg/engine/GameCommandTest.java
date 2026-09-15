@@ -5,6 +5,7 @@ import com.cyberpunktcg.domain.game.CardInstance;
 import com.cyberpunktcg.domain.game.GameEventType;
 import com.cyberpunktcg.domain.game.GameState;
 import com.cyberpunktcg.domain.game.Phase;
+import com.cyberpunktcg.domain.game.Zone;
 import com.cyberpunktcg.engine.command.AttackCommand;
 import com.cyberpunktcg.engine.command.EndTurnCommand;
 import com.cyberpunktcg.engine.command.PlayCardCommand;
@@ -194,7 +195,9 @@ class GameCommandTest {
         new EndTurnCommand("p1").execute(state);
         new EndTurnCommand("p2").execute(state);
         new SellCardCommand("p1", second.getInstanceId()).execute(state);
-        assertThat(state.getPlayer("p1").getEddies()).isEqualTo(2);
+        // R2 : les Eddies ne se reportent pas — la réserve retombe à 0 en début de
+        // tour, cette vente rapporte donc 1 Eddie (et non 2 cumulés).
+        assertThat(state.getPlayer("p1").getEddies()).isEqualTo(1);
     }
 
     @Test
@@ -241,15 +244,22 @@ class GameCommandTest {
     }
 
     @Test
-    void legend_flipGratuitDeclencheFlip() {
+    void legend_callCouteUnEddieEtDeclencheFlip() {
         CardInstance legend = GameFixtures.legendCard(state, "p1",
                 GameFixtures.legend("oracle", "FLIP:DRAW:1"), true);
 
+        // R4.1 : « Call a Legend (once per turn) — spend 1 €$ » : sans Eddie, c'est refusé
+        assertThatThrownBy(() -> new PlayCardCommand("p1", legend.getInstanceId()).validate(state))
+                .isInstanceOf(GameRuleException.class)
+                .hasMessageContaining("Eddies insuffisants");
+
+        GameFixtures.giveEddies(state, "p1", 1);
         new PlayCardCommand("p1", legend.getInstanceId()).execute(state);
 
         assertThat(legend.isFaceDown()).isFalse();
-        assertThat(state.getPlayer("p1").getEddies()).isZero();
-        assertThat(state.getPlayer("p1").getHand()).hasSize(1);
+        assertThat(legend.getZone()).isEqualTo(Zone.LEGENDS_AREA);
+        assertThat(state.getPlayer("p1").getEddies()).isZero(); // 1 €$ payé
+        assertThat(state.getPlayer("p1").getHand()).hasSize(1); // effet FLIP:DRAW:1
 
         assertThatThrownBy(() -> new PlayCardCommand("p1", legend.getInstanceId()).validate(state))
                 .isInstanceOf(GameRuleException.class);

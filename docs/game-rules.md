@@ -11,7 +11,7 @@ réservées aux cartes **QUICK**. Ils ne doivent plus être traités comme des o
 | **Fixer Area** | Contient au départ les 6 dés Gig du joueur (`d4`, `d6`, `d8`, `d10`, `d12`, `d20`). |
 | **Gig Area** | Contient les Gigs contrôlés, y compris ceux volés au rival. |
 | **Eddies Area** | Chaque carte vendue face cachée vaut 1 Eddie ; la carte est révélée avant d'y être posée. |
-| **Legends Area** | Les 3 Legends du joueur commencent face cachée. Une Legend face cachée peut être **inclinée** (dépensée) pour gagner 1 Eddie : c'est la réserve d'Eddies du joueur, et l'inclinaison est définitive (une Legend inclinée n'est jamais redressée). |
+| **Legends Area** | Les 3 Legends du joueur commencent face cachée. Une Legend — face cachée ou révélée — peut être **inclinée** (dépensée) pour gagner 1 Eddie : c'est la réserve d'Eddies du joueur. Elle reste inclinée jusqu'au début du tour suivant de son propriétaire, qui la **redresse** (phase de début). |
 | **Field** | Units et cartes qui leur sont équipées. |
 | **Trash** | Cartes défaussées, vaincues ou résolues. |
 | **Street Cred** | Somme des valeurs visibles des dés dans la Gig Area. |
@@ -36,17 +36,24 @@ Exemple : deux Legends à 2 RAM vert et une Legend à 2 RAM rouge autorisent les
 4. chaque joueur peut effectuer au plus un mulligan (non implémenté en V1 : limite assumée, voir
    `RULE-ENGINE.md` §11) ;
 5. déterminer le premier joueur : le moteur le **tire au sort** ; le premier joueur subit le malus de mise
-   en place et commence avec **2 Legends déjà inclinées** (il ne peut donc obtenir qu'1 Eddie en inclinant
-   sa troisième Legend).
+   en place et commence avec **2 Legends déjà inclinées** — ses 2 Legends les plus à gauche, conformément au
+   Guide (§ SETUP : « The player going first spends their 2 leftmost Legends and doesn't ready them on their
+   first turn »). Ces 2 inclinaisons ne rapportent **aucun** Eddie : le premier joueur ne peut donc encaisser
+   qu'1 Eddie pendant son tour 1, en inclinant sa troisième Legend ;
+6. le second joueur ne subit **aucun** malus : ses 3 Legends sont prêtes au tour 1 ;
+7. le malus est levé au début du tour suivant du premier joueur : la phase de début redresse toutes les
+   Legends (voir §4).
 
 ## 4. Tour de jeu
 
 ### Phase de début
 
-1. vérifier la victoire avant de prendre un nouveau Gig ;
-2. piocher une carte (ne pas pouvoir piocher fait perdre la partie) ;
-3. choisir et lancer un dé de la Fixer Area, puis le placer dans la Gig Area ; le `d20` doit rester le dernier ;
-4. redresser les cartes qui doivent être prêtes.
+1. vérifier la victoire avant de piocher et de prendre un nouveau Gig (7 Gigs contrôlés au début du tour) ;
+2. **redresser toutes les cartes dépensées** — Field, Legends Area et Eddies Area (Guide § START PHASE :
+   « READY SPENT CARDS ») — et remettre la réserve d'Eddies à 0 ; c'est cette étape qui lève le malus de
+   mise en place du premier joueur ;
+3. piocher une carte (ne pas pouvoir piocher fait perdre la partie) ;
+4. choisir et lancer un dé de la Fixer Area, puis le placer dans la Gig Area ; le `d20` doit rester le dernier.
 
 ### Phase principale
 
@@ -56,8 +63,9 @@ Le joueur actif peut jouer des cartes, activer des effets et attaquer dans l'ord
 vente. Elle est révélée puis placée face cachée dans l'Eddies Area et vaut exactement 1 Eddie, quel que soit
 son coût imprimé. Une deuxième vente pendant le même tour est illégale.
 
-**Eddies : incliner une Legend.** Une Legend face cachée de la Legends Area peut être inclinée à tout moment
-pour +1 Eddie (définitif). Les Eddies ainsi obtenus, comme ceux des ventes, sont dépensés pour payer les
+**Eddies : incliner une Legend.** Une Legend de la Legends Area — face cachée ou révélée — peut être inclinée
+pendant la phase principale ou la phase de combat pour +1 Eddie ; elle reste inclinée jusqu'au début du tour
+suivant de son propriétaire, qui la redresse. Les Eddies ainsi obtenus, comme ceux des ventes, sont dépensés pour payer les
 coûts : `coût payé = max(0, coût imprimé − remise)`. Le Street Cred est un seuil : il n'est pas consommé
 lorsqu'un effet vérifie sa valeur.
 
@@ -116,5 +124,7 @@ Le scraper détecte ces mots-clés dans le champ API et dans le balisage du text
 - `salesPerTurn = 1` ;
 - une action dans la fenêtre de réaction exige `quick` ;
 - les limites RAM sont calculées par couleur lors de la validation du deck **et** vérifiées à la pose ;
-- les Eddies proviennent des Legends inclinées (+1, définitif) et de la vente unique du tour (+1) ;
+- les Eddies proviennent des Legends inclinées (+1, redressées au début du tour suivant), des cartes de
+  l'Eddies Area inclinées (+1) et de la vente unique du tour (+1) ; la réserve retombe à 0 en début de tour ;
+- le premier joueur commence avec 2 Legends inclinées (malus de mise en place), le second avec 0 ;
 - les tirages et lancers utilisent une graine journalisée pour permettre les replays déterministes.
