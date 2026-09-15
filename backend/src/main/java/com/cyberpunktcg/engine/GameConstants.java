@@ -29,6 +29,14 @@ public final class GameConstants {
     public static final int EDDIES_PER_LEGEND = 1;
 
     /**
+     * Eddies gagnés quand un joueur incline l'une de ses cartes-ressource
+     * (Mini-Feature 4, R4) : une Legend de la Legends Area <em>ou</em> une
+     * carte vendue de l'Eddies Area. Une carte inclinée ne peut être inclinée
+     * qu'une fois par tour (redressée au START PHASE).
+     */
+    public static final int EDDIES_PER_RESOURCE = 1;
+
+    /**
      * Legends déjà inclinées au premier tour du joueur qui commence : le premier
      * joueur a un malus de mise en place, il ne peut donc obtenir qu'un seul
      * Eddie en inclinant sa troisième Legend (arbitrage joueur, feature 6.5).

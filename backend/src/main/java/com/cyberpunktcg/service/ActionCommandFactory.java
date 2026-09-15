@@ -9,6 +9,7 @@ import com.cyberpunktcg.engine.command.PlayCardCommand;
 import com.cyberpunktcg.engine.command.SellCardCommand;
 import com.cyberpunktcg.engine.command.SpendEddiesCommand;
 import com.cyberpunktcg.engine.command.SpendLegendCommand;
+import com.cyberpunktcg.engine.command.SpendResourceCommand;
 import org.springframework.stereotype.Component;
 
 /**
@@ -17,7 +18,10 @@ import org.springframework.stereotype.Component;
  * pas agir à la place d'un autre.
  *
  * <p>Actions reconnues : {@code PLAY_CARD}, {@code ATTACK}, {@code SELL_CARD},
- * {@code SPEND_LEGEND} (incliner une Legend pour gagner un Eddie),
+ * {@code SPEND_RESOURCE} (Mini-Feature 4 — incliner une ressource : Legend de
+ * la Legends Area <em>ou</em> carte de l'Eddies Area, pour gagner 1 Eddie),
+ * {@code SPEND_LEGEND} / {@code SPEND_EDDIES} (alias historiques de
+ * {@code SPEND_RESOURCE} : mêmes règles, action de journal distincte),
  * {@code END_TURN}. {@code CONCEDE} est traité par le contrôleur (pas une
  * commande du moteur).</p>
  */
@@ -27,6 +31,7 @@ public class ActionCommandFactory {
     public static final String PLAY_CARD = "PLAY_CARD";
     public static final String ATTACK = "ATTACK";
     public static final String SELL_CARD = "SELL_CARD";
+    public static final String SPEND_RESOURCE = "SPEND_RESOURCE";
     public static final String SPEND_LEGEND = "SPEND_LEGEND";
     public static final String SPEND_EDDIES = "SPEND_EDDIES";
     public static final String END_TURN = "END_TURN";
@@ -46,6 +51,7 @@ public class ActionCommandFactory {
             case PLAY_CARD -> buildPlayCard(dto, playerId);
             case ATTACK -> buildAttack(dto, playerId);
             case SELL_CARD -> buildSellCard(dto, playerId);
+            case SPEND_RESOURCE -> buildSpendResource(dto, playerId);
             case SPEND_LEGEND -> buildSpendLegend(dto, playerId);
             case SPEND_EDDIES -> buildSpendEddies(dto, playerId);
             case END_TURN -> new EndTurnCommand(playerId);
@@ -67,6 +73,13 @@ public class ActionCommandFactory {
         }
         // Pas de cible = attaque directe vers la Gig Area adverse (vol de Gig).
         return new AttackCommand(playerId, dto.instanceId(), dto.targetInstanceId());
+    }
+
+    private GameCommand buildSpendResource(GameCommandDTO dto, String playerId) {
+        if (dto.instanceId() == null) {
+            throw new GameRuleException("SPEND_RESOURCE exige 'instanceId' (Legend ou carte de l'Eddies Area à incliner)");
+        }
+        return new SpendResourceCommand(playerId, dto.instanceId());
     }
 
     private GameCommand buildSpendEddies(GameCommandDTO dto, String playerId) {

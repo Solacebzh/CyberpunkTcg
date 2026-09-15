@@ -41,7 +41,7 @@ motif exact (`Eddies insuffisants`, `Une seule vente par tour`,
 | `index` | ordre global dans la partie (1, 2, 3…) — sert à réconcilier temps réel et état |
 | `turnNumber`, `phase` | contexte au moment de l'action |
 | `playerId` | auteur (`null` pour une ligne système) |
-| `actionType` | `PLAY_CARD` (ou `FLIP`/`CALL` pour Legend), `ATTACK`, `SELL_CARD`, `SPEND_LEGEND`, `SPEND_EDDIES`, `END_TURN`, `DRAW`, `GIG_ROLL`, `VICTORY_CHECK`, `VICTORY`, `TURN_RESET`, `EDDIES_LOST`, `REACTION_WINDOW`, `UNIT_DEFEATED`, `GIG_STOLEN`, `EFFECT` (incl. DISCARD/BUFF/DAMAGE/HEAL/DEFEAT/BOOST_GIG), `SETUP`, `GAME_START`, `DEBUG_FORCE_PHASE`, `CONCEDE`… |
+| `actionType` | `PLAY_CARD` (ou `FLIP`/`CALL` pour Legend), `ATTACK`, `SELL_CARD`, `SPEND_RESOURCE` (Mini-Feature 4, R4 : Legend **ou** carte de l'Eddies Area), `SPEND_LEGEND`, `SPEND_EDDIES`, `END_TURN`, `DRAW`, `GIG_ROLL`, `VICTORY_CHECK`, `VICTORY`, `TURN_RESET`, `EDDIES_LOST`, `REACTION_WINDOW`, `UNIT_DEFEATED`, `GIG_STOLEN`, `EFFECT` (incl. DISCARD/BUFF/DAMAGE/HEAL/DEFEAT/BOOST_GIG), `SETUP`, `GAME_START`, `DEBUG_FORCE_PHASE`, `CONCEDE`… |
 | `description` | phrase lisible, prête à afficher |
 | `result` | `SUCCESS` (vert), `ILLEGAL` (rouge), `FAILED` (orange : légale mais sans effet), `INFO` (jaune) |
 | `details` | contexte chiffré (coût, cible, ressources, motif de refus…) |
