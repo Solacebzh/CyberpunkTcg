@@ -23,6 +23,7 @@
  */
 import { computed } from 'vue'
 
+import CardComponent from '@/components/CardComponent.vue'
 import CardPile from '@/components/game/CardPile.vue'
 import FieldArea from '@/components/game/FieldArea.vue'
 import FixerArea from '@/components/game/FixerArea.vue'
@@ -58,6 +59,14 @@ const legends = computed(() => props.player.legendsArea)
 
 function onCard(card: CardInstance): void {
   emit('cardClick', card)
+}
+
+function definitionOf(card: CardInstance): GameCard | null {
+  return props.definitions.get(card.cardId) ?? null
+}
+
+function isActionable(instanceId: string): boolean {
+  return props.interactive && props.actionableIds.includes(instanceId)
 }
 </script>
 
@@ -145,15 +154,25 @@ function onCard(card: CardInstance): void {
         />
       </PlaymatZone>
 
-      <!-- BAS-CENTRE-DROITE : Eddies (cartes vendues, face cachée) -->
+      <!-- BAS-CENTRE-DROITE : Eddies (cartes vendues, face cachée, inclinables pour +1 ¤) -->
       <PlaymatZone zone="EDDIES" :side="side" :badge="`¤ ${player.availableEddies}`">
-        <CardPile
-          :cards="player.eddiesArea"
-          :count="player.eddiesArea.length"
-          :definitions="definitions"
-          :side="side"
-          empty-label="aucun Eddie"
-        />
+        <div class="eddies-row cyber-scroll" :data-side="side" :data-count="player.eddiesArea.length">
+          <p v-if="player.eddiesArea.length === 0" class="font-mono text-[0.6rem] text-slate-600">
+            aucune ressource — vends une carte pour en créer
+          </p>
+          <CardComponent
+            v-for="card in player.eddiesArea"
+            :key="card.instanceId"
+            :card="card"
+            :definition="definitionOf(card)"
+            :side="side"
+            size="xs"
+            :selectable="interactive"
+            :selected="selectedInstanceId === card.instanceId"
+            :dimmed="interactive && !isActionable(card.instanceId)"
+            @click="onCard(card)"
+          />
+        </div>
       </PlaymatZone>
 
       <!-- BAS-DROITE : Trash -->

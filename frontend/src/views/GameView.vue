@@ -59,7 +59,12 @@ const actionableIds = computed<string[]>(() => {
     if (game.canPlayCard(card) === null) ids.push(card.instanceId)
   }
   for (const card of player.legendsArea) {
-    if (game.canPlayCard(card) === null) ids.push(card.instanceId)
+    // Retournable (face cachée) OU inclinable pour un Eddie (R4) — les deux.
+    if (game.canPlayCard(card) === null || game.canSpendCard(card) === null) ids.push(card.instanceId)
+  }
+  // Mini-Feature 4 (R4) : les cartes vendues de l'Eddies Area s'inclinent pour +1 Eddie.
+  for (const card of player.eddiesArea) {
+    if (game.canSpendCard(card) === null) ids.push(card.instanceId)
   }
   for (const card of player.field) {
     if (card.type === 'unit' && !card.attachedTo && game.canAttackWith(card) === null) ids.push(card.instanceId)
@@ -92,13 +97,28 @@ function onCardClick(card: CardInstance, fromMyBoard: boolean): void {
     return
   }
   if (!fromMyBoard) return
-  // Second clic sur une carte déjà sélectionnée = on la joue.
-  if (game.selectedInstanceId === card.instanceId && game.canPlayCard(card) === null) {
-    game.playCard(card.instanceId)
-    return
+  // Second clic sur une carte déjà sélectionnée = on l'exploite :
+  // carte jouable → on la joue, ressource inclinable (R4) → on l'incline.
+  if (game.selectedInstanceId === card.instanceId) {
+    if (game.canPlayCard(card) === null) {
+      game.playCard(card.instanceId)
+      return
+    }
+    if (game.canSpendCard(card) === null) {
+      game.spendResource(card.instanceId)
+      return
+    }
   }
   game.selectCard(game.selectedInstanceId === card.instanceId ? null : card.instanceId)
 }
+
+const selectedIsEddieCard = computed(
+  () => selected.value?.zone === 'EDDIES_AREA',
+)
+const selectedSpendReason = computed(() => (selected.value ? game.canSpendCard(selected.value) : null))
+const canSpendSelected = computed(
+  () => !!selected.value && (selectedIsEddieCard.value || selected.value.zone === 'LEGENDS_AREA') && selectedSpendReason.value === null,
+)
 
 function onPrimaryAction(): void {
   const card = selected.value
@@ -113,7 +133,16 @@ function onPrimaryAction(): void {
     game.playCard(card.instanceId)
     return
   }
+  if (selectedIsEddieCard.value) {
+    game.spendResource(card.instanceId)
+    return
+  }
   if (selectedIsFieldUnit.value) game.beginAttack(card.instanceId)
+}
+
+function onSpendAction(): void {
+  const card = selected.value
+  if (card) game.spendResource(card.instanceId)
 }
 
 const primaryLabel = computed(() => {
@@ -121,19 +150,22 @@ const primaryLabel = computed(() => {
   if (!card) return 'Aucune carte sélectionnée'
   if (card.zone === 'HAND') return card.type === 'gear' ? 'Équiper un Gear' : 'Jouer la carte'
   if (card.zone === 'LEGENDS_AREA') return 'Retourner la Legend'
+  if (selectedIsEddieCard.value) return 'Incliner (+1 ¤)'
   return selectedIsFieldUnit.value ? 'Attaquer' : 'Carte en jeu'
 })
 
 const primaryDisabled = computed(() => {
   const card = selected.value
   if (!card) return true
+  if (selectedIsEddieCard.value) return selectedSpendReason.value !== null
   if (selectedIsFieldUnit.value) return selectedAttackReason.value !== null
   return selectedReason.value !== null
 })
 
 const primaryHint = computed(() => {
   const card = selected.value
-  if (!card) return 'Clique une carte de ta main ou une Unit du Field'
+  if (!card) return 'Clique une carte de ta main, une Legend ou une ressource Eddies'
+  if (selectedIsEddieCard.value) return selectedSpendReason.value
   return selectedIsFieldUnit.value ? selectedAttackReason.value : selectedReason.value
 })
 
@@ -287,10 +319,27 @@ function onConcede(): void {
               type="button"
               class="cyber-btn"
               :disabled="!selected || selected.zone !== 'HAND' || !game.canSell || game.waitingForServer"
-              :title="game.canSell ? 'Vendre rapporte 1 Eddie (1 vente par tour)' : 'Vente impossible'"
+              :title="
+                game.canSell
+                  ? 'Vendre : la carte est révélée puis posée face cachée dans l’Eddies Area — elle devient une ressource (1 vente par tour, 0 ¤ immédiat)'
+                  : 'Vente impossible (1 vente par tour, phase Principale, à ton tour)'"
               @click="selected && game.sellCard(selected.instanceId)"
             >
-              Vendre (+1 ¤)
+              Vendre (1 ressource)
+            </button>
+
+            <!-- Mini-Feature 4 (R4) : incliner une Legend ou une carte de l'Eddies Area pour +1 Eddie. -->
+            <button
+              type="button"
+              class="cyber-btn cyber-btn--accent"
+              :disabled="!canSpendSelected || game.waitingForServer"
+              :title="
+                canSpendSelected
+                  ? 'Incliner la carte sélectionnée (+1 Eddie) — elle reprend au début de ton prochain tour'
+                  : 'Sélectionne une Legend ou une carte de l’Eddies Area à ton tour, en phase Principale'"
+              @click="onSpendAction"
+            >
+              Incliner (+1 ¤)
             </button>
 
             <button

@@ -186,20 +186,39 @@ public class Player {
     }
 
     /**
+     * Incline une ressource du joueur pour gagner 1 Eddie — Mini-Feature 4 (R4).
+     *
+     * <p>Règle officielle : pendant sa Main Phase, le joueur incline soit une
+     * Legend non inclinée de la Legends Area, soit une carte vendue non
+     * inclinée de l'Eddies Area ; la carte passe à {@code exhausted = true} et
+     * la réserve gagne {@code +1} Eddie. Redressée au début du tour suivant
+     * ({@link #startTurn()}).</p>
+     *
+     * @param resourceInstanceId ID de la Legend (Legends Area) ou de la carte
+     *        de l'Eddies Area à incliner
+     * @throws IllegalArgumentException si la carte n'est dans aucune des deux zones
+     * @throws IllegalStateException    si la carte est déjà inclinée
+     */
+    public CardInstance spendResourceForEddies(UUID resourceInstanceId) {
+        CardInstance resource = findIn(Zone.LEGENDS_AREA, resourceInstanceId)
+                .or(() -> findIn(Zone.EDDIES_AREA, resourceInstanceId))
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Ressource introuvable dans la Legends Area ou l'Eddies Area : " + resourceInstanceId));
+        if (resource.isExhausted()) {
+            throw new IllegalStateException("Cette carte est déjà inclinée (Eddie déjà perçu)");
+        }
+        resource.setExhausted(true);
+        this.eddies += 1;
+        return resource;
+    }
+
+    /**
      * Incline une Legend de la Legends Area pour gagner 1 Eddie.
      * <p>Règle officielle : Whether face-up or face-down, you can also spend a Legend to pay 1 €$ (Guide § LEGENDS AREA).
      * Matérialisé par +1 au compteur Eddies et exhaustion ; redressée au début du tour suivant.</p>
      */
     public CardInstance spendLegendForEddies(java.util.UUID legendInstanceId) {
-        CardInstance legend = findIn(Zone.LEGENDS_AREA, legendInstanceId)
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "Legend introuvable dans la Legends Area : " + legendInstanceId));
-        if (legend.isExhausted()) {
-            throw new IllegalStateException("Cette Legend est déjà inclinée (Eddies déjà perçus)");
-        }
-        legend.setExhausted(true);
-        this.eddies += 1;
-        return legend;
+        return spendResourceForEddies(legendInstanceId);
     }
 
     /**
@@ -207,15 +226,7 @@ public class Player {
      * Même mécanique que les Legends : spend sideways = +1, redress au début du tour.
      */
     public CardInstance spendEddiesCardForEddies(java.util.UUID eddiesInstanceId) {
-        CardInstance eddiesCard = findIn(Zone.EDDIES_AREA, eddiesInstanceId)
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "Carte Eddies introuvable : " + eddiesInstanceId));
-        if (eddiesCard.isExhausted()) {
-            throw new IllegalStateException("Cette carte Eddies est déjà inclinée");
-        }
-        eddiesCard.setExhausted(true);
-        this.eddies += 1;
-        return eddiesCard;
+        return spendResourceForEddies(eddiesInstanceId);
     }
 
     /** Cartes Eddies encore disponibles pour gagner un Eddie ce tour. */

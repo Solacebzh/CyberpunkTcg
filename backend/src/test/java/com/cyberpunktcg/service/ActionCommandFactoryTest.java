@@ -6,6 +6,7 @@ import com.cyberpunktcg.engine.command.AttackCommand;
 import com.cyberpunktcg.engine.command.EndTurnCommand;
 import com.cyberpunktcg.engine.command.PlayCardCommand;
 import com.cyberpunktcg.engine.command.SellCardCommand;
+import com.cyberpunktcg.engine.command.SpendResourceCommand;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
@@ -57,6 +58,35 @@ class ActionCommandFactoryTest {
 
         assertThat(command.isGigSteal()).isFalse();
         assertThat(command.getTargetInstanceId()).isEqualTo(target);
+    }
+
+    @Test
+    void spendResource_cibleUnique_etActionsHistoriquesAliases() {
+        UUID card = UUID.randomUUID();
+        GameCommandDTO dto = new GameCommandDTO("SPEND_RESOURCE", card, null, null,
+                null, null, null, null, null);
+
+        SpendResourceCommand command = (SpendResourceCommand) factory.build(dto, "V");
+
+        assertThat(command.getPlayerId()).isEqualTo("V");
+        assertThat(command.getResourceInstanceId()).isEqualTo(card);
+        assertThat(command.actionType()).isEqualTo("SPEND_RESOURCE");
+
+        // Actions historiques du protocole : mêmes règles unifiées (sous-classes),
+        // action de journal conservée.
+        assertThat(factory.build(new GameCommandDTO("spend_legend", card, null, null,
+                null, null, null, null, null), "V"))
+                .isInstanceOf(SpendResourceCommand.class);
+        assertThat(factory.build(new GameCommandDTO("SPEND_EDDIES", card, null, null,
+                null, null, null, null, null), "V"))
+                .isInstanceOf(SpendResourceCommand.class);
+
+        // Cible obligatoire.
+        assertThatThrownBy(() -> factory.build(
+                new GameCommandDTO("SPEND_RESOURCE", null, null, null,
+                        null, null, null, null, null), "V"))
+                .isInstanceOf(GameRuleException.class)
+                .hasMessageContaining("instanceId");
     }
 
     @Test

@@ -9,6 +9,13 @@ Documents liés : `game-rules.md` (règles), `architecture.md` (§2-3, couches),
 
 ## 1. Carte du code
 
+> Mini-Feature 4 (2026-09-15) : **Générer des Eddies (R4)** — commande unifiée
+> `SpendResourceCommand` (phase `MAIN`) : incline une Legend non inclinée
+> (Legends Area) **ou** une carte vendue non inclinée (Eddies Area) du joueur
+> actif → `exhausted=true`, `availableEddies += 1`. `SpendLegendCommand` /
+> `SpendEddiesCommand` deviennent des alias légers (mêmes règles, `actionType`
+> de journal conservé) ; action filaire `SPEND_RESOURCE` ajoutée au protocole.
+>
 > Feature 6.5.2 (2026-09-15) : corrections TDD R1-R13 — Eddies cycle 0, Legends/Eddies ready, Call 1 Eddie once/turn, RAM désactivée en jeu, SpendEddiesCommand, ADRENALINE, DISCARD/BUFF. Ancienne doc “Legends définitivement inclinées” retirée.
 >
 > Feature 6.5 : le moteur journalise désormais **chaque** action dans un journal de
@@ -137,7 +144,8 @@ Legends déjà inclinées). Il n'y a pas de mulligan (limite assumée, §11).
 |---|---|---|---|
 | `PlayCardCommand` | actif (ou défenseur QUICK en réaction) | `MAIN`/`COMBAT` | Legend : FLIP gratuit ; Unit : paie → Field (+ mal d'invocation sauf `GO_SOLO`) ; Program : paie → `ON_PLAY` → défausse ; Gear : paie → attaché à une Unit alliée |
 | `AttackCommand` | actif | `MAIN`/`COMBAT` (auto `MAIN→COMBAT`) | épuise, ouvre la fenêtre, `ON_ATTACK`, puis vol de Gig (sans cible) ou comparaison des puissances (égalité = les deux vaincues) |
-| `SellCardCommand` | actif | `MAIN` | 1 carte de la main → révélée au rival puis posée en Eddies Area `faceDown=true`, `exhausted=false` (prête) ; **aucun Eddie immédiat** : la carte devient une ressource à incliner (`SpendEddiesCommand`, 1 €$/tour) |
+| `SellCardCommand` | actif | `MAIN` | 1 carte de la main → révélée au rival puis posée en Eddies Area `faceDown=true`, `exhausted=false` (prête) ; **aucun Eddie immédiat** : la carte devient une ressource à incliner (`SpendResourceCommand`, 1 €$/tour) |
+| `SpendResourceCommand` (R4, Mini-Feature 4) | actif | `MAIN` | **Générer des Eddies** : incliner une ressource — Legend non inclinée de la `LEGENDS_AREA` **ou** carte vendue non inclinée de l'`EDDIES_AREA` (ID unique, propriété du joueur ordonnateur vérifiée) → `exhausted=true`, `availableEddies += 1` ; 1 €$ par tour et par carte, redressée au START PHASE. Actions filaires : `SPEND_RESOURCE` (+ aliases historiques `SPEND_LEGEND`/`SPEND_EDDIES` via `SpendLegendCommand`/`SpendEddiesCommand`, sous-classes de cette commande) |
 | `EndTurnCommand` | actif | toute | `ON_TURN_END`, fermeture fenêtre, passage du tour, victoire à 7 Gigs, pioche 1, lancer de Gig, `MAIN` |
 
 Détails :
@@ -276,7 +284,7 @@ pas de double `ON_DEATH`.
 | Program : effet Play puis défausse | `PlayCardCommand` (branche Program) |
 | Gear : attaché à une Unit | `PlayCardCommand` (hôte obligatoire), `totalPowerFor`, suivi en défausse |
 | RAM = deckbuilding uniquement (R7) — aucune vérif en jeu | `GameConstants.RAM_CEILING_ENFORCED=false`, `PlayCardCommand` sans vérif RAM |
-| Eddies : cycle 0→tap→pay→lost (R2) ; Legends et Eddies cards +1 par tap, redress au START, reset à 0 | `Player.spendLegendForEddies`, `Player.spendEddiesCardForEddies`, `SpendLegendCommand`, `SpendEddiesCommand`, `Player.startTurn` (eddies=0 & readyAll) |
+| Eddies : cycle 0→tap→pay→lost (R2) ; Legends et Eddies cards +1 par tap, redress au START, reset à 0 | `Player.spendResourceForEddies` (R4 unifié, Mini-Feature 4), `Player.spendLegendForEddies`, `Player.spendEddiesCardForEddies` (déléguent), `SpendResourceCommand` (+ alias `SpendLegendCommand`/`SpendEddiesCommand`), `Player.startTurn` (eddies=0 & readyAll) |
 | Eddies / Street Cred | réserve dépensée / seuil non consommé (`Player`, `PlayCardCommand`) |
 | Vente 1 carte/tour, **0 Eddie immédiat** (création de ressource) | `SALES_PER_TURN`, `SellCardCommand` + `hasSoldThisTurn`, gain via `SpendEddiesCommand` |
 | Réactions QUICK uniquement | `ReactionWindow`, `PlayCardCommand` (défenseur), fermeture en fin de tour |
@@ -350,6 +358,14 @@ cd backend && mvn clean test   # profil H2 (aucun Docker requis)
   main → `EDDIES_AREA` (`faceDown=true`, `exhausted=false`, 0 Eddie), 1 vente/tour,
   ressource inclinable dès ce tour, refus (hors tour, hors `MAIN`, carte hors main,
   partie terminée, joueur inconnu).
+- `engine/command/SpendResourceCommandTest` (Mini-Feature 4 — « Générer des
+  Eddies ») : `testR4_SpendLegend_Gives1Eddie_AndBecomesExhausted`,
+  `testR4_SpendEddieCard_Gives1Eddie_AndBecomesExhausted`,
+  `testR4_ResourceReadyAgainNextTurn`, `testR4_AlreadyExhausted_Refused`,
+  `testR4_OwnershipAndZone_Refused`, `testR4_IllegalContexts_Refused`,
+  `testR4_CommandContract` — Legend **ou** carte Eddies : +1 Eddie,
+  `exhausted=true`, carte en zone ; refus (déjà inclinée, carte du rival,
+  hors zones ressources, instance inconnue, hors `MAIN`, partie terminée).
 - `service/GameServiceTest` (Mockito, sans Spring) : création, premier joueur
   tiré au sort + malus, exécution, refus consignés au journal, masquage, 404.
 - `ws/LobbyGameFlowWebSocketIntegrationTest` : partie STOMP de bout en bout

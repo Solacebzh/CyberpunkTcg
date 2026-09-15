@@ -301,7 +301,9 @@ omis ou `null`) :
 | `PLAY_CARD` | carte à jouer (main, ou Legend de la legends area pour la retourner) | obligatoire pour un **Gear** (l'Unit alliée équipée) ; optionnel pour les autres cartes qui ciblent | `PlayCardCommand` |
 | `ATTACK` | l'Unit attaquante | UUID d'une **Unit rivale** pour la combattre ; **absent/null** pour une attaque directe de vol de Gig | `AttackCommand` |
 | `SELL_CARD` | carte de sa main à vendre (1 vente/tour, phase Main ; **aucun Eddie immédiat** — la carte est révélée puis posée face cachée et prête en Eddies Area) | — | `SellCardCommand` |
-| `SPEND_LEGEND` | Legend **face cachée** de sa Legends Area à incliner (+1 Eddie, définitif) | — | `SpendLegendCommand` |
+| `SPEND_RESOURCE` | **Mini-Feature 4 (R4)** : ressource à incliner pour +1 Eddie — soit une Legend non inclinée de sa Legends Area, soit une carte vendue non inclinée de son Eddies Area (ID unique, les deux zones acceptées) | — | `SpendResourceCommand` |
+| `SPEND_LEGEND` | alias historique de `SPEND_RESOURCE` (action de journal distincte) : Legend non inclinée de sa Legends Area à incliner (+1 Eddie) | — | `SpendLegendCommand` (hérite de `SpendResourceCommand`) |
+| `SPEND_EDDIES` | alias historique de `SPEND_RESOURCE` (action de journal distincte) : carte non inclinée de son Eddies Area à incliner (+1 Eddie) | — | `SpendEddiesCommand` (hérite de `SpendResourceCommand`) |
 | `END_TURN` | — | — | `EndTurnCommand` |
 | `CONCEDE` | — | — | abandon (victoire immédiate de l'adversaire) |
 
@@ -312,9 +314,12 @@ pendant une fenêtre de réaction, le défenseur ne peut jouer que des cartes
 `quick` hors de son tour. La vente ne rapporte **aucun** Eddie : elle crée une
 ressource (carte révélée, posée `faceDown` et prête en Eddies Area). L'Eddie est
 gagné en inclinant une carte — Legend (`SPEND_LEGEND`) ou carte de l'Eddies Area
-(`SPEND_EDDIES`) — pour exactement 1 €$ chacune, une fois par tour et par carte
-(redressées au début du tour suivant). Le premier joueur commence avec
-2 Legends déjà inclinées (malus de mise en place).
+(`SPEND_EDDIES`), ou les deux en un seul appel unifié `SPEND_RESOURCE`
+(Mini-Feature 4, R4 : `instanceId` unique, cible = Legend non inclinée de la
+Legends Area **ou** carte non inclinée de l'Eddies Area, appartenant au joueur
+ordonnateur) — pour exactement 1 €$ chacune, une fois par tour et par carte
+(redressées au début du tour suivant), en phase `MAIN` uniquement.
+Le premier joueur commence avec 2 Legends déjà inclinées (malus de mise en place).
 
 Exemples de commandes :
 
@@ -662,7 +667,7 @@ Diffusé sur `/topic/game/{gameId}/log` à chaque action journalisée :
 | `type` | toujours `LOG` (permet de distinguer ce flux d'un `STATE`) |
 | `entries` | entrées **nouvelles uniquement** (`index` strictement croissant) |
 | `result` | `SUCCESS` (vert), `ILLEGAL` (rouge), `FAILED` (orange), `INFO` (jaune) |
-| `actionType` | `PLAY_CARD`, `ATTACK`, `SELL_CARD`, `SPEND_LEGEND`, `END_TURN`, `DRAW`, `GIG_ROLL`, `VICTORY_CHECK`, `VICTORY`, `REACTION_WINDOW`, `UNIT_DEFEATED`, `GIG_STOLEN`, `EFFECT`, `SETUP`, `GAME_START`, `DEBUG_FORCE_PHASE`, `CONCEDE`… |
+| `actionType` | `PLAY_CARD`, `ATTACK`, `SELL_CARD`, `SPEND_RESOURCE`, `SPEND_LEGEND`, `SPEND_EDDIES`, `END_TURN`, `DRAW`, `GIG_ROLL`, `VICTORY_CHECK`, `VICTORY`, `REACTION_WINDOW`, `UNIT_DEFEATED`, `GIG_STOLEN`, `EFFECT`, `SETUP`, `GAME_START`, `DEBUG_FORCE_PHASE`, `CONCEDE`… |
 
 Différence avec `log` (journal public `GameEvent`) : le journal de diagnostic
 consigne **aussi les refus** et les vérifications internes, avec leur motif

@@ -138,7 +138,13 @@ export const useGameStore = defineStore('game', () => {
   const selectedCard = computed<CardInstance | null>(() => {
     const id = selectedInstanceId.value
     if (!id || !me.value) return null
-    return me.value.hand.find((card) => card.instanceId === id) ?? me.value.field.find((card) => card.instanceId === id) ?? null
+    return (
+      me.value.hand.find((card) => card.instanceId === id) ??
+      me.value.field.find((card) => card.instanceId === id) ??
+      me.value.legendsArea.find((card) => card.instanceId === id) ??
+      me.value.eddiesArea.find((card) => card.instanceId === id) ??
+      null
+    )
   })
 
   const canActNow = computed(
@@ -150,6 +156,24 @@ export const useGameStore = defineStore('game', () => {
     () => !!me.value && !isGameOver.value && isMyTurn.value && phase.value === 'MAIN' && !me.value.hasSoldThisTurn,
   )
   const gigsToWin = GIGS_TO_WIN
+
+  /**
+   * Mini-Feature 4 (R4) — générer des Eddies : miroir des gardes serveur de
+   * `SpendResourceCommand` (doc §5.1 / RULE-ENGINE §4). `null` = la carte
+   * (Legend de la Legends Area ou carte vendue de l'Eddies Area) peut être
+   * inclinée pour +1 Eddie.
+   */
+  function canSpendCard(card: CardInstance): Affordance {
+    if (!state.value) return 'État de partie indisponible'
+    if (isGameOver.value) return 'Partie terminée'
+    if (!isMyTurn.value) return `Ce n’est pas ton tour (${activePlayerId.value ?? '?'} joue)`
+    if (phase.value !== 'MAIN') return 'On incline une ressource qu’en phase Principale'
+    if (card.zone !== 'LEGENDS_AREA' && card.zone !== 'EDDIES_AREA') {
+      return 'Seule une Legend ou une carte de la zone Eddies peut être inclinée'
+    }
+    if (card.exhausted) return 'Cette carte est déjà inclinée (elle reprend au début de ton prochain tour)'
+    return null
+  }
 
   // --- Ergonomie des actions (miroir des gardes serveur, doc §5.1 / RULE-ENGINE §4) ---
   function affordability(card: CardInstance): Affordance {
@@ -468,6 +492,19 @@ export const useGameStore = defineStore('game', () => {
     return sent
   }
 
+  /** Mini-Feature 4 (R4) : incliner une ressource (Legend ou carte Eddies) pour +1 Eddie. */
+  function spendResource(instanceId: string): boolean {
+    const card = findInstance(instanceId)
+    const reason = card ? canSpendCard(card) : 'Carte introuvable'
+    if (reason) {
+      ui.warn(reason)
+      return false
+    }
+    const sent = dispatch({ action: 'SPEND_RESOURCE', instanceId })
+    if (sent) clearSelection()
+    return sent
+  }
+
   function endTurn(): boolean {
     if (!canEndTurn.value) {
       ui.warn(isMyTurn.value ? 'Fin de tour indisponible pour le moment' : 'Ce n’est pas ton tour')
@@ -634,6 +671,7 @@ export const useGameStore = defineStore('game', () => {
     gigsToWin,
     // ergonomie
     canPlayCard,
+    canSpendCard,
     canAttackWith,
     canEquipGear,
     canStealGig,
@@ -648,6 +686,7 @@ export const useGameStore = defineStore('game', () => {
     playCard,
     attack,
     sellCard,
+    spendResource,
     endTurn,
     concede,
     beginAttack,

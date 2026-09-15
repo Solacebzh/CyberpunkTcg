@@ -875,6 +875,12 @@ export class MockGameServer {
       case 'SELL_CARD':
         this.sellCard(game, pseudo, payload)
         break
+      case 'SPEND_RESOURCE':
+      case 'SPEND_LEGEND':
+      case 'SPEND_EDDIES':
+        // Mini-Feature 4 (R4) : même règle unifiée, cibles dans les deux zones.
+        this.spendResource(game, pseudo, payload)
+        break
       case 'END_TURN':
         this.endTurn(game, pseudo)
         break
@@ -1033,11 +1039,34 @@ export class MockGameServer {
     const found = this.findInstance(game, payload.instanceId)
     if (!found || found.zone !== 'hand' || found.player.playerId !== pseudo) throw new RuleError('Carte de main introuvable')
 
+    // Mini-Feature 3 : la vente CRÉE une ressource, elle ne crédite aucun Eddie.
     move(player, 'hand', 'eddiesArea', found.card)
     found.card.faceDown = true
-    player.eddies += 1
+    found.card.exhausted = false
     player.hasSoldThisTurn = true
-    appendEvent(game, 'CARD_SOLD', pseudo, 'vente d’une carte (+1 Eddie)')
+    appendEvent(game, 'CARD_SOLD', pseudo, `vente de ${found.card.name} → Eddies Area (ressource face cachée, prête)`)
+  }
+
+  /**
+   * Mini-Feature 4 (R4) : générer des Eddies — mirroir de `SpendResourceCommand`.
+   * Le joueur actif, en phase Main, incline l'une de ses ressources (Legend de la
+   * Legends Area ou carte vendue de l'Eddies Area) : `exhausted = true`, +1 Eddie.
+   */
+  spendResource(game: MockGame, pseudo: string, payload: ActionPayload): void {
+    const player = this.player(game, pseudo)
+    requireActive(game, pseudo)
+    if (game.phase !== 'MAIN') throw new RuleError('On incline une ressource qu’en phase Main')
+
+    const found = this.findInstance(game, payload.instanceId)
+    if (!found || found.player.playerId !== pseudo) throw new RuleError('Carte introuvable')
+    if (found.zone !== 'legendsArea' && found.zone !== 'eddiesArea') {
+      throw new RuleError('Seule une Legend ou une carte de la zone Eddies peut être inclinée')
+    }
+    if (found.card.exhausted) throw new RuleError('Cette carte est déjà inclinée (Eddie déjà perçu)')
+
+    found.card.exhausted = true
+    player.eddies += 1
+    appendEvent(game, 'EFFECT_RESOLVED', pseudo, `${found.card.name} inclinée (+1 Eddie)`)
   }
 
   endTurn(game: MockGame, pseudo: string): void {
@@ -1213,12 +1242,17 @@ function buildPlayer(pseudo: string, deckIds: string[], server: MockGameServer):
 
 /** Début de tour : redressement, fin des mals d'invocation, vente/remise remises à zéro. */
 function startTurn(player: MockPlayer): void {
+  // R2 : la réserve d'Eddies ne se reporte pas — début de tour = 0.
+  player.eddies = 0
   player.hasSoldThisTurn = false
   player.costDiscount = 0
+  // R3/R6 : toutes les cartes dépensées (Field, Legends, Eddies) se redressent.
   for (const card of player.field) {
     card.exhausted = false
     card.summoningSickness = false
   }
+  for (const card of player.legendsArea) card.exhausted = false
+  for (const card of player.eddiesArea) card.exhausted = false
 }
 
 function move(player: MockPlayer, from: ZoneKey, to: ZoneKey, card: Instance): void {
@@ -1286,8 +1320,10 @@ function describeIntent(payload: ActionPayload, before: Located | null): string 
       return name ? `attaque avec ${name}` : 'attaque'
     case 'SELL_CARD':
       return name ? `vend ${name}` : 'vend une carte'
+    case 'SPEND_RESOURCE':
     case 'SPEND_LEGEND':
-      return name ? `incline ${name} (+1 Eddie)` : 'incline une Legend'
+    case 'SPEND_EDDIES':
+      return name ? `incline ${name} (+1 Eddie)` : 'incline une ressource'
     case 'END_TURN':
       return 'termine son tour'
     default:

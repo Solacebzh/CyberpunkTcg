@@ -171,12 +171,16 @@ describe('Tapis officiel — zones du demi-tapis', () => {
     ])
   })
 
-  it('empile les cartes vendues face cachée dans EDDIES et la défausse dans TRASH', () => {
+  it('rend les cartes vendues face cachée dans EDDIES et la défausse dans TRASH', () => {
     const wrapper = mountBoard(true)
 
     const eddies = wrapper.get('[data-zone="EDDIES"][data-side="me"]')
     expect(eddies.get('[data-count="2"]')).toBeTruthy()
-    expect(eddies.findAll('[data-card-zone="EDDIES_AREA"]')).toHaveLength(1) // seule la carte du dessus
+    // Mini-Feature 4 (R4) : chaque carte vendue est rendue individuellement
+    // (face cachée) pour pouvoir être sélectionnée puis inclinée.
+    const eddiesCards = eddies.findAll('[data-card-zone="EDDIES_AREA"]')
+    expect(eddiesCards).toHaveLength(2)
+    expect(eddiesCards.map((card) => card.attributes('data-instance-id'))).toEqual(['sold-1', 'sold-2'])
 
     const trash = wrapper.get('[data-zone="TRASH"][data-side="me"]')
     expect(trash.findAll('[data-card-zone="TRASH"]')).toHaveLength(1)

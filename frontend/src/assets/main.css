@@ -588,6 +588,18 @@
     color: #cbd5e1;
   }
 
+  /* --- Eddies Area : rangée de cartes face cachée, inclinables pour +1 Eddie (R4) --- */
+  .eddies-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    min-width: 0;
+    overflow-x: auto;
+    padding-bottom: 0.15rem;
+  }
+
   /* --- Main (hors tapis) ------------------------------------------------- */
   .hand-row {
     display: flex;
