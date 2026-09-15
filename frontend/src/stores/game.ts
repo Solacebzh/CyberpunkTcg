@@ -16,7 +16,9 @@ import type { CardKeyword } from '@/types/card'
 import {
   GIGS_TO_WIN,
   type CardInstance,
+  type GameActionLogEntry,
   type GameLogEntry,
+  type GameLogMessage,
   type GameNotice,
   type GameState,
   type GameStateMessage,
@@ -84,6 +86,8 @@ export const useGameStore = defineStore('game', () => {
   const state = ref<GameState | null>(null)
   const changes = ref<StateChanges>({ ...EMPTY_CHANGES })
   const lastEvents = ref<GameLogEntry[]>([])
+  /** Journal de diagnostic (feature 6.5) : chaque action, y compris refusée. */
+  const debugLog = ref<GameActionLogEntry[]>([])
   const lastSequence = ref(0)
   const pendingRequestIds = ref<string[]>([])
   const selectedInstanceId = ref<string | null>(null)
@@ -297,6 +301,7 @@ export const useGameStore = defineStore('game', () => {
     const events = message.newEvents?.length ? message.newEvents : diffEvents(previous, next)
 
     state.value = next
+    mergeDebugLog(next.gameLog)
     lastSequence.value = next.sequence
     lastEvents.value = events
     changes.value = computeChanges(previous, next, events)
@@ -309,6 +314,25 @@ export const useGameStore = defineStore('game', () => {
     if (targeting.value && !targetingCandidatesStillValid(targeting.value)) targeting.value = null
     if (next.gameOver) stopCountdown()
     if (missed && gameId.value) socket.requestResync(gameId.value)
+  }
+
+  /**
+   * Fusionne des entrées du journal de diagnostic (borné à 200 entrées, comme
+   * le serveur) : `LOG` en temps réel et `gameLog` embarqué dans les états.
+   */
+  function mergeDebugLog(entries?: GameActionLogEntry[] | null): void {
+    if (!entries?.length) return
+    const byIndex = new Map(debugLog.value.map((entry) => [entry.index, entry]))
+    for (const entry of entries) {
+      if (entry && typeof entry.index === 'number') byIndex.set(entry.index, entry)
+    }
+    debugLog.value = [...byIndex.values()].sort((a, b) => a.index - b.index).slice(-200)
+  }
+
+  function handleDebugLog(message: GameLogMessage): void {
+    if (!message || message.type !== 'LOG') return
+    if (gameId.value && message.gameId !== gameId.value) return
+    mergeDebugLog(message.entries)
   }
 
   /** Le ciblage en cours a-t-il encore un sens après réception d'un nouvel état ? */
@@ -544,6 +568,7 @@ export const useGameStore = defineStore('game', () => {
 
     // Abonnements applicatifs AVANT les abonnements STOMP (doc §11.1).
     unsubscribers.push(socket.onGameState(applyStateMessage))
+    unsubscribers.push(socket.onGameLog(handleDebugLog))
     unsubscribers.push(socket.onGameNotice(handleNotice))
     unsubscribers.push(socket.onWsError(handleError))
     unsubscribers.push(socket.onReconnected(() => socket.requestResync(id)))
@@ -559,6 +584,7 @@ export const useGameStore = defineStore('game', () => {
     state.value = null
     changes.value = { ...EMPTY_CHANGES }
     lastEvents.value = []
+    debugLog.value = []
     lastSequence.value = 0
     pendingRequestIds.value = []
     selectedInstanceId.value = null
@@ -596,6 +622,7 @@ export const useGameStore = defineStore('game', () => {
     iAmReacting,
     reactionWindow,
     log,
+    debugLog,
     waitingForServer,
     opponentBlockerReady,
     myFieldUnits,

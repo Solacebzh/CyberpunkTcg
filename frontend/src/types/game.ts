@@ -134,6 +134,11 @@ export interface GameState {
   /** Siège 0 = hôte, siège 1 = invité. */
   players: PlayerState[]
   log: GameLogEntry[]
+  /**
+   * Dernières entrées du journal de diagnostic (feature 6.5), pour amorcer le
+   * panneau de debug quand on rejoint une partie en cours.
+   */
+  gameLog?: GameActionLogEntry[]
   sequence: number
   createdAt: string
 }
@@ -310,6 +315,35 @@ export const EVENT_LABELS: Record<GameEventType, string> = {
   GAME_WON: 'Victoire',
 }
 
+/** Verdict d'une entrée du journal de diagnostic (feature 6.5). */
+export type GameActionResult = 'SUCCESS' | 'FAILED' | 'ILLEGAL' | 'INFO'
+
+/**
+ * Entrée du **journal de diagnostic** `/topic/game/{gameId}/log`.
+ *
+ * Différente de {@link GameLogEntry} (journal public des `GameEvent`) : elle
+ * porte le verdict (succès / refusé), la phase, le tour et un contexte chiffré.
+ * Seul le panneau de debug l'affiche.
+ */
+export interface GameActionLogEntry {
+  index: number
+  timestamp: string
+  turnNumber: number
+  phase: string
+  playerId?: string | null
+  actionType: string
+  description: string
+  result: GameActionResult
+  details?: Record<string, unknown>
+}
+
+/** Enveloppe diffusée sur `/topic/game/{gameId}/log` (`type: "LOG"`). */
+export interface GameLogMessage {
+  type: 'LOG'
+  gameId: string
+  entries: GameActionLogEntry[]
+}
+
 /** Destinations STOMP — strictement alignées sur `WsDestinations.java` (doc §2). */
 export const Ws = {
   ping: '/app/ping',
@@ -325,6 +359,12 @@ export const Ws = {
   lobbyTopic: (code: string) => `/topic/lobby/${code}`,
   gameTopic: (gameId: string) => `/topic/game/${gameId}`,
   gameStateTopic: (gameId: string, pseudo: string) => `/topic/game/${gameId}/${pseudo}`,
+  /**
+   * Journal de diagnostic d'une partie (feature 6.5). Attention : ce chemin
+   * partage le préfixe des états personnels ; le discriminant est `type`
+   * (`LOG` ici, `STATE` pour les états).
+   */
+  gameLogTopic: (gameId: string) => `/topic/game/${gameId}/log`,
   gameAction: (gameId: string) => `/app/game/${gameId}/action`,
   gameResync: (gameId: string) => `/app/game/${gameId}/resync`,
 } as const

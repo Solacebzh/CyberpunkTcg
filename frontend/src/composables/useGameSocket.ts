@@ -21,6 +21,7 @@ import {
   isValidPseudo,
   type CreateRoomRequest,
   type GameCommand,
+  type GameLogMessage,
   type GameNotice,
   type GameStateMessage,
   type JoinRoomRequest,
@@ -50,6 +51,7 @@ const errorHandlers = new Set<Handler<WsError>>()
 const lobbyHandlers = new Set<Handler<LobbyState>>()
 const roomHandlers = new Set<Handler<RoomList>>()
 const pongHandlers = new Set<Handler<PongMessage>>()
+const gameLogHandlers = new Set<Handler<GameLogMessage>>()
 const reconnectedHandlers = new Set<Handler<number>>()
 
 /** Abonnements STOMP actifs : rejoués tels quels après chaque reconnexion. */
@@ -178,13 +180,15 @@ export interface GameSocketApi {
   requestRooms(): boolean
   ping(message?: string): boolean
 
-  /** S'abonne aux deux topics d'une partie puis demande un `resync`. */
+  /** S'abonne aux topics d'une partie (état, notifications, journal) puis demande un `resync`. */
   watchGame(gameId: string): Unsubscribe
   /** S'abonne à l'état d'un salon précis. */
   watchRoom(code: string): Unsubscribe
   forgetRoom(code: string): void
 
   onGameState(handler: Handler<GameStateMessage>): Unsubscribe
+  /** Journal de diagnostic d'une partie (feature 6.5, `/topic/game/{id}/log`). */
+  onGameLog(handler: Handler<GameLogMessage>): Unsubscribe
   onGameNotice(handler: Handler<GameNotice>): Unsubscribe
   onWsError(handler: Handler<WsError>): Unsubscribe
   onLobbyState(handler: Handler<LobbyState>): Unsubscribe
@@ -279,6 +283,10 @@ function watchGame(gameId: string): Unsubscribe {
     if (message?.type === 'STATE') broadcast(stateHandlers, message)
   })
   const offNotice = register(Ws.gameTopic(gameId), (body) => broadcast(noticeHandlers, body as GameNotice))
+  const offLog = register(Ws.gameLogTopic(gameId), (body) => {
+    const message = body as GameLogMessage
+    if (message?.type === 'LOG') broadcast(gameLogHandlers, message)
+  })
 
   // Le STATE initial peut précéder l'abonnement (doc §4.2 / §11.1) → resync.
   requestResync(gameId)
@@ -286,6 +294,7 @@ function watchGame(gameId: string): Unsubscribe {
   return () => {
     offState()
     offNotice()
+    offLog()
   }
 }
 
@@ -331,6 +340,7 @@ const api: GameSocketApi = {
   onLobbyState: (handler) => addHandler(lobbyHandlers, handler),
   onRoomList: (handler) => addHandler(roomHandlers, handler),
   onPong,
+  onGameLog: (handler) => addHandler(gameLogHandlers, handler),
   onReconnected: (handler) => addHandler(reconnectedHandlers, handler),
 }
 
@@ -343,6 +353,7 @@ export function useGameSocket(): GameSocketApi {
 export function __resetGameSocketForTests(): void {
   disconnect()
   stateHandlers.clear()
+  gameLogHandlers.clear()
   noticeHandlers.clear()
   errorHandlers.clear()
   lobbyHandlers.clear()

@@ -93,6 +93,19 @@ interface LogEntry {
   description: string
 }
 
+/** Entrée du journal de diagnostic (feature 6.5), alignée sur `GameActionLogDTO`. */
+interface ActionLogEntry {
+  index: number
+  timestamp: string
+  turnNumber: number
+  phase: string
+  playerId: string | null
+  actionType: string
+  description: string
+  result: 'SUCCESS' | 'FAILED' | 'ILLEGAL' | 'INFO'
+  details: Record<string, unknown>
+}
+
 interface MockGame {
   gameId: string
   phase: 'DRAW' | 'MAIN' | 'COMBAT' | 'END'
@@ -103,6 +116,8 @@ interface MockGame {
   reactionWindow: { kind: string; defendingPlayerId: string; attackerInstanceId: string } | null
   players: MockPlayer[]
   log: LogEntry[]
+  /** Journal de diagnostic : chaque action, y compris refusée. */
+  gameLog: ActionLogEntry[]
   createdAt: string
 }
 
@@ -148,6 +163,9 @@ export interface MockServerOptions {
   seed?: number
   now?: () => string
 }
+
+/** Carte localisée (zone + propriétaire) — retour de `findInstance`. */
+type Located = { player: MockPlayer; zone: ZoneKey; card: Instance }
 
 interface ActionPayload {
   action?: string
@@ -259,6 +277,8 @@ export class MockGameServer {
   private readonly now: () => string
   private readonly random: () => number
   private readonly sequences = new Map<string, number>()
+  /** Dernier index de journal diffusé par partie (diffusion incrémentale). */
+  private readonly lastLogIndex = new Map<string, number>()
 
   private sessionCount = 0
 
@@ -539,6 +559,7 @@ export class MockGameServer {
     this.publishRoom(room)
     this.broadcastRoomList()
     this.broadcast(`/topic/game/${game.gameId}`, { type: 'GAME_STARTED', gameId: game.gameId })
+    this.pushLog(game)
     this.pushStates(game.gameId, null, [])
   }
 
@@ -706,11 +727,26 @@ export class MockGameServer {
       reactionWindow: null,
       players: [buildPlayer(host, deckHost, this), buildPlayer(guest, deckGuest, this)],
       log: [],
+      gameLog: [],
       createdAt: this.now(),
     }
     this.games.set(gameId, game)
     this.sequences.set(gameId, 0)
     appendEvent(game, 'TURN_STARTED', host, `début de la partie (tour 1, ${host} commence)`)
+    appendActionLog(game, {
+      playerId: null,
+      actionType: 'GAME_START',
+      description: `Nouvelle partie : Joueur ${host} commence (premier joueur tiré au sort)`,
+      result: 'INFO',
+      details: { starter: host, rival: guest },
+    })
+    appendActionLog(game, {
+      playerId: null,
+      actionType: 'SETUP',
+      description: `Mise en place : 6 cartes en main et 3 Legends par joueur (${host}, ${guest})`,
+      result: 'INFO',
+      details: { handSize: 6, legends: 3, firstPlayer: host },
+    })
     return game
   }
 
@@ -746,10 +782,19 @@ export class MockGameServer {
       return
     }
     const requestId = payload.clientRequestId ?? null
+    const before = this.findInstance(game, payload.instanceId)
 
     try {
       const events = this.applyCommand(game, pseudo, payload)
+      appendActionLog(game, {
+        playerId: pseudo,
+        actionType: String(payload.action ?? '').toUpperCase(),
+        description: describeMockAction(pseudo, payload, before, game, events),
+        result: 'SUCCESS',
+        details: { events: events.map((event) => event.type) },
+      })
       this.pushStates(gameId, requestId, events)
+      this.pushLog(game)
       if (game.gameOver) {
         this.broadcast(`/topic/game/${gameId}`, {
           type: 'GAME_OVER',
@@ -759,15 +804,42 @@ export class MockGameServer {
         })
       }
     } catch (ruleError) {
+      const reason = errorMessage(ruleError)
+      appendActionLog(game, {
+        playerId: pseudo,
+        actionType: String(payload.action ?? '').toUpperCase(),
+        description: `Joueur ${pseudo} : ${describeIntent(payload, before)} → REFUSÉ (${reason})`,
+        result: 'ILLEGAL',
+        details: { reason },
+      })
+      this.pushLog(game)
       this.error(pseudo, {
         code: ruleError instanceof RuleError ? ruleError.code : 'ILLEGAL_ACTION',
-        message: errorMessage(ruleError),
+        message: reason,
         destination,
         gameId,
         clientRequestId: requestId,
       })
     }
   }
+
+  /**
+   * Diffuse les nouvelles entrées du journal de diagnostic sur
+   * `/topic/game/{gameId}/log` (feature 6.5). La diffusion est incrémentale,
+   * comme côté serveur Java (`GameBroadcaster.pushLog`).
+   */
+  pushLog(game: MockGame): void {
+    const from = this.lastLogIndex.get(game.gameId) ?? 0
+    const fresh = game.gameLog.filter((entry) => entry.index > from)
+    if (!fresh.length) return
+    this.lastLogIndex.set(game.gameId, fresh[fresh.length - 1].index)
+    this.broadcast(`/topic/game/${game.gameId}/log`, {
+      type: 'LOG',
+      gameId: game.gameId,
+      entries: fresh,
+    })
+  }
+
 
   applyCommand(game: MockGame, pseudo: string, payload: ActionPayload): LogEntry[] {
     if (game.gameOver) throw new RuleError('La partie est terminée')
@@ -1169,6 +1241,57 @@ function appendEvent(game: MockGame, type: string, playerId: string, description
   game.log.push({ index: game.log.length, type, playerId, description })
 }
 
+/** Ajoute une entrée au journal de diagnostic (index global, tour et phase courants). */
+function appendActionLog(
+  game: MockGame,
+  entry: Omit<ActionLogEntry, 'index' | 'timestamp' | 'turnNumber' | 'phase'>,
+): ActionLogEntry {
+  const logged: ActionLogEntry = {
+    index: game.gameLog.length + 1,
+    timestamp: new Date().toISOString(),
+    turnNumber: game.turn.number,
+    phase: game.phase,
+    ...entry,
+  }
+  game.gameLog.push(logged)
+  return logged
+}
+
+/** Intention lisible d'une action, pour les lignes de refus. */
+function describeIntent(payload: ActionPayload, before: Located | null): string {
+  const name = before?.card.name
+  switch (String(payload.action ?? '').toUpperCase()) {
+    case 'PLAY_CARD':
+      return name ? `joue ${name}` : 'joue une carte'
+    case 'ATTACK':
+      return name ? `attaque avec ${name}` : 'attaque'
+    case 'SELL_CARD':
+      return name ? `vend ${name}` : 'vend une carte'
+    case 'SPEND_LEGEND':
+      return name ? `incline ${name} (+1 Eddie)` : 'incline une Legend'
+    case 'END_TURN':
+      return 'termine son tour'
+    default:
+      return `action ${String(payload.action ?? '?')}`
+  }
+}
+
+/** Ligne de succès d'une action acceptée (mêmes tournures que le serveur Java). */
+function describeMockAction(
+  pseudo: string,
+  payload: ActionPayload,
+  before: Located | null,
+  game: MockGame,
+  events: LogEntry[],
+): string {
+  const acted = describeIntent(payload, before)
+  if (String(payload.action ?? '').toUpperCase() === 'END_TURN') {
+    const phases = events.map((event) => event.description).join(' ; ')
+    return `Joueur ${pseudo} termine le tour ${game.turn.number}${phases ? ` (${phases})` : ''}`
+  }
+  return `Joueur ${pseudo} ${acted}`
+}
+
 // --- Vues sérialisées (alignées sur les DTO Java) ----------------------------
 
 function roomView(room: MockRoom): Record<string, unknown> {
@@ -1272,6 +1395,7 @@ function stateView(game: MockGame, viewerId: string, sequence: number, now: stri
     reactionWindow: game.reactionWindow,
     players: game.players.map((player) => playerView(player, viewerId)),
     log: game.log.map((entry) => ({ ...entry })),
+    gameLog: game.gameLog.slice(-50).map((entry) => ({ ...entry })),
     sequence,
     createdAt: game.createdAt ?? now,
   }

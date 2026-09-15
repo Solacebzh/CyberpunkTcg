@@ -18,6 +18,8 @@
   --color-cyber-magenta: #ff2a6d;
   --color-cyber-green: #39ff88;
   --color-cyber-red: #ff4d4d;
+  /* Verdict « sans effet » du panneau de debug (feature 6.5). */
+  --color-cyber-orange: #ff9f43;
 
   --font-display: 'Chakra Petch', 'Rajdhani', 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
