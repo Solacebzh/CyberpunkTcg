@@ -9,6 +9,10 @@ Documents liés : `game-rules.md` (règles), `architecture.md` (§2-3, couches),
 
 ## 1. Carte du code
 
+> Feature 6.5 : le moteur journalise désormais **chaque** action dans un journal de
+> diagnostic (`GameLog`) et expose un panneau de debug
+> (`docs/DEBUG-GUIDE.md`). Les règles confirmées sont rappelées au §6.
+
 ```text
 backend/src/main/java/com/cyberpunktcg/
 ├── domain/game/          # État de partie (pur Java, zéro dépendance Spring/JPA)
@@ -82,16 +86,28 @@ appellera `executeCommand`, puis diffusera `getGameState(gameId, joueur)` à cha
   `eddiesArea`, `legendsArea` (+ `moveToZone`, `findIn`, `findAnywhere`).
 - Dés : `fixerDice` (`d4…d20`, `popFixerDie`), `gigs` (valeurs).
 - Dérivés : `getGigCount()`, `getStreetCred()` (somme, jamais stocké).
-- Ressources : `eddies` (réserve persistante : vente +1, jeu = dépense),
-  `costDiscount` (remise `REDUCE_COST`, réinitialisée au début du tour),
-  `hasSoldThisTurn` (1 vente/tour).
-- `startTurn()` : vente/remise réinitialisées, redressement, fin des mals d'invocation.
+- Ressources : `eddies` (réserve persistante : vente +1, inclinaison d'une Legend
+  +1, jeu = dépense), `costDiscount` (remise `REDUCE_COST`, réinitialisée au début
+  du tour), `hasSoldThisTurn` (1 vente/tour).
+- **Économie des Legends** (feature 6.5) : les Legends face cachée de la Legends
+  Area servent de réserve d'Eddies. `spendLegendForEddies` incline une Legend
+  (épuisée) pour +`GameConstants.EDDIES_PER_LEGEND` Eddie ; l'inclinaison est
+  **définitive** (une Legend inclinée n'est pas redressée au début du tour).
+  `legendsAvailableForEddies()` et `countSpentLegends()` exposent l'état de la
+  réserve (3 Legends, dont `FIRST_PLAYER_SPENT_LEGENDS` déjà inclinées pour le
+  premier joueur).
+- **RAM** : `ramCeilingFor(CardColor)` = somme des RAM des Legends de cette
+  couleur ; `hasLegendCeiling()` indique qu'un plafond s'applique (parties créées
+  par `GameService`). La RAM n'est pas consommée : plusieurs cartes à la RAM
+  maximale restent jouables (`docs/official-rules.md` §2).
+- `startTurn()` : vente/remise réinitialisées, redressement du Field, fin des
+  mals d'invocation (les Legends inclinées restent inclinées).
 - `readyBlockers()` / `controlsReadyBlocker()` : BLOCKERs prêts (non épuisés).
 
 ### 3.3 CardInstance
 
 - Identité : `instanceId` (UUID frais), `cardId` (définition), `ownerId`, `zone`.
-- Snapshot imprimé : `type`, `color`, `baseCost`, `basePower`,
+- Snapshot imprimé : `type`, `color`, `ram`, `baseCost`, `basePower`,
   `streetCredThreshold`, `keywords`, `abilities` (recopiés à la création).
 - Mutable : `powerBonus` / `damage` (buffs), `exhausted`, `faceDown`,
   `summoningSickness`, `attachedTo` / `attachments` (Gears).
@@ -105,6 +121,21 @@ appellera `executeCommand`, puis diffusera `getGameState(gameId, joueur)` à cha
 par `EndTurnCommand` (pioche + lancer à l'ouverture, `ON_TURN_END` à la fermeture)
 et `MAIN → COMBAT` par la première attaque. Le tour 1 commence en `MAIN`
 (main de départ distribuée, sans pioche ni lancer).
+
+Ordre exact du début de tour (`EndTurnCommand`, tours ≥ 2), conforme à
+`docs/official-rules.md` §4 :
+
+1. `VICTORY_CHECK` : le joueur actif qui **commence** son tour avec au moins
+   `GIGS_TO_WIN` (7) Gigs gagne immédiatement (journal `VICTORY`) ;
+2. pioche d'une carte ; **deck vide = défaite** (`GameState.drawCards` désigne le
+   vainqueur, le journal consigne `DRAW` en `FAILED` + `VICTORY`) ;
+3. lancer d'un dé de la Fixer Area (`d4…d20`, le `d20` en dernier) ;
+4. redressement du Field et fin des mals d'invocation (`Player.startTurn()`) ;
+5. `Phase.MAIN`.
+
+Le premier joueur est **tiré au sort** à la création (`GameService` +
+`Random` injectable pour les tests) ; il subit le malus de mise en place (2
+Legends déjà inclinées). Il n'y a pas de mulligan (limite assumée, §11).
 
 ## 4. Commandes
 
@@ -146,6 +177,9 @@ Détails :
 | `GRANT_POWER n` | +n bonus de puissance (conservé jusqu'à la défausse) |
 | `STEAL_GIG n` | vole n Gigs (dé max à chaque fois) ; **ne fait pas gagner immédiatement** (victoire au début du tour) |
 | `REDUCE_COST n` | +n remise Eddies jusqu'au début du prochain tour du bénéficiaire |
+| `DEFEAT_UNIT n` | vainc la plus puissante Unit rivale éligible (`n` = plafond de puissance, `0` = aucun) ; cible `TARGET_UNIT` = cible désignée |
+| `BOOST_GIG n` | augmente de `n` le Gig de plus faible valeur du bénéficiaire (« Increase a Gig by up to N ») |
+| `REDUCE_GIG n` | diminue de `n` le Gig de plus forte valeur du bénéficiaire, sans descendre sous 1 |
 
 | Déclencheur | Moment |
 |---|---|
@@ -162,6 +196,8 @@ Détails :
 | `TARGET_UNIT` | la cible de la commande (doit être sur le Field, sinon sans effet) |
 | `EACH_RIVAL_UNIT` | toutes les Units rivales du Field |
 | `SELF_PLAYER` / `RIVAL_PLAYER` | le contrôleur / son rival (effets joueur) |
+| `FRIENDLY_UNIT` | Unit alliée la plus puissante du Field (choix déterministe) |
+| `RIVAL_UNIT` | Unit rivale la plus puissante éligible (choix déterministe) |
 
 ### 5.2 Mini-langage des capacités
 
@@ -181,11 +217,40 @@ ON_PLAY:DAMAGE:2:EACH_RIVAL_UNIT
 
 Cibles par défaut (capacité sans 4ᵉ champ) : `DAMAGE → TARGET_UNIT`,
 `HEAL → SELF`, `DRAW → SELF_PLAYER`, `GRANT_POWER → SELF`,
-`STEAL_GIG → RIVAL_PLAYER`, `REDUCE_COST → SELF_PLAYER`.
+`STEAL_GIG → RIVAL_PLAYER`, `REDUCE_COST → SELF_PLAYER`,
+`DEFEAT_UNIT → RIVAL_UNIT`, `BOOST_GIG → SELF_PLAYER`, `REDUCE_GIG → RIVAL_PLAYER`.
 
-Les capacités au format libre du catalogue actuel sont **ignorées**, sauf
-l'heuristique documentée « draw N » → `ON_PLAY:DRAW:N` (compatibilité).
-Une capacité invalide ne fait jamais échouer une partie (ignorée silencieusement).
+**Textes du catalogue (feature 6.5).** `EffectParser` analyse aussi les textes
+naturels de `data/cards.json`, dans cet ordre :
+
+1. mini-langage structuré (`TRIGGER:EFFET:VALEUR[:CIBLE]`) — prioritaire ;
+2. découpage du texte en **segments** par les marqueurs officiels
+   (`{Play}`, `{Attack}`, `{Flip}`, `{Quick}`, `{Defeated}`), avec gestion du
+   préambule (« At the end of your turn, … » → `ON_TURN_END`,
+   « When you play this, … » → `ON_PLAY`) ;
+3. reconnaissance, segment par segment, de motifs **non ambigus** par
+   expressions régulières ancrées (`(?=\s*(\.|,|$|then|if))`) :
+   `draw N`, `defeat a rival Unit [with power N or less]`,
+   `give a friendly Unit +N power [this turn]`,
+   `increase a Gig by up to N`, `decrease a rival Gig by up to N` ;
+4. repli historique « draw N » → `ON_PLAY:DRAW:N` (compatibilité).
+
+Sont **volontairement ignorés** (jamais d'échec de partie) :
+
+- segments dont le marqueur est un rappel de mot-clé (`{Spend}`, `{Call}`,
+  `{Go Solo}`, `{Blocker}`) ;
+- capacités conditionnelles ou modales : `CONDITIONAL_HINTS` = « you may »,
+  « if you do », « if you have », « if a/if it/if your », « whenever »,
+  « each time », « the first time », « at the start of », « choose one effect »,
+  et le séparateur modal `//` ;
+- préambules suspendus à un événement (« When a friendly Unit steals… »,
+  « If … ») ;
+- segments commençant par une parenthèse (rappel de règle imprimé) ;
+- motifs non reconnus, par exemple les effets globaux (« Defeat all other
+  Units »), faute de ciblage fin en V1.
+
+Une capacité ignorée est donc une **limite assumée** (§11) : la ligne `EFFECT`
+correspondante n'apparaît pas au journal de diagnostic.
 
 ### 5.3 Mots-clés (rôle en V1)
 
@@ -207,17 +272,22 @@ pas de double `ON_DEATH`.
 
 | Règle imposée | Implémentation |
 |---|---|
-| Victoire : 7 Gigs au début du tour | `GameConstants.GIGS_TO_WIN`, `EndTurnCommand` (avant pioche/lancer) |
+| Victoire : 7 Gigs au début du tour | `GameConstants.GIGS_TO_WIN`, `EndTurnCommand` (avant pioche/lancer), journal `VICTORY_CHECK` |
+| Défaite : pioche impossible (deck vide) | `GameState.drawCards` + journal `DRAW`/`VICTORY` |
+| Premier joueur tiré au sort + malus | `GameService.createGame` (`setupRandom`), `FIRST_PLAYER_SPENT_LEGENDS` |
 | Phases Draw → Main → Combat → End | `Phase`, transitions auto (`EndTurnCommand`, `AttackCommand`) |
 | Legend : pas de coût, effet FLIP | `PlayCardCommand` (branche Legend, déclencheur `FLIP`) |
 | Unit : power = dégâts | comparaison des puissances (`AttackCommand`), `DAMAGE` létal |
+| Unit posée : pas d'attaque sauf `GO_SOLO` | `summoningSickness` (`PlayCardCommand`), levée au tour suivant, exemption `hasGoSolo()` |
 | Program : effet Play puis défausse | `PlayCardCommand` (branche Program) |
 | Gear : attaché à une Unit | `PlayCardCommand` (hôte obligatoire), `totalPowerFor`, suivi en défausse |
-| RAM red/green/blue/yellow | définitions (`CardColor`) ; plafond de deck = feature deck-builder (pas de contrôle en partie) |
+| RAM par couleur = plafond (jamais consommée) | `CardInstance.getRam()` (snapshot), `Player.ramCeilingFor`, `PlayCardCommand.requireRamCeiling` |
+| Eddies : Legends inclinées + ventes | `SpendLegendCommand` (+1 Eddie, définitif), `SellCardCommand` (+1 Eddie, 1/tour) |
 | Eddies / Street Cred | réserve dépensée / seuil non consommé (`Player`, `PlayCardCommand`) |
 | Vente 1 carte/tour | `SALES_PER_TURN`, `SellCardCommand` + `hasSoldThisTurn` |
-| Réactions QUICK uniquement | `ReactionWindow`, `PlayCardCommand` (défenseur) |
+| Réactions QUICK uniquement | `ReactionWindow`, `PlayCardCommand` (défenseur), fermeture en fin de tour |
 | BLOCKER intercepte | `AttackCommand.validate` + `Player.controlsReadyBlocker` |
+| Journal de diagnostic (toutes les actions) | `GameLog`, `GameState.log*`, `GameService.executeCommand`, `/topic/game/{id}/log`, `DebugController` |
 
 ## 7. Vues masquées
 
@@ -279,20 +349,37 @@ cd backend && mvn clean test   # profil H2 (aucun Docker requis)
 - `engine/GameCommandTest` : pose (Unit/Program/Gear/Legend), coûts, seuils,
   combat (victoire/égalité), BLOCKER, vol, QUICK, vente unique, victoire à 7,
   pioche/lancer, deck-out, `GO_SOLO`.
-- `service/GameServiceTest` (Mockito, sans Spring) : création, exécution,
-  masquage, 404.
-- `engine/GameFixtures` : cartes synthétiques au mini-langage + duels frais.
+- `service/GameServiceTest` (Mockito, sans Spring) : création, premier joueur
+  tiré au sort + malus, exécution, refus consignés au journal, masquage, 404.
+- `ws/LobbyGameFlowWebSocketIntegrationTest` : partie STOMP de bout en bout
+  (états masqués, actions, erreurs privées, abandon) avec premier joueur aléatoire.
+- `docs/DEBUG-GUIDE.md` : mode d'emploi du journal et des endpoints de debug.
+- `engine/GameIntegrationTest` (feature 6.5) : les 7 scénarios critiques —
+  `testFullGameFlow`, `testPlayCardCostValidation`, `testSellCardLimit`,
+  `testCombatWithBlocker`, `testVictoryCondition`, `testLegendFlip`,
+  `testQuickReaction` (voir `docs/INTEGRATION-TEST.md`).
+- `engine/GameFixtures` : cartes synthétiques au mini-langage + duels frais
+  (`coloredCard`/`coloredUnit`/`coloredProgram`/`coloredLegend` pour la couleur
+  et la RAM).
 - Les tests REST/JPA existants comparent au contenu réel du catalogue embarqué
   (robustes à l'ajout de cartes).
 
 ## 11. Limites V1 assumées (suites)
 
-- Pas de mulligan, pas de choix du premier joueur (p1 commence).
+- Pas de mulligan (le premier joueur est tiré au sort, le malus de mise en place
+  s'applique).
+- Capacités activées (`{Spend}`), modales et conditionnelles des textes du
+  catalogue non résolues (voir §5.2) ; cohérences de ciblage fin (choix du joueur)
+  non implémentées : les effets génériques choisissent la cible de façon
+  déterministe.
+- L'inclinaison d'une Legend est définitive : elle n'est pas redressée au début du
+  tour suivant (arbitrage feature 6.5).
 - Legends non jouables comme Units (`GO_SOLO` des Legends), pas de coût activé.
 - Pas de déséquipement / destruction ciblée de Gear (seulement suivi en défausse).
 - Pas de ciblage fin au-delà de `TARGET_UNIT` (pas de « Unit engagée », etc.).
-- Textes naturels du catalogue non interprétés (sauf « draw N ») : les futures
-  cartes devront embarquer le mini-langage (ou un format structuré équivalent).
+- Les textes naturels sont interprétés pour un sous-ensemble non ambigu de
+  motifs ; les nouvelles cartes peuvent embarquer le mini-langage pour un
+  comportement exact et testable.
 - Fenêtre de réaction simplifiée : synchrone, ouverte à chaque attaque, fermée
   en fin de tour (pas de passe explicite ni de pile proposée/répondue).
 - Pas de persistance des parties ni de diffusion STOMP (feature 04) ; pas de

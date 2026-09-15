@@ -114,9 +114,16 @@ expérience, puis agit :
 | `/topic/lobby/{code}` | `LOBBY_STATE` : état du salon (attente puis `PLAYING`) | abonnés du salon |
 | `/user/queue/lobby` | `LOBBY_STATE` : accusé privé de create/join/leave | privée |
 | `/topic/game/{gameId}` | `GameNotice` : `GAME_STARTED`, `GAME_OVER`, présence (dé/reconnexion) | publique aux deux joueurs |
+| `/topic/game/{gameId}/log` | `GameLogMessage` (`LOG`) : entrées du **journal de diagnostic** (feature 6.5), incrémentales | publique aux deux joueurs |
 | `/topic/game/{gameId}/{pseudo}` | `GameStateMessage` (`STATE`) : état complet masqué pour ce pseudo | chaque joueur ne s'abonne qu'au **sien** |
 | `/user/queue/errors` | `ERROR` : rejet d'une action / lobby | privée |
 
+> `/topic/game/{gameId}/log` est distinct du topic d'état *par joueur* : il publie
+> les mêmes lignes aux deux joueurs (aucun secret n'y figure — les messages
+> utilisent les noms de cartes publiquement révélés et les identifiants de
+> joueurs). Le client distingue les deux flux par le champ `type` (`LOG` vs
+> `STATE`) puisque les deux arrivent sur des destinations voisines.
+>
 > Pourquoi un topic par joueur pour l'état ? Le broker simple ne sait pas
 > filtrer par destinataire ; on segmente donc par pseudo dans la destination.
 > Un client ne doit jamais s'abonner au topic d'état d'un autre pseudo (aucun
@@ -294,6 +301,7 @@ omis ou `null`) :
 | `PLAY_CARD` | carte à jouer (main, ou Legend de la legends area pour la retourner) | obligatoire pour un **Gear** (l'Unit alliée équipée) ; optionnel pour les autres cartes qui ciblent | `PlayCardCommand` |
 | `ATTACK` | l'Unit attaquante | UUID d'une **Unit rivale** pour la combattre ; **absent/null** pour une attaque directe de vol de Gig | `AttackCommand` |
 | `SELL_CARD` | carte de sa main à vendre (1 vente/tour, phase Main) | — | `SellCardCommand` |
+| `SPEND_LEGEND` | Legend **face cachée** de sa Legends Area à incliner (+1 Eddie, définitif) | — | `SpendLegendCommand` |
 | `END_TURN` | — | — | `EndTurnCommand` |
 | `CONCEDE` | — | — | abandon (victoire immédiate de l'adversaire) |
 
@@ -301,7 +309,10 @@ Règles appliquées par le serveur (rappel) : on joue en phase `MAIN`/`COMBAT` ;
 une Unit attaquante doit être prête, sans mal d'invocation (sauf `go_solo`) ;
 un `BLOCKER` rival prêt doit être attaqué avant de pouvoir voler un Gig ;
 pendant une fenêtre de réaction, le défenseur ne peut jouer que des cartes
-`quick` hors de son tour. La vente rapporte exactement 1 Eddie.
+`quick` hors de son tour. La vente rapporte exactement 1 Eddie, et l'inclinaison
+d'une Legend face cachée également (`SPEND_LEGEND`, une seule fois par Legend :
+une Legend inclinée n'est jamais redressée). Le premier joueur commence avec
+2 Legends déjà inclinées (malus de mise en place).
 
 Exemples de commandes :
 
@@ -441,12 +452,28 @@ Enveloppe sur `/topic/game/{gameId}/{pseudo}` :
       "description": "début de la partie (tour 1, DocHost commence)"
     }
   ],
+  "gameLog": [
+    {
+      "index": 1,
+      "timestamp": "2026-09-15T10:00:00.000Z",
+      "turnNumber": 1,
+      "phase": "MAIN",
+      "playerId": "DocHost",
+      "actionType": "PLAY_CARD",
+      "description": "Joueur DocHost joue 6th Street Recruits (coût: 4 Eddies, 2 RAM rouge)",
+      "result": "SUCCESS",
+      "details": { "card": "6th Street Recruits", "paid": 4 }
+    }
+  ],
   "sequence": 1,
   "createdAt": "2026-09-14T20:17:23.036Z"
 }
 ```
 
 - `phase` : `DRAW` | `MAIN` | `COMBAT` | `END`.
+- `gameLog` : les dernières entrées du **journal de diagnostic** (feature 6.5,
+  50 par défaut) — utile pour amorcer le panneau de debug quand on rejoint une
+  partie en cours. Détail des champs en §7.6.
 - `gameOver` true → `winnerId` et `endReason` apparaissent.
 - `reactionWindow` : `null` hors combat déclaré, sinon :
 
@@ -604,6 +631,44 @@ Si une `STATE` arrive avec un `sequence` ≤ du dernier connu, l'ignorer ; s'il
 manque des numéros, envoyer un `resync`. Le `resync` ne consomme pas de numéro
 (il renvoie la dernière séquence sans l'incrémenter).
 
+### 7.6 Journal de diagnostic — `GameLogMessage` (feature 6.5)
+
+Diffusé sur `/topic/game/{gameId}/log` à chaque action journalisée :
+
+```json
+{
+  "type": "LOG",
+  "gameId": "c764abe0-7ab9-4f74-bfb1-7f4301d48720",
+  "entries": [
+    {
+      "index": 12,
+      "timestamp": "2026-09-15T10:02:11.482Z",
+      "turnNumber": 2,
+      "phase": "MAIN",
+      "playerId": "DocHost",
+      "actionType": "SELL_CARD",
+      "description": "Joueur DocHost : vendre une carte → REFUSÉ (Une seule vente par tour)",
+      "result": "ILLEGAL",
+      "details": { "reason": "Une seule vente par tour", "command": "SellCardCommand" }
+    }
+  ]
+}
+```
+
+| Champ | Valeurs / rôle |
+| --- | --- |
+| `type` | toujours `LOG` (permet de distinguer ce flux d'un `STATE`) |
+| `entries` | entrées **nouvelles uniquement** (`index` strictement croissant) |
+| `result` | `SUCCESS` (vert), `ILLEGAL` (rouge), `FAILED` (orange), `INFO` (jaune) |
+| `actionType` | `PLAY_CARD`, `ATTACK`, `SELL_CARD`, `SPEND_LEGEND`, `END_TURN`, `DRAW`, `GIG_ROLL`, `VICTORY_CHECK`, `VICTORY`, `REACTION_WINDOW`, `UNIT_DEFEATED`, `GIG_STOLEN`, `EFFECT`, `SETUP`, `GAME_START`, `DEBUG_FORCE_PHASE`, `CONCEDE`… |
+
+Différence avec `log` (journal public `GameEvent`) : le journal de diagnostic
+consigne **aussi les refus** et les vérifications internes, avec leur motif
+(`details.reason`) ; il est borné à 200 entrées côté serveur. Après une
+reconnexion, un `resync` suffit : l'état embarque `gameLog`, et les entrées déjà
+connues sont dédupliquées par leur `index`. Mode d'emploi complet :
+`docs/DEBUG-GUIDE.md`.
+
 ---
 
 ## 8. Présence et déconnexions
@@ -744,3 +809,8 @@ doit corréler via `clientRequestId`.
    états complets font de l'ordre de 9 à 20 Ko en début de partie.
 8. Émulation HTTP : en dev, faire passer le WS par le proxy Vite
    (`ws: true` sur `/ws`) pour éviter toute gestion CORS côté navigateur.
+9. **Journal de diagnostic** : s'abonner à `/topic/game/{gameId}/log` (fait par
+   `useGameSocket().watchGame`) et dédupliquer par `index` ; le panneau de debug
+   (`components/game/DebugPanel.vue`, touche <kbd>F12</kbd>) s'en sert, ainsi que
+   de `state.gameLog` après un `resync`. Les routes REST `/api/debug/**`
+   n'existent que sous les profils Spring `test`/`dev`.

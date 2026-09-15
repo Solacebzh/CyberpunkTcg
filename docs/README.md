@@ -11,6 +11,8 @@ Les autres documents détaillent chaque aspect.
 | **[game-rules.md](game-rules.md)** | tu implémentes des règles ou du moteur de jeu |
 | **[WEBSOCKET-PROTOCOL.md](WEBSOCKET-PROTOCOL.md)** | tu ajoutes un message temps réel (client **et** serveur) |
 | **[FRONTEND-ARCHITECTURE.md](FRONTEND-ARCHITECTURE.md)** | tu touches au client Vue (composants, stores, animations, plateau) |
+| **[DEBUG-GUIDE.md](DEBUG-GUIDE.md)** | tu diagnostiques une action qui ne fait pas ce qu'elle devrait (journal de diagnostic, `/api/debug`, panneau F12) |
+| **[INTEGRATION-TEST.md](INTEGRATION-TEST.md)** | tu veux savoir quelles règles sont couvertes par les 7 tests d'intégration critiques |
 | **[roadmap.md](roadmap.md)** | tu veux savoir quoi faire ensuite / ce qui est déjà fait |
 
 ---
