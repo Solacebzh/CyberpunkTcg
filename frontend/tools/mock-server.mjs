@@ -16,6 +16,11 @@
  * (« FIXER / GIGS / LEGENDS / EDDIES / TRASH / DECK ») est une traduction
  * d'affichage faite par le frontend (`src/types/playmat.ts`) — rien à renommer ici.
  *
+ * Mini-Feature 5 : la phase DRAW est simulée **pas à pas** comme côté Spring —
+ * après `END_TURN` la partie s'arrête à `turn.drawStep = AWAITING_DRAW`, puis
+ * `DRAW_CARD` (pioche 1 carte) → `AWAITING_DIE_SELECT`, puis `SELECT_DIE`
+ * (`dice: ['d6']`, d20 refusé tant qu'il reste d'autres dés) → lancer → `MAIN`.
+ *
  * ⚠️ Les règles appliquées ici sont un sous-ensemble de démonstration ; le
  * serveur de référence reste le backend Spring (docs/RULE-ENGINE.md).
  */

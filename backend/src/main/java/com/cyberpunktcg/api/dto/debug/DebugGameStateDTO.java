@@ -17,6 +17,7 @@ import java.util.List;
  * @param gameId         identifiant de la partie
  * @param turnNumber     numéro du tour courant
  * @param phase          phase courante ({@code DRAW}, {@code MAIN}, {@code COMBAT}, {@code END})
+ * @param drawStep       sous-étape de la phase DRAW interactive (Mini-Feature 5), absente hors DRAW
  * @param activePlayerId joueur actif
  * @param gameOver       partie terminée
  * @param winnerId       gagnant (absent si la partie continue)
@@ -32,6 +33,7 @@ public record DebugGameStateDTO(
         String gameId,
         int turnNumber,
         String phase,
+        String drawStep,
         String activePlayerId,
         boolean gameOver,
         String winnerId,

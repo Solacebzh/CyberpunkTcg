@@ -17,7 +17,7 @@ Légende : `- [x]` = à faire, `- [x]` = test écrit + impl + vert + documenté.
 - [x] **R1.7** Phase DRAW de chaque tour : toutes les Legends sont redressées et les Eddies retombent à 0 (lève le malus du premier joueur à son tour 2) — *Source: § START PHASE “READY SPENT CARDS Return all your spent (sideways) cards to the ready position.”* — *Test: `testR1_DrawPhase_ReadiesAllLegends`*
 - [x] **R1.6** Main de départ : 6 cartes (+ mulligan once) — *Source: § SETUP “DRAW 6 ... you can mulligan once.”*
 
-**Implémentation attendue :** `GameService.createGame` (+ `applyFirstPlayerPenalty`) + `Player.exhaustLeftmostLegends(2)` + `Player.freshFixerDice()` + `STARTING_HAND_SIZE=6` + `FIRST_PLAYER_SPENT_LEGENDS=2` + tirage Random ; redressement en phase DRAW via `Player.startTurn()` → `readyAll()` appelé par `EndTurnCommand`.
+**Implémentation attendue :** `GameService.createGame` (+ `applyFirstPlayerPenalty`) + `Player.exhaustLeftmostLegends(2)` + `Player.freshFixerDice()` + `STARTING_HAND_SIZE=6` + `FIRST_PLAYER_SPENT_LEGENDS=2` + tirage Random ; redressement en phase DRAW via `Player.startTurn()` → `readyAll()` appelé par `DrawPhaseHandler.readyAndAwaitDraw` (depuis `EndTurnCommand`, avant l'attente de la pioche).
 
 ---
 
@@ -81,10 +81,11 @@ Légende : `- [x]` = à faire, `- [x]` = test écrit + impl + vert + documenté.
 ## R8 — Phases de tour
 
 - [x] **R8.1** START PHASE : 1) Ready spent cards, 2) Draw 1, 3) Gain a Gig (roll die, d20 last) — *Source: § TURN ORDER START PHASE*
+- [x] **R8.1 bis (Mini-Feature 5, 2026-09-15)** La START PHASE est **interactive** : après `END_TURN` la partie s'arrête en `DRAW` / `AWAITING_DRAW` (cartes redressées, 0 Eddie, rien de pioché) ; le joueur doit envoyer `DRAW_CARD` (pioche 1, deck vide = défaite) puis `SELECT_DIE` (**n'importe quel dé sauf le d20, toujours lancé en dernier** ; lancer serveur `1..faces`, résultat dans `gigs` + `gigDice`) ; `MAIN` s'ouvre ensuite automatiquement. `END_TURN` et toute action de jeu sont refusées pendant `DRAW`. — *Source: § START PHASE “DRAW 1 … GAIN A GIG: Take a die from your fixer area, roll it … You can choose any die except the d20, which is always rolled last.”* — *Impl: `DrawStep`, `DrawPhaseHandler`, `DrawCardCommand`, `SelectDieCommand`, `Player.selectableFixerDice()`* — *Tests: `DrawPhaseTest.testR5_Draw_Sequence_RequiresPlayerActionForDraw`, `DrawPhaseTest.testR5_SelectDie_OnlySmallestDieUntilAllUsedExceptD20`, `DrawPhaseTest.testR5_EmptyDeck_IsLoss`, `testR8_PhasesOrder`, `testR8_StartPhaseSteps`*
 - [x] **R8.2** MAIN PHASE : ressources (spend Legends/Eddies), vente (1/tour), Call (1/tour), jouer, attaquer (dans n'importe quel ordre) — *Source: § MAIN PHASE*
 - [x] **R8.3** COMBAT : Units attaquent (spend), power = dégâts, BLOCKER redirection — *Source: § ATTACKING*
 - [x] **R8.4** END : Eddies perdus (reset à 0), passage au joueur suivant, victoire check au début du tour suivant — *Source: § WIN CONDITION + Task R8*
-- [x] **R8.5** Test : vérifier l'ordre exact des phases `DRAW → MAIN → COMBAT → END → DRAW ...` via `Phase.next()` et `EndTurnCommand` logs
+- [x] **R8.5** Test : vérifier l'ordre exact des phases `DRAW → MAIN → COMBAT → END → DRAW ...` via `Phase.next()` et `EndTurnCommand` logs (la phase `DRAW` étant interactive : `DRAW_START → AWAITING_DRAW → AWAITING_DIE_SELECT → ROLLING_DIE → DRAW_COMPLETE`)
 
 ---
 
@@ -124,7 +125,7 @@ Légende : `- [x]` = à faire, `- [x]` = test écrit + impl + vert + documenté.
 - [x] **R12.1** Gigs gagnés via dés Gig (Fixer → Gig Area roll) et effets de cartes (Steal, Increase) — *Source: § FIXER + § PLAYMAT GIG AREA + § STEAL “Choose a rival Gig die and move it”*
 - [x] **R12.2** Victoire : 7 Gigs vérifiés au DÉBUT du tour (START PHASE, avant Draw/Gain) — *Source: § WIN CONDITION “START YOUR TURN WITH 7 GIGS TO WIN” + § PLAYMAT GIG AREA “If you start your turn with 7 ... you win”*
 - [x] **R12.3** OVERTIME : après le 7e tour du dernier joueur, majorité instantanée (hors scope V0, documenté) — *Source: § WIN CONDITION OVERTIME*
-- [x] **R12.4** Deck-out (pioche impossible) = défaite — *Source: Task R12 “Deck-out (pioche impossible) = défaite” + extrapolation règle (drawCards defeat)*
+- [x] **R12.4** Deck-out (pioche impossible) = défaite — *Source: Task R12 “Deck-out (pioche impossible) = défaite” + extrapolation règle (drawCards defeat)* — depuis la Mini-Feature 5, la défaite tombe **au clic sur la pioche** (`DRAW_CARD` sur deck vide : journal `DRAW` `FAILED` + `VICTORY`), pas à la fin du tour précédent — *Tests: `testR12_DeckOut_Defeat`, `DrawPhaseTest.testR5_EmptyDeck_IsLoss`*
 - [x] **R12.5** Test : 7 Gigs → victoire au début tour suivant, 6 Gigs → pas de victoire, deck vide → défaite
 
 ---
@@ -161,7 +162,8 @@ Suivre ici le cochage règle par règle (Phase 2 A→E) — tous verts le 2026-0
 - R5 : ✅ 3 tests testR5_* vert (1/tour, faceDown EddiesArea, +1, future resource)
 - R6 : ✅ 3 tests testR6_* vert (Eddies cards tap +1, ready)
 - R7 : ✅ 2 tests testR7_* vert (no RAM check)
-- R8 : ✅ 3 tests testR8_* vert (START ready-draw-gig, MAIN, COMBAT, END eddies lost)
+- R8 : ✅ 3 tests testR8_* vert (START ready-draw-gig interactif, MAIN, COMBAT, END eddies lost)
+- Mini-Feature 5 : ✅ 7 tests `DrawPhaseTest` (séquence DRAW interactive, choix du dé / d20 en dernier, deck vide = défaite, victoire à 7 avant pioche, vues masquées, dé du Gig volé, ressources refusées en DRAW)
 - R9 : ✅ 4 tests testR9_* vert (ready+no Lag, power=dmg, Blocker, trash)
 - R10: ✅ 3 tests testR10_* vert (Lag blocks, GoSolo/Adrenaline bypass, clear next turn)
 - R11: ✅ 6 tests testR11_* vert (Play, Blocker, GoSolo, Quick, Defeated, Spend/Call skip)

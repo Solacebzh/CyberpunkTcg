@@ -30,7 +30,8 @@ backend/src/main/java/com/cyberpunktcg/
 │   ├── CardInstance.java # exemplaire de carte (UUID + buffs + marqueurs)
 │   ├── Zone.java         # DECK, HAND, FIELD, TRASH, EDDIES_AREA, LEGENDS_AREA, REMOVED
 │   ├── Phase.java        # DRAW, MAIN, COMBAT, END (+ next())
-│   ├── Turn.java         # numéro, joueur actif, phase
+│   ├── DrawStep.java     # sous-étapes de la phase DRAW interactive (Mini-Feature 5)
+│   ├── Turn.java         # numéro, joueur actif, phase, drawStep
 │   ├── ReactionWindow.java
 │   ├── DieRoll.java      # résultat d'un lancer de dé Gig
 │   ├── GameEvent.java / GameEventType.java  # journal (sans secret, base du rejeu R10)
@@ -41,6 +42,7 @@ backend/src/main/java/com/cyberpunktcg/
 │   ├── EffectParser.java    # interprète les abilities JSON (mini-langage + heuristiques)
 │   ├── EffectHandler.java   # stratégie d'application d'un type d'effet
 │   ├── RuleEngine.java      # resolveEffect(s), defeatUnit, routage Strategy
+│   ├── DrawPhaseHandler.java # machine à états de la phase DRAW interactive (Mini-Feature 5)
 │   └── command/
 │       ├── GameCommand.java      # interface : validate + execute (+ gardes partagés)
 │       ├── PlayCardCommand.java
@@ -84,16 +86,24 @@ appellera `executeCommand`, puis diffusera `getGameState(gameId, joueur)` à cha
 - `eventLog` append-only (descriptions sans secret → exposé tel quel).
 - Victoire : `winnerId` + `endReason` ; `isGameOver()` bloque toute commande.
 - Primitives mécaniques (sans journalisation, les appelants journalisent) :
-  `drawCards` (deck vide → défaite immédiate), `stealGig` (dé max),
-  `rollFixerDie` (`d20` en dernier, garanti par l'ordre de la Fixer Area),
+  `drawCards` (deck vide → défaite immédiate), `stealGig` (dé max, le type de
+  dé suit le Gig volé), `rollFixerDie(playerId, die)` (dé **choisi** par le joueur,
+  Mini-Feature 5 ; la variante sans dé lance le plus petit dé sélectionnable),
   `totalPowerFor` (unit + gears attachés), `findInstance` / `findInstanceOwner`.
+- `getDrawStep()` / `setDrawStep()` : sous-étape de la phase `DRAW` (`null` hors
+  `DRAW`, effacée automatiquement par `setPhase`).
 - `maskedCopyFor(viewerId)` : copie détachée aux secrets effacés (§7).
 
 ### 3.2 Player
 
 - Zones cartes : `deck` (index 0 = dessus), `hand`, `field`, `trash`,
   `eddiesArea`, `legendsArea` (+ `moveToZone`, `findIn`, `findAnywhere`).
-- Dés : `fixerDice` (`d4…d20`, `popFixerDie`), `gigs` (valeurs).
+- Dés : `fixerDice` (`d4…d20`, dés pas encore lancés), `gigs` (valeurs) et
+  `gigDice` (type du dé de chaque Gig, aligné sur `gigs` ; `"?"` pour un Gig
+  injecté hors lancer). Choix du dé (Mini-Feature 5) : `selectableFixerDice()`
+  = tous les dés restants **sauf le `d20`**, ou `[d20]` quand il est le dernier ;
+  `canSelectFixerDie(die)`, `removeFixerDie(die)`, `addRolledGig(die, value)`,
+  `removeGig(index)`, `normalizeDie("D8") → "d8"`.
 - Dérivés : `getGigCount()`, `getStreetCred()` (somme, jamais stocké).
 - Ressources : `eddies` (réserve : inclinaison d'une Legend ou d'une carte de
   l'Eddies Area = +1, jeu = dépense ; **la vente ne crédite rien**, elle crée la
@@ -118,21 +128,49 @@ appellera `executeCommand`, puis diffusera `getGameState(gameId, joueur)` à cha
 
 ### 3.4 Phases et tours
 
-`DRAW → MAIN → COMBAT → END`. En V1, `DRAW`/`END` sont résolues automatiquement
-par `EndTurnCommand` (pioche + lancer à l'ouverture, `ON_TURN_END` à la fermeture)
-et `MAIN → COMBAT` par la première attaque. Le tour 1 commence en `MAIN`
-(main de départ distribuée, sans pioche ni lancer).
+`DRAW → MAIN → COMBAT → END`. `END` est résolue automatiquement par
+`EndTurnCommand` (`ON_TURN_END` à la fermeture), `MAIN → COMBAT` par la première
+attaque. Le tour 1 commence en `MAIN` (main de départ distribuée, sans pioche ni
+lancer).
 
-Ordre exact du début de tour (`EndTurnCommand`, tours ≥ 2), conforme à
-`docs/official-rules.md` §4 :
+Depuis la **Mini-Feature 5**, la phase `DRAW` est **interactive** : le serveur
+pilote une machine à états (`DrawStep`, `DrawPhaseHandler`) et **attend une
+commande du joueur actif** à deux reprises. Il est impossible de passer la phase
+`DRAW` sans cliquer sur sa pioche **et** choisir un dé (`EndTurnCommand` est
+refusée pendant toute la phase `DRAW`).
 
-1. `VICTORY_CHECK` : le joueur actif qui **commence** son tour avec au moins
-   `GIGS_TO_WIN` (7) Gigs gagne immédiatement (journal `VICTORY`) ;
-2. pioche d'une carte ; **deck vide = défaite** (`GameState.drawCards` désigne le
-   vainqueur, le journal consigne `DRAW` en `FAILED` + `VICTORY`) ;
-3. lancer d'un dé de la Fixer Area (`d4…d20`, le `d20` en dernier) ;
-4. redressement du Field et fin des mals d'invocation (`Player.startTurn()`) ;
-5. `Phase.MAIN`.
+```text
+EndTurnCommand ──▶ DRAW_START ──▶ AWAITING_DRAW ──(DRAW_CARD)──▶ AWAITING_DIE_SELECT
+                                                                        │
+                           MAIN ◀── DRAW_COMPLETE ◀── ROLLING_DIE ◀──(SELECT_DIE)
+```
+
+Ordre exact du début de tour (tours ≥ 2), conforme à `docs/OFFICIAL-RULES.md`
+§ START PHASE (*ready spent cards → draw 1 → gain a Gig*) :
+
+1. `DRAW_START` (`EndTurnCommand` → `DrawPhaseHandler.beginDrawPhase`) : passage
+   du tour, `Phase.DRAW`, journal `PHASE` ;
+2. `VICTORY_CHECK` : le joueur actif qui **commence** son tour avec au moins
+   `GIGS_TO_WIN` (7) Gigs gagne immédiatement (journal `VICTORY`), avant toute
+   pioche ;
+3. **READY** (`DrawPhaseHandler.readyAndAwaitDraw`) : redressement de toutes les
+   cartes (Field, Legends, Eddies), fin des mals d'invocation, `availableEddies = 0`
+   (`Player.startTurn()`, journal `TURN_RESET`) ; puis **`AWAITING_DRAW`**
+   (journal `DRAW_STEP`) — la partie attend le clic sur la pioche ;
+4. **`DRAW_CARD`** (`DrawCardCommand`, refusée hors `AWAITING_DRAW`) : pioche
+   d'une carte ; **deck vide = défaite immédiate** (`GameState.drawCards` désigne
+   le vainqueur, le journal consigne `DRAW` en `FAILED` + `VICTORY`) ; sinon
+   **`AWAITING_DIE_SELECT`** (Fixer Area vide → directement `MAIN`) ;
+5. **`SELECT_DIE`** (`SelectDieCommand`, refusée hors `AWAITING_DIE_SELECT`) :
+   le dé demandé (`dice[0]`, normalisé) doit être **dans la Fixer Area** et
+   respecter la règle officielle « *any die except the d20, which is always rolled
+   last* » (`Player.canSelectFixerDie`) ; `ROLLING_DIE` : tirage serveur
+   `1..faces`, résultat rangé dans `gigs` + `gigDice`, journal `GIG_ROLL` ;
+6. `DRAW_COMPLETE` → `Phase.MAIN` (automatique, `drawStep = null`).
+
+Les étapes `DRAW_START`, `ROLLING_DIE` et `DRAW_COMPLETE` sont transitoires (résolues
+dans la même commande) ; seules `AWAITING_DRAW` et `AWAITING_DIE_SELECT` sont des
+états d'attente exposés au client (`turn.drawStep`).
 
 Le premier joueur est **tiré au sort** à la création (`GameService` +
 `Random` injectable pour les tests) ; il subit le malus de mise en place (2
@@ -146,7 +184,9 @@ Legends déjà inclinées). Il n'y a pas de mulligan (limite assumée, §11).
 | `AttackCommand` | actif | `MAIN`/`COMBAT` (auto `MAIN→COMBAT`) | épuise, ouvre la fenêtre, `ON_ATTACK`, puis vol de Gig (sans cible) ou comparaison des puissances (égalité = les deux vaincues) |
 | `SellCardCommand` | actif | `MAIN` | 1 carte de la main → révélée au rival puis posée en Eddies Area `faceDown=true`, `exhausted=false` (prête) ; **aucun Eddie immédiat** : la carte devient une ressource à incliner (`SpendResourceCommand`, 1 €$/tour) |
 | `SpendResourceCommand` (R4, Mini-Feature 4) | actif | `MAIN` | **Générer des Eddies** : incliner une ressource — Legend non inclinée de la `LEGENDS_AREA` **ou** carte vendue non inclinée de l'`EDDIES_AREA` (ID unique, propriété du joueur ordonnateur vérifiée) → `exhausted=true`, `availableEddies += 1` ; 1 €$ par tour et par carte, redressée au START PHASE. Actions filaires : `SPEND_RESOURCE` (+ aliases historiques `SPEND_LEGEND`/`SPEND_EDDIES` via `SpendLegendCommand`/`SpendEddiesCommand`, sous-classes de cette commande) |
-| `EndTurnCommand` | actif | toute | `ON_TURN_END`, fermeture fenêtre, passage du tour, victoire à 7 Gigs, pioche 1, lancer de Gig, `MAIN` |
+| `EndTurnCommand` | actif | toute sauf `DRAW` | `ON_TURN_END`, fermeture fenêtre, passage du tour, `DRAW_START`, victoire à 7 Gigs, redressement, puis **attente** `AWAITING_DRAW` |
+| `DrawCardCommand` (Mini-Feature 5) | actif | `DRAW` / `AWAITING_DRAW` | pioche 1 (deck vide → défaite), puis `AWAITING_DIE_SELECT` (ou `MAIN` si plus aucun dé). Action filaire `DRAW_CARD` |
+| `SelectDieCommand` (Mini-Feature 5) | actif | `DRAW` / `AWAITING_DIE_SELECT` | valide le dé (`dice[0]` ∈ Fixer Area, `d20` seulement en dernier), lance côté serveur, `gigs`/`gigDice` += résultat, puis `MAIN`. Action filaire `SELECT_DIE` |
 
 Détails :
 
@@ -164,8 +204,12 @@ Détails :
   défenseur n'y joue que des cartes `QUICK` (hors tour, coûts payés normalement) ;
   le joueur actif n'est pas restreint ; fermeture sur `EndTurnCommand`.
 - **Fin de tour** : victoire immédiate si l'entrant a ≥ 7 Gigs (**avant** pioche
-  et lancer) ; sinon pioche 1 (deck vide → défaite), lancer d'un dé Gig
-  (plus de dé → on saute), `MAIN`.
+  et lancer) ; sinon redressement puis **attente** de la pioche (`AWAITING_DRAW`).
+  La pioche (`DRAW_CARD`, deck vide → défaite) et le lancer (`SELECT_DIE`, plus de
+  dé → on saute) sont ordonnés par le joueur ; `MAIN` s'ouvre ensuite (§3.4).
+- **Choix du dé** : refus si le dé est inconnu, déjà lancé (absent de la Fixer
+  Area) ou si c'est le `d20` alors qu'il reste d'autres dés (« *always rolled
+  last* »). L'état ne bouge pas sur un refus : le joueur rechoisit.
 
 ## 5. Effets et déclencheurs
 
@@ -275,9 +319,10 @@ pas de double `ON_DEATH`.
 | Règle imposée | Implémentation |
 |---|---|
 | Victoire : 7 Gigs au début du tour | `GameConstants.GIGS_TO_WIN`, `EndTurnCommand` (avant pioche/lancer), journal `VICTORY_CHECK` |
-| Défaite : pioche impossible (deck vide) | `GameState.drawCards` + journal `DRAW`/`VICTORY` |
+| Défaite : pioche impossible (deck vide) | `DrawCardCommand` → `GameState.drawCards` + journal `DRAW`/`VICTORY` |
 | Premier joueur tiré au sort + malus | `GameService.createGame` (`setupRandom`), `FIRST_PLAYER_SPENT_LEGENDS` |
-| Phases Draw → Main → Combat → End | `Phase`, transitions auto (`EndTurnCommand`, `AttackCommand`) |
+| Phases Draw → Main → Combat → End | `Phase`, transitions auto (`EndTurnCommand`, `AttackCommand`) ; `DRAW` interactive (`DrawStep`, `DrawPhaseHandler`) |
+| START PHASE : ready → draw 1 → gain a Gig, `d20` en dernier | `DrawPhaseHandler` (`readyAndAwaitDraw`, `drawCard`, `rollSelectedDie`), `Player.selectableFixerDice()` |
 | Legend Call : 1 Eddie, once per turn, effet CALL/FLIP (R4) | `PlayCardCommand` branche Legend (coût 1, `hasCalledLegendThisTurn`, triggers `FLIP`+`CALL`) |
 | Unit : power = dégâts | comparaison des puissances (`AttackCommand`), `DAMAGE` létal |
 | Unit posée : pas d'attaque sauf `GO_SOLO` | `summoningSickness` (`PlayCardCommand`), levée au tour suivant, exemption `hasGoSolo()` |
@@ -315,7 +360,10 @@ Ne jamais exposer `getGameStateInternal` aux clients (serveur/tests uniquement).
   feature deck-builder).
 - `executeCommand(gameId, command)` : 404 si partie inconnue, `validate` puis
   `execute`, retourne les événements. La victoire est détectée pendant l'exécution
-  (`EndTurnCommand`, pioche sur deck vide) ; toute commande ultérieure est refusée.
+  (`EndTurnCommand` à 7 Gigs, `DrawCardCommand` sur deck vide) ; toute commande
+  ultérieure est refusée.
+- `setPhase(gameId, phase, actorId)` (debug) : forcer `DRAW` positionne
+  `drawStep = AWAITING_DRAW` pour que la phase reste jouable.
 - Registre `ConcurrentHashMap` en mémoire (une instance suffit en V1).
 
 ## 9. Ajouter un nouvel effet
@@ -350,7 +398,17 @@ cd backend && mvn clean test   # profil H2 (aucun Docker requis)
 - `engine/RuleEngineTest` : déclencheurs, 6 effets, mini-langage, heuristiques.
 - `engine/GameCommandTest` : pose (Unit/Program/Gear/Legend), coûts, seuils,
   combat (victoire/égalité), BLOCKER, vol, QUICK, vente unique, victoire à 7,
-  pioche/lancer, deck-out, `GO_SOLO`.
+  phase DRAW interactive (pioche puis dé sur action du joueur), deck-out, `GO_SOLO`.
+- `engine/DrawPhaseTest` (Mini-Feature 5 — « Phase DRAW interactive & choix des
+  dés ») : `testR5_Draw_Sequence_RequiresPlayerActionForDraw` (fin de tour →
+  `AWAITING_DRAW`, rien de pioché ni lancé, `END_TURN`/`SELECT_DIE`/jeu refusés,
+  `DRAW_CARD` → `AWAITING_DIE_SELECT`, `SELECT_DIE` → `MAIN`, journal ordonné),
+  `testR5_SelectDie_OnlySmallestDieUntilAllUsedExceptD20` (tout dé sauf le `d20`
+  tant qu'il en reste d'autres, dé inconnu/déjà lancé refusés, normalisation
+  `D10`, `d20` seulement en dernier, Fixer Area vide → `MAIN` direct),
+  `testR5_EmptyDeck_IsLoss` (défaite au clic sur le deck vide, journal `DRAW`
+  `FAILED` + `VICTORY`), plus victoire à 7 Gigs avant la pioche, vues masquées,
+  type de dé du Gig volé, ressources refusées en `DRAW`.
 - `engine/command/SellCardCommandTest` (Mini-Feature 3 — « Vente = Création de
   ressource ») : `testR3_SellCard_GoesToEddiesArea_FaceDown_NotExhausted`,
   `testR3_SellCard_LimitOnePerTurn`, `testR3_SellCard_CreatesResourceUsableSameTurn`,
@@ -369,7 +427,8 @@ cd backend && mvn clean test   # profil H2 (aucun Docker requis)
 - `service/GameServiceTest` (Mockito, sans Spring) : création, premier joueur
   tiré au sort + malus, exécution, refus consignés au journal, masquage, 404.
 - `ws/LobbyGameFlowWebSocketIntegrationTest` : partie STOMP de bout en bout
-  (états masqués, actions, erreurs privées, abandon) avec premier joueur aléatoire.
+  (états masqués, actions, phase DRAW interactive `DRAW_CARD`/`SELECT_DIE` avec
+  refus du `d20`, erreurs privées, abandon) avec premier joueur aléatoire.
 - `docs/DEBUG-GUIDE.md` : mode d'emploi du journal et des endpoints de debug.
 - `engine/GameIntegrationTest` (feature 6.5.2, TDD R1→R13) : les 51 scénarios `testR{N}_*` —
   R1(4) Setup, R2(3) Eddies cycle 0→+1→lost, R3(3) Legends ressources, R4(3) Legends jouables (Call 1 Eddie), R5(3) vente, R6(3) Eddies cards, R7(2) RAM deck-only,

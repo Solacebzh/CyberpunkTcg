@@ -135,6 +135,15 @@ public class GameState {
         turn.setPhase(phase);
     }
 
+    /** Sous-étape de la phase DRAW (Mini-Feature 5), {@code null} hors DRAW. */
+    public DrawStep getDrawStep() {
+        return turn.getDrawStep();
+    }
+
+    public void setDrawStep(DrawStep drawStep) {
+        turn.setDrawStep(drawStep);
+    }
+
     public long getSeed() {
         return seed;
     }
@@ -350,27 +359,44 @@ public class GameState {
                 bestIndex = i;
             }
         }
-        Integer stolen = from.getGigs().remove(bestIndex);
-        to.getGigs().add(stolen);
-        return Optional.of(stolen);
+        // Le type de dé suit le Gig volé (Mini-Feature 5 : affichage « d8 → 5 »).
+        DieRoll stolen = from.removeGig(bestIndex);
+        to.addRolledGig(stolen.getDie(), stolen.getValue());
+        return Optional.of(stolen.getValue());
     }
 
     /**
-     * Lance le prochain dé de la Fixer Area du joueur et place le résultat
-     * dans sa Gig Area.
+     * Lance le prochain dé de la Fixer Area du joueur (le plus petit disponible,
+     * {@code d20} en dernier) et place le résultat dans sa Gig Area.
      *
      * @return le lancer, ou vide s'il ne reste aucun dé
      */
     public Optional<DieRoll> rollFixerDie(String playerId) {
         Player player = getPlayer(playerId);
-        Optional<String> die = player.popFixerDie();
-        if (!die.isPresent()) {
+        List<String> selectable = player.selectableFixerDice();
+        if (selectable.isEmpty()) {
             return Optional.empty();
         }
-        int sides = Player.sidesOf(die.get());
+        return rollFixerDie(playerId, selectable.get(0));
+    }
+
+    /**
+     * Lance un dé précis de la Fixer Area du joueur (Mini-Feature 5 : dé choisi
+     * par le joueur) et place le résultat dans sa Gig Area. Le tirage utilise le
+     * générateur de la partie (rejeu déterministe).
+     *
+     * @param die dé déjà normalisé ({@code "d4"}…{@code "d20"})
+     * @return le lancer, ou vide si le dé n'est pas dans la Fixer Area du joueur
+     */
+    public Optional<DieRoll> rollFixerDie(String playerId, String die) {
+        Player player = getPlayer(playerId);
+        if (!player.removeFixerDie(die)) {
+            return Optional.empty();
+        }
+        int sides = Player.sidesOf(die);
         int value = random.nextInt(sides) + 1;
-        player.getGigs().add(value);
-        return Optional.of(new DieRoll(die.get(), value));
+        player.addRolledGig(die, value);
+        return Optional.of(new DieRoll(die, value));
     }
 
     // ------------------------------------------------------------------

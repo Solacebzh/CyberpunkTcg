@@ -10,6 +10,10 @@ import java.util.List;
  * <p>Construite à partir d'un {@link com.cyberpunktcg.domain.game.GameState}
  * déjà masqué : la main de l'adversaire ne contient que des cartes
  * {@code hidden}, et la taille de sa pioche reste publique.</p>
+ *
+ * <p>{@code gigs} et {@code gigDice} sont alignés index par index : la valeur
+ * du Gig et le type du dé qui l'a produite ({@code "d8"}, ou {@code "?"} pour un
+ * Gig injecté hors lancer). {@code fixerDice} liste les dés pas encore lancés.</p>
  */
 public record PlayerStateDTO(
         String playerId,
@@ -22,6 +26,7 @@ public record PlayerStateDTO(
         List<CardInstanceDTO> eddiesArea,
         List<CardInstanceDTO> legendsArea,
         List<Integer> gigs,
+        List<String> gigDice,
         List<String> fixerDice,
         int gigCount,
         int streetCred,
@@ -42,6 +47,7 @@ public record PlayerStateDTO(
                 player.getEddiesArea().stream().map(CardInstanceDTO::from).toList(),
                 player.getLegendsArea().stream().map(CardInstanceDTO::from).toList(),
                 List.copyOf(player.getGigs()),
+                List.copyOf(player.getGigDice()),
                 List.copyOf(player.getFixerDice()),
                 player.getGigCount(),
                 player.getStreetCred(),

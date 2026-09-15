@@ -15,6 +15,13 @@ import type { CardColor, CardKeyword, CardType } from '@/types/card'
 // --- Énumérations serveur (valeurs JSON exactes) -----------------------------
 
 export type Phase = 'DRAW' | 'MAIN' | 'COMBAT' | 'END'
+/**
+ * Sous-étapes de la phase `DRAW` interactive (Mini-Feature 5, `DrawStep.java`).
+ * Seules `AWAITING_DRAW` (cliquer sur la pioche) et `AWAITING_DIE_SELECT`
+ * (choisir un dé Gig) attendent une action du joueur actif ; les autres sont
+ * transitoires côté serveur.
+ */
+export type DrawStep = 'DRAW_START' | 'AWAITING_DRAW' | 'AWAITING_DIE_SELECT' | 'ROLLING_DIE' | 'DRAW_COMPLETE'
 export type Zone = 'DECK' | 'HAND' | 'FIELD' | 'TRASH' | 'EDDIES_AREA' | 'LEGENDS_AREA' | 'REMOVED'
 export type RoomStatus = 'WAITING' | 'PLAYING' | 'CLOSED'
 
@@ -28,6 +35,10 @@ export type GameAction =
   /** Aliases historiques de `SPEND_RESOURCE` (cible unique dans une zone précise). */
   | 'SPEND_LEGEND'
   | 'SPEND_EDDIES'
+  /** Mini-Feature 5 : clic sur la pioche (phase `DRAW`, étape `AWAITING_DRAW`). */
+  | 'DRAW_CARD'
+  /** Mini-Feature 5 : choix du dé Gig (`dice: ['d6']`, étape `AWAITING_DIE_SELECT`). */
+  | 'SELECT_DIE'
   | 'END_TURN'
   | 'CONCEDE'
 
@@ -93,6 +104,8 @@ export interface CardInstance {
 export interface TurnState {
   number: number
   activePlayerId: string
+  /** Sous-étape de la phase `DRAW` interactive ; absent hors `DRAW`. */
+  drawStep?: DrawStep | null
 }
 
 /** Fenêtre de réaction QUICK ouverte pour le défenseur (`null` hors attaque). */
@@ -121,6 +134,11 @@ export interface PlayerState {
   legendsArea: CardInstance[]
   /** Valeurs des dés Gig possédés (ex. `[2, 6]`). */
   gigs: number[]
+  /**
+   * Type du dé de chaque Gig, aligné sur `gigs` (ex. `['d4', 'd8']`, `'?'` pour
+   * un Gig obtenu hors lancer). Optionnel : anciens serveurs / mocks.
+   */
+  gigDice?: string[]
   /** Dés de la Fixer Area pas encore lancés (`d4`…`d20`). */
   fixerDice: string[]
   gigCount: number
@@ -273,10 +291,41 @@ export const PHASE_LABELS: Record<Phase, string> = {
 }
 
 export const PHASE_HINTS: Record<Phase, string> = {
-  DRAW: 'Pioche et lancer de Gig résolus automatiquement',
+  DRAW: 'Cartes redressées ; pioche ta carte puis choisis ton dé Gig',
   MAIN: 'Joue des cartes, vends, déclare tes attaques',
   COMBAT: 'Résolution des attaques et réactions QUICK',
   END: 'Effets de fin de tour, puis passage au joueur suivant',
+}
+
+/** Libellés des sous-étapes de la phase DRAW (Mini-Feature 5), côté joueur actif. */
+export const DRAW_STEP_LABELS: Record<DrawStep, string> = {
+  DRAW_START: 'Votre tour commence !',
+  AWAITING_DRAW: 'PIOCHER VOTRE CARTE',
+  AWAITING_DIE_SELECT: 'CHOISIS UN DÉ',
+  ROLLING_DIE: 'Lancer du dé…',
+  DRAW_COMPLETE: 'Phase de pioche terminée',
+}
+
+export const DRAW_STEP_HINTS: Record<DrawStep, string> = {
+  DRAW_START: 'Cartes redressées, Eddies à 0. Cliquez pour piocher.',
+  AWAITING_DRAW: 'Votre tour commence ! Cliquez sur votre pioche pour prendre la carte du dessus.',
+  AWAITING_DIE_SELECT: 'Prenez un dé de votre Fixer Area : n’importe lequel sauf le d20, toujours lancé en dernier.',
+  ROLLING_DIE: 'Le serveur lance le dé choisi…',
+  DRAW_COMPLETE: 'Passage à la phase Principale.',
+}
+
+/** Le d20 n'est sélectionnable que lorsqu'il est le dernier dé de la Fixer Area. */
+export const LAST_FIXER_DIE = 'd20'
+
+/**
+ * Miroir de `Player.selectableFixerDice()` : tous les dés restants sauf le d20,
+ * ou `['d20']` quand il est le dernier. Sert uniquement à griser l'UI — le
+ * serveur reste seul juge.
+ */
+export function selectableFixerDice(fixerDice: readonly string[]): string[] {
+  const others = fixerDice.filter((die) => die !== LAST_FIXER_DIE)
+  if (others.length > 0) return others
+  return fixerDice.includes(LAST_FIXER_DIE) ? [LAST_FIXER_DIE] : []
 }
 
 export const KEYWORD_LABELS: Record<CardKeyword, string> = {

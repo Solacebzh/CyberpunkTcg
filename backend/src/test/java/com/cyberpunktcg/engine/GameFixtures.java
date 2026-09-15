@@ -6,9 +6,14 @@ import com.cyberpunktcg.domain.card.CardKeyword;
 import com.cyberpunktcg.domain.card.CardRarity;
 import com.cyberpunktcg.domain.card.CardType;
 import com.cyberpunktcg.domain.game.CardInstance;
+import com.cyberpunktcg.domain.game.DrawStep;
 import com.cyberpunktcg.domain.game.GameState;
+import com.cyberpunktcg.domain.game.Phase;
 import com.cyberpunktcg.domain.game.Player;
 import com.cyberpunktcg.domain.game.Zone;
+import com.cyberpunktcg.engine.command.DrawCardCommand;
+import com.cyberpunktcg.engine.command.EndTurnCommand;
+import com.cyberpunktcg.engine.command.SelectDieCommand;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -167,6 +172,46 @@ public final class GameFixtures {
     public static void addGigs(GameState state, String playerId, int... values) {
         for (int value : values) {
             state.getPlayer(playerId).getGigs().add(value);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Phase DRAW interactive (Mini-Feature 5)
+    // ------------------------------------------------------------------
+
+    /**
+     * Joue les deux actions de la phase DRAW du joueur actif : pioche
+     * ({@link DrawCardCommand}) puis choix du plus petit dé autorisé
+     * ({@link SelectDieCommand}). Sans effet si la partie est terminée ou si la
+     * phase DRAW n'est pas (ou plus) en attente d'une action.
+     */
+    public static void completeDraw(GameState state, String playerId) {
+        if (state.isGameOver() || state.getPhase() != Phase.DRAW) {
+            return;
+        }
+        if (state.getDrawStep() == DrawStep.AWAITING_DRAW) {
+            new DrawCardCommand(playerId).execute(state);
+        }
+        if (state.isGameOver() || state.getPhase() != Phase.DRAW) {
+            return;
+        }
+        if (state.getDrawStep() == DrawStep.AWAITING_DIE_SELECT) {
+            List<String> selectable = state.getPlayer(playerId).selectableFixerDice();
+            if (!selectable.isEmpty()) {
+                new SelectDieCommand(playerId, selectable.get(0)).execute(state);
+            }
+        }
+    }
+
+    /**
+     * Fin de tour complète : {@code from} termine son tour, puis le joueur entrant
+     * résout sa phase DRAW (pioche + dé). L'état est ensuite en {@code MAIN} du
+     * rival, sauf victoire (7 Gigs au début du tour, deck-out).
+     */
+    public static void passTurn(GameState state, String from) {
+        new EndTurnCommand(from).execute(state);
+        if (!state.isGameOver()) {
+            completeDraw(state, state.getTurn().getActivePlayerId());
         }
     }
 }

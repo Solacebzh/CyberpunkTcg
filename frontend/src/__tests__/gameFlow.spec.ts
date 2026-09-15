@@ -1,5 +1,6 @@
 /**
- * Test de flux : Lobby → Partie → Vendre → Incliner (R4) → Jouer → Attaquer → Fin de tour.
+ * Test de flux : Lobby → Partie → Vendre → Incliner (R4) → Jouer → Fin de tour →
+ * phase DRAW interactive (Mini-Feature 5 : pioche + choix du dé) → Attaquer → Fin de tour.
  *
  * Ce qui est réellement exercé : les composants (`LobbyView`, `GameView`,
  * `CardComponent`, `TargetingOverlay`, `PlayerBoard`), les stores Pinia
@@ -322,12 +323,53 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     expect(game.isMyTurn).toBe(false)
     expect(wrapper.text()).toContain('tour de Bravo')
 
-    // --- 7. Tour de Bravo (client brut) : vente, pose, fin de tour --------
+    // Mini-Feature 5 : la phase DRAW de Bravo est interactive — rien n'est pioché
+    // ni lancé automatiquement, la partie attend son clic sur la pioche.
+    expect(game.phase).toBe('DRAW')
+    expect(game.drawStep).toBe('AWAITING_DRAW')
+    expect(game.opponent?.hand).toHaveLength(6)
+    expect(game.opponent?.gigCount).toBe(0)
+    expect(game.awaitingMyDrawAction).toBe(false) // ce n'est pas MA pioche
+    expect(wrapper.find('[data-draw-guide]').exists()).toBe(false)
+    expect(wrapper.get('[data-draw-waiting]').text()).toContain('Bravo pioche sa carte')
+
+    // --- 7. Tour de Bravo (client brut) : pioche, dé, vente, pose, fin de tour --------
     // Bravo s'abonne à SON topic d'état puis resync (doc §1.3, §5.3).
     bravo.subscribe(`/topic/game/${gameId}/Bravo`)
     bravo.subscribe(`/topic/game/${gameId}`)
+    bravo.subscribe('/user/queue/errors')
     bravo.send(`/app/game/${gameId}/resync`, {})
     await waitFor(() => bravo.lastState() !== null, 'STATE reçue par Bravo')
+    expect((bravo.lastState()?.turn as { drawStep?: string }).drawStep).toBe('AWAITING_DRAW')
+
+    // Impossible de passer la phase DRAW sans piocher : END_TURN et SELECT_DIE sont refusés.
+    bravo.send(`/app/game/${gameId}/action`, { action: 'END_TURN', clientRequestId: 'bravo-early-end' })
+    await waitFor(() => bravo.errors().some((e) => e.clientRequestId === 'bravo-early-end'), 'END_TURN refusé en DRAW')
+    bravo.send(`/app/game/${gameId}/action`, { action: 'SELECT_DIE', dice: ['d6'], clientRequestId: 'bravo-early-die' })
+    await waitFor(() => bravo.errors().some((e) => e.clientRequestId === 'bravo-early-die'), 'SELECT_DIE refusé avant la pioche')
+    expect(playerOf(bravo.lastState(), 'Bravo').hand).toHaveLength(6)
+
+    // Clic sur la pioche → +1 carte, puis le serveur attend le choix du dé.
+    bravo.send(`/app/game/${gameId}/action`, { action: 'DRAW_CARD' })
+    await waitFor(() => playerOf(bravo.lastState(), 'Bravo').hand.length === 7, 'Bravo a pioché sa carte')
+    await waitFor(() => game.drawStep === 'AWAITING_DIE_SELECT', 'Alpha voit Bravo choisir son dé')
+    expect(wrapper.get('[data-draw-waiting]').text()).toContain('Bravo choisit son dé Gig')
+
+    // Le d20 est refusé tant qu'il reste d'autres dés ; le d6 est accepté et lancé par le serveur.
+    bravo.send(`/app/game/${gameId}/action`, { action: 'SELECT_DIE', dice: ['d20'], clientRequestId: 'bravo-d20' })
+    await waitFor(() => bravo.errors().some((e) => e.clientRequestId === 'bravo-d20'), 'd20 refusé (toujours en dernier)')
+    expect(String(bravo.errors().find((e) => e.clientRequestId === 'bravo-d20')?.message)).toContain('d20')
+    bravo.send(`/app/game/${gameId}/action`, { action: 'SELECT_DIE', dice: ['d6'] })
+    await waitFor(() => playerOf(bravo.lastState(), 'Bravo').gigCount === 1, 'Gig de Bravo lancé')
+    const bravoAfterDraw = playerOf(bravo.lastState(), 'Bravo')
+    expect(bravoAfterDraw.fixerDice).toEqual(['d4', 'd8', 'd10', 'd12', 'd20'])
+    expect(bravoAfterDraw.gigDice).toEqual(['d6'])
+    expect(bravoAfterDraw.gigs[0]).toBeGreaterThanOrEqual(1)
+    expect(bravoAfterDraw.gigs[0]).toBeLessThanOrEqual(6)
+    await waitFor(() => game.phase === 'MAIN', 'phase Main de Bravo (DRAW_COMPLETE automatique)')
+    expect(game.drawStep).toBeNull()
+    expect(wrapper.find('[data-draw-waiting]').exists()).toBe(false)
+
     const bravoHand = playerOf(bravo.lastState(), 'Bravo').hand
     const bravoSoldId = bravoHand[0]?.instanceId
     bravo.send(`/app/game/${gameId}/action`, { action: 'SELL_CARD', instanceId: bravoSoldId })
@@ -347,8 +389,56 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     bravo.send(`/app/game/${gameId}/action`, { action: 'END_TURN' })
     await waitFor(() => game.turnNumber === 3, 'retour au tour 3 (Alpha)')
     expect(game.isMyTurn).toBe(true)
+
+    // --- 7 bis. Ma phase DRAW interactive, via l'UI (Mini-Feature 5) ------
+    // Étape AWAITING_DRAW : bandeau « PIOCHER VOTRE CARTE », pioche cliquable, fin de tour bloquée.
+    expect(game.phase).toBe('DRAW')
+    expect(game.awaitingMyDraw).toBe(true)
+    expect(game.canEndTurn).toBe(false)
+    expect(game.me?.hand).toHaveLength(4) // 6 − vente − pose : rien n'a été pioché automatiquement
+    await waitFor(() => wrapper.find('[data-draw-guide]').exists(), 'bandeau de guidage de la phase DRAW')
+    expect(wrapper.get('[data-draw-guide]').attributes('data-step')).toBe('AWAITING_DRAW')
+    expect(wrapper.get('[data-draw-guide]').text()).toContain('PIOCHER VOTRE CARTE')
+    expect((buttonWith(wrapper, 'Fin de tour').element as HTMLButtonElement).disabled).toBe(true)
+    expect(wrapper.find('[data-draw-guide] [data-die-option]').exists()).toBe(false)
+
+    // Clic sur la pioche du tapis (le deck pulse et devient un bouton).
+    const myDeck = wrapper.get('[data-board="me"] [data-zone="DECK"] .card-pile')
+    expect(myDeck.attributes('data-clickable')).toBe('true')
+    await myDeck.trigger('click')
+    await waitFor(() => (game.me?.hand.length ?? 0) === 5, 'ma carte piochée')
+    expect(actions().find((command) => command.action === 'DRAW_CARD')).toMatchObject({ action: 'DRAW_CARD' })
+
+    // Étape AWAITING_DIE_SELECT : grille des dés, d20 grisé, les autres cliquables.
+    await waitFor(() => game.drawStep === 'AWAITING_DIE_SELECT', 'choix du dé attendu')
+    expect(game.selectableDice).toEqual(['d4', 'd6', 'd8', 'd10', 'd12'])
+    expect(game.canSelectDie('d20')).toMatch(/d20/)
+    expect(wrapper.find('[data-board="me"] [data-zone="DECK"] .card-pile').attributes('data-clickable')).toBeUndefined()
+    await waitFor(() => wrapper.find('[data-draw-guide] [data-die-option]').exists(), 'grille des dés affichée')
+    expect(wrapper.get('[data-draw-guide]').text()).toContain('CHOISIS UN DÉ')
+    expect(wrapper.findAll('[data-draw-guide] [data-die-option]')).toHaveLength(6)
+    const d20Option = wrapper.get('[data-draw-guide] [data-die-option="d20"]')
+    expect(d20Option.attributes('data-selectable')).toBe('false')
+    expect((d20Option.element as HTMLButtonElement).disabled).toBe(true)
+    expect(wrapper.findAll('[data-board="me"] [data-fixer-die][data-selectable="true"]')).toHaveLength(5)
+    expect(wrapper.get('[data-board="me"] [data-fixer-die="d20"]').attributes('data-locked')).toBe('true')
+
+    // Clic sur le d8 → SELECT_DIE, le serveur lance et enchaîne sur la phase Main.
+    await wrapper.get('[data-draw-guide] [data-die-option="d8"]').trigger('click')
+    await waitFor(() => (game.me?.gigCount ?? 0) === 1, 'mon Gig lancé')
+    // `actions()` capture aussi les commandes brutes de Bravo : on cible la mienne (d8).
+    const myDieCommand = actions().find((command) => command.action === 'SELECT_DIE' && (command.dice as string[])?.[0] === 'd8')
+    expect(myDieCommand).toMatchObject({ action: 'SELECT_DIE', dice: ['d8'] })
+    expect(typeof myDieCommand?.clientRequestId).toBe('string')
+    expect(game.me?.gigDice).toEqual(['d8'])
+    expect(game.me?.fixerDice).toEqual(['d4', 'd6', 'd10', 'd12', 'd20'])
+    await waitFor(() => game.phase === 'MAIN', 'ma phase Main')
+    expect(game.drawStep).toBeNull()
+    expect(game.canEndTurn).toBe(true)
+    expect(wrapper.find('[data-draw-guide]').exists()).toBe(false)
     expect(game.me?.hand).toHaveLength(5) // 6 − vente − pose + pioche
-    expect((game.me?.gigCount ?? 0) + (game.opponent?.gigCount ?? 0)).toBeGreaterThanOrEqual(2)
+    expect((game.me?.gigCount ?? 0) + (game.opponent?.gigCount ?? 0)).toBe(2)
+    expect(wrapper.get('[data-zone="GIGS"]').text()).toContain('d8')
 
     // --- 8. Attaque ciblée via l'overlay ----------------------------------
     const attacker = game.me?.field.find((card) => card.type === 'unit') as CardInstance
@@ -380,6 +470,9 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     await waitFor(() => game.turnNumber === 4, 'passage au tour 4')
     expect(game.activePlayerId).toBe('Bravo')
     expect(wrapper.text()).toContain('tour de Bravo')
+    // Bravo repart en phase DRAW interactive : à lui de cliquer sur sa pioche.
+    expect(game.phase).toBe('DRAW')
+    expect(game.drawStep).toBe('AWAITING_DRAW')
 
     // Le journal complet est rendu (doc §7.4).
     expect(game.log.length).toBeGreaterThan(8)

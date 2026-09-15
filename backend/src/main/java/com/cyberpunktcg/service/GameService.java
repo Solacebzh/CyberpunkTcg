@@ -3,6 +3,7 @@ package com.cyberpunktcg.service;
 import com.cyberpunktcg.domain.card.Card;
 import com.cyberpunktcg.domain.card.CardType;
 import com.cyberpunktcg.domain.game.CardInstance;
+import com.cyberpunktcg.domain.game.DrawStep;
 import com.cyberpunktcg.domain.game.GameEvent;
 import com.cyberpunktcg.domain.game.GameEventType;
 import com.cyberpunktcg.domain.game.GameLog;
@@ -245,6 +246,10 @@ public class GameService {
         }
         Phase previous = state.getPhase();
         state.setPhase(phase);
+        if (phase == Phase.DRAW && state.getDrawStep() == null) {
+            // Mini-Feature 5 : une phase DRAW forcée doit rester jouable — on attend la pioche.
+            state.setDrawStep(DrawStep.AWAITING_DRAW);
+        }
         state.appendEvent(GameEventType.PHASE_CHANGED, actorId,
                 "phase forcée (debug) : " + previous + " → " + phase);
         state.logInfo(actorId, "DEBUG_FORCE_PHASE",

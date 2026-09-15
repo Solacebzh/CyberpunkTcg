@@ -151,8 +151,10 @@ class SellCardCommandTest {
         assertThat(seller.getEddies()).isZero();
 
         // Tour suivant de p1 (p1 termine, puis p2) : la limite est réinitialisée.
-        new EndTurnCommand("p1").execute(state);
-        new EndTurnCommand("p2").execute(state);
+        // Mini-Feature 5 : chaque fin de tour est suivie de la phase DRAW interactive
+        // du joueur entrant (pioche + choix du dé), jouée ici par la fixture.
+        GameFixtures.passTurn(state, "p1");
+        GameFixtures.passTurn(state, "p2");
         assertThat(state.getTurn().getActivePlayerId()).isEqualTo("p1");
         assertThat(seller.hasSoldThisTurn()).isFalse();
 

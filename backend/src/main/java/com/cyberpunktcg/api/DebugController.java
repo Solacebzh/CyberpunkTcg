@@ -80,6 +80,7 @@ public class DebugController {
                 summary.put("gameId", gameId);
                 summary.put("turn", state.getTurn().getNumber());
                 summary.put("phase", state.getPhase().name());
+                summary.put("drawStep", state.getDrawStep() == null ? null : state.getDrawStep().name());
                 summary.put("activePlayerId", state.getTurn().getActivePlayerId());
                 summary.put("players", state.getPlayers().stream().map(Player::getId).toList());
                 summary.put("gameOver", state.isGameOver());
@@ -158,6 +159,7 @@ public class DebugController {
                 state.getGameId(),
                 state.getTurn().getNumber(),
                 state.getPhase().name(),
+                state.getDrawStep() == null ? null : state.getDrawStep().name(),
                 state.getTurn().getActivePlayerId(),
                 state.isGameOver(),
                 state.getWinnerId(),

@@ -41,7 +41,7 @@ motif exact (`Eddies insuffisants`, `Une seule vente par tour`,
 | `index` | ordre global dans la partie (1, 2, 3…) — sert à réconcilier temps réel et état |
 | `turnNumber`, `phase` | contexte au moment de l'action |
 | `playerId` | auteur (`null` pour une ligne système) |
-| `actionType` | `PLAY_CARD` (ou `FLIP`/`CALL` pour Legend), `ATTACK`, `SELL_CARD`, `SPEND_RESOURCE` (Mini-Feature 4, R4 : Legend **ou** carte de l'Eddies Area), `SPEND_LEGEND`, `SPEND_EDDIES`, `END_TURN`, `DRAW`, `GIG_ROLL`, `VICTORY_CHECK`, `VICTORY`, `TURN_RESET`, `EDDIES_LOST`, `REACTION_WINDOW`, `UNIT_DEFEATED`, `GIG_STOLEN`, `EFFECT` (incl. DISCARD/BUFF/DAMAGE/HEAL/DEFEAT/BOOST_GIG), `SETUP`, `GAME_START`, `DEBUG_FORCE_PHASE`, `CONCEDE`… |
+| `actionType` | `PLAY_CARD` (ou `FLIP`/`CALL` pour Legend), `ATTACK`, `SELL_CARD`, `SPEND_RESOURCE` (Mini-Feature 4, R4 : Legend **ou** carte de l'Eddies Area), `SPEND_LEGEND`, `SPEND_EDDIES`, `END_TURN`, `DRAW_CARD` / `SELECT_DIE` (Mini-Feature 5 : commandes de la phase DRAW interactive, refus compris), `DRAW_STEP` (étape attendue : `AWAITING_DRAW`, `AWAITING_DIE_SELECT`), `DRAW`, `GIG_ROLL`, `VICTORY_CHECK`, `VICTORY`, `TURN_RESET`, `EDDIES_LOST`, `REACTION_WINDOW`, `UNIT_DEFEATED`, `GIG_STOLEN`, `EFFECT` (incl. DISCARD/BUFF/DAMAGE/HEAL/DEFEAT/BOOST_GIG), `SETUP`, `GAME_START`, `DEBUG_FORCE_PHASE`, `CONCEDE`… |
 | `description` | phrase lisible, prête à afficher |
 | `result` | `SUCCESS` (vert), `ILLEGAL` (rouge), `FAILED` (orange : légale mais sans effet), `INFO` (jaune) |
 | `details` | contexte chiffré (coût, cible, ressources, motif de refus…) |
@@ -61,11 +61,25 @@ plus anciennes sont évincées, l'index continue de croître.
 #5  [REFUSÉ] SELL_CARD      Joueur Val : vendre une carte → REFUSÉ (Une seule vente par tour)
 #5b [REFUSÉ] PLAY_CARD      Joueur Val : flip Legend → REFUSÉ (Call une seule fois par tour)
 #5c [REFUSÉ] SPEND_LEGEND   Joueur Val : incliner Legend → REFUSÉ (déjà inclinée)
-#6  [INFO ] TURN_RESET      Début tour : 0 Eddies (reset), ready Legends+EDDIES+Field, mal d'invoc. cleared
+#6  [INFO ] PHASE           Début du tour 2 — Joueur Johnny (phase DRAW)
 #6b [INFO ] VICTORY_CHECK   Vérification victoire : Joueur Johnny a 6/7 Gigs
+#6c [INFO ] TURN_RESET      Début de tour : 0 Eddie, cartes redressées ; 3/3 Legend(s) prêtes, 0/0 Eddies prêtes
+#6d [INFO ] DRAW_STEP       Phase DRAW : Joueur Johnny doit cliquer sur sa pioche (4 carte(s) dans le deck)
+#6e [REFUSÉ] END_TURN       Joueur Johnny : terminer le tour → REFUSÉ (Impossible de terminer le tour pendant la phase Draw : piochez d'abord votre carte)
+#6f [OK   ] DRAW            Phase DRAW : Joueur Johnny pioche Maelstrom Ganger
+#6g [INFO ] DRAW_STEP       Phase DRAW : Joueur Johnny doit choisir un dé Gig parmi [d4, d6, d8, d10, d12] (le d20 se lance en dernier)
+#6h [REFUSÉ] SELECT_DIE     Joueur Johnny : choisir et lancer le dé Gig d20 → REFUSÉ (Le d20 se lance toujours en dernier : choisissez d'abord [d4, d6, d8, d10, d12])
+#6i [OK   ] GIG_ROLL        Lancer de Gig : d8 → 5 (total 1 Gigs, Street Cred 5)
+#6j [INFO ] PHASE           Phase MAIN : Joueur Johnny peut jouer, incliner ses Legends, vendre 1 carte et attaquer
 #7  [OK   ] VICTORY         VICTOIRE : Joueur Johnny atteint 7 Gigs ! (vérifié AU DÉBUT du tour, pas en continu)
 #7b [INFO ] EDDIES_LOST     Fin de tour : Eddies perdus s'ils ne sont pas dépensés
+#7c [ÉCHEC] DRAW            Phase DRAW : Joueur Johnny doit piocher mais son deck est vide → DÉFAITE
 ```
+
+Depuis la **Mini-Feature 5**, la phase DRAW est interactive : `END_TURN` laisse
+la partie en `DRAW` / `AWAITING_DRAW`, puis le joueur envoie `DRAW_CARD` et
+`SELECT_DIE` (voir `docs/WEBSOCKET-PROTOCOL.md` §5.1). Le champ `drawStep` de
+`GET /api/debug/game/{id}` indique l'étape attendue.
 
 ---
 
@@ -136,16 +150,19 @@ une API de jeu.
 
 ### 3.2 `GET /api/debug/game/{gameId}`
 
-Réponse : `DebugGameStateDTO` — tour, phase, joueur actif, graine, fenêtre de
-réaction, état complet des deux joueurs, journal public et journal de diagnostic
-(paramètre `?logs=` de 1 à 200, défaut 20).
+Réponse : `DebugGameStateDTO` — tour, phase, `drawStep` (sous-étape de la phase
+DRAW interactive, absente hors DRAW), joueur actif, graine, fenêtre de réaction,
+état complet des deux joueurs (dont `gigDice`, le type de dé de chaque Gig),
+journal public et journal de diagnostic (paramètre `?logs=` de 1 à 200, défaut 20).
 
 ### 3.3 `POST /api/debug/game/{gameId}/force-phase`
 
 Force la phase courante (`DRAW`, `MAIN`, `COMBAT`, `END`) pour tester une règle
 sans dérouler les phases précédentes. L'opération est **journalisée**
 (`DEBUG_FORCE_PHASE`) et diffusée sur `/topic/game/{gameId}/log`, donc visible
-des deux joueurs dans le panneau.
+des deux joueurs dans le panneau. Forcer `DRAW` positionne `drawStep =
+AWAITING_DRAW` : le joueur actif doit alors cliquer sur sa pioche (`DRAW_CARD`)
+puis choisir un dé (`SELECT_DIE`) pour revenir en `MAIN`.
 
 ### 3.4 `GET /api/debug/game/{gameId}/player/{playerId}`
 
@@ -170,6 +187,7 @@ utile quand on ne connaît pas le `gameId`.
 | « Mon attaque ne vole pas de Gig » | Chercher `REACTION_WINDOW` puis la ligne `ATTACK` : un **BLOCKER** prêt intercepte (`Un BLOCKER rival doit intercepter cette attaque`) et interdit le vol direct. |
 | « Le combat n'a pas tué la bonne Unit » | Ligne `UNIT_DEFEATED` + la ligne `ATTACK` de combat (puissances comparées) : à égalité, **les deux** Units sont vaincues. |
 | « La partie ne se termine pas » | Ligne `VICTORY_CHECK` : la victoire se vérifie **au début du tour** du joueur (7 Gigs), pas pendant le tour où les Gigs sont acquis. |
+| « Je ne peux pas finir mon tour / rien ne se passe en début de tour » | Phase `DRAW` interactive (Mini-Feature 5) : chercher la dernière ligne `DRAW_STEP`. `AWAITING_DRAW` → cliquer sur la pioche (`DRAW_CARD`) ; `AWAITING_DIE_SELECT` → choisir un dé (`SELECT_DIE`, le `d20` est refusé tant qu'il reste d'autres dés). Les refus apparaissent en rouge avec le motif. |
 | « Je veux rejouer une situation précise » | `force-phase` pour se placer dans la phase voulue, puis lire `seed` pour connaître la graine des tirages. |
 | « Je veux voir ce que voit le serveur » | `GET /api/debug/game/{id}` : aucune information masquée, `gameLog` complet (200 max, incl. TURN_RESET, EDDIES_LOST). |
 

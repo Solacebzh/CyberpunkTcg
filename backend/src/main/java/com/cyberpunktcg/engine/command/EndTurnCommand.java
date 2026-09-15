@@ -1,13 +1,14 @@
 package com.cyberpunktcg.engine.command;
 
 import com.cyberpunktcg.domain.game.CardInstance;
-import com.cyberpunktcg.domain.game.DieRoll;
+import com.cyberpunktcg.domain.game.DrawStep;
 import com.cyberpunktcg.domain.game.GameEvent;
 import com.cyberpunktcg.domain.game.GameEventType;
 import com.cyberpunktcg.domain.game.GameLog;
 import com.cyberpunktcg.domain.game.GameState;
 import com.cyberpunktcg.domain.game.Phase;
 import com.cyberpunktcg.domain.game.Player;
+import com.cyberpunktcg.engine.DrawPhaseHandler;
 import com.cyberpunktcg.engine.GameConstants;
 import com.cyberpunktcg.engine.GameRuleException;
 import com.cyberpunktcg.engine.RuleEngine;
@@ -15,7 +16,6 @@ import com.cyberpunktcg.engine.TriggerType;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 /**
  * Termine le tour du joueur actif et ouvre celui du rival :
@@ -25,9 +25,15 @@ import java.util.Optional;
  *   <li>passage du tour ;</li>
  * <li><strong>victoire immédiate si le joueur entrant contrôle au moins
  *   {@link GameConstants#GIGS_TO_WIN} Gigs</strong> (avant pioche et Gig du tour, jamais en continu après un vol) ;</li>
- *   <li>sinon : réinitialisation du joueur entrant, pioche 1 (deck vide → défaite),
- *   lancer d'un dé Gig, phase {@code MAIN}.</li>
+ *   <li>sinon : ouverture de la phase {@code DRAW} <strong>interactive</strong>
+ *   (Mini-Feature 5, {@link DrawPhaseHandler}) : réinitialisation du joueur
+ *   entrant puis attente de sa pioche ({@link DrawStep#AWAITING_DRAW}). La pioche
+ *   ({@code DRAW_CARD}) et le choix du dé Gig ({@code SELECT_DIE}) sont des
+ *   commandes distinctes : la phase {@code MAIN} ne s'ouvre qu'après elles.</li>
  * </ol>
+ *
+ * <p>Refusée pendant la phase {@code DRAW} : le joueur doit d'abord piocher et
+ * choisir son dé.</p>
  */
 public class EndTurnCommand implements GameCommand {
 
@@ -59,6 +65,11 @@ public class EndTurnCommand implements GameCommand {
     public void validate(GameState state) throws GameRuleException {
         GameCommand.requireGameOngoing(state);
         GameCommand.requireActivePlayer(state, playerId);
+        if (state.getPhase() == Phase.DRAW) {
+            throw new GameRuleException("Impossible de terminer le tour pendant la phase Draw : "
+                    + (state.getDrawStep() == DrawStep.AWAITING_DIE_SELECT
+                    ? "choisissez d'abord votre dé Gig" : "piochez d'abord votre carte"));
+        }
     }
 
     @Override
@@ -108,11 +119,8 @@ public class EndTurnCommand implements GameCommand {
         state.getTurn().setActivePlayerId(incoming.getId());
         state.appendEvent(GameEventType.TURN_STARTED, incoming.getId(),
                 "début du tour " + state.getTurn().getNumber());
-        state.setPhase(Phase.DRAW);
-        state.logInfo(incoming.getId(), "PHASE",
-                "Début du tour " + state.getTurn().getNumber() + " — Joueur " + incoming.getId()
-                        + " (phase DRAW)",
-                GameLog.details("turn", state.getTurn().getNumber(), "phase", "DRAW"));
+        // Mini-Feature 5 : phase DRAW interactive (DRAW_START).
+        DrawPhaseHandler.beginDrawPhase(state, incoming.getId());
 
         // Règle imposée : la victoire se vérifie AU DÉBUT du tour, avant pioche et lancer de Gig.
         state.logInfo(incoming.getId(), "VICTORY_CHECK",
@@ -121,6 +129,7 @@ public class EndTurnCommand implements GameCommand {
                 GameLog.details("gigs", incoming.getGigCount(), "gigsToWin", GameConstants.GIGS_TO_WIN,
                         "passed", incoming.getGigCount() < GameConstants.GIGS_TO_WIN));
         if (incoming.getGigCount() >= GameConstants.GIGS_TO_WIN) {
+            state.setDrawStep(null); // plus rien à piocher : la partie est finie
             state.setWinner(incoming.getId(),
                     "victoire : " + incoming.getId() + " commence son tour avec "
                             + incoming.getGigCount() + " Gigs");
@@ -133,70 +142,9 @@ public class EndTurnCommand implements GameCommand {
             return GameCommand.eventsSince(state, mark);
         }
 
-        // Phase DRAW — règle officielle § START PHASE, étape 1 « READY SPENT CARDS »
-        // (R2/R3/R6/R8) : ON REDRESSE TOUT (Field, Legends Area, Eddies Area) et la
-        // réserve d'Eddies retombe à 0. C'est aussi ce qui lève le malus de mise en
-        // place du premier joueur (R1.4) : ses 2 Legends inclinées pendant le tour 1
-        // sont redressées au début de son tour 2.
-        incoming.startTurn();
-        state.logInfo(incoming.getId(), "TURN_RESET",
-                "Début de tour : 0 Eddie, cartes redressées ; "
-                        + incoming.legendsAvailableForEddies().size() + "/"
-                        + incoming.getLegendsArea().size() + " Legend(s) prêtes, "
-                        + incoming.eddiesAvailableForEddies().size() + "/"
-                        + incoming.getEddiesArea().size() + " Eddies prêtes",
-                GameLog.details("legendsReady", incoming.legendsAvailableForEddies().size(),
-                        "legendsTotal", incoming.getLegendsArea().size(),
-                        "eddiesReady", incoming.eddiesAvailableForEddies().size(),
-                        "eddiesTotal", incoming.getEddiesArea().size(),
-                        "eddies", incoming.getEddies()));
-
-        int drawn = state.drawCards(incoming.getId(), 1);
-        if (state.isGameOver()) {
-            // Règle officielle §7 : devoir piocher avec un deck vide fait perdre la partie.
-            state.logFailed(incoming.getId(), "DRAW",
-                    "Phase DRAW : Joueur " + incoming.getId()
-                            + " doit piocher mais son deck est vide → DÉFAITE",
-                    GameLog.details("deck", 0, "phase", "DRAW"));
-            state.logSuccess(state.getWinnerId(), "VICTORY",
-                    "VICTOIRE : Joueur " + state.getWinnerId() + " gagne par deck-out de "
-                            + incoming.getId(),
-                    GameLog.details("reason", state.getEndReason()));
-            return GameCommand.eventsSince(state, mark);
-        }
-        if (drawn > 0) {
-            CardInstance drawnCard = incoming.getHand().get(incoming.getHand().size() - 1);
-            state.appendEvent(GameEventType.CARD_DRAWN, incoming.getId(), "pioche 1 carte");
-            state.logSuccess(incoming.getId(), "DRAW",
-                    "Phase DRAW : Joueur " + incoming.getId() + " pioche " + drawnCard.getName(),
-                    GameLog.details("card", drawnCard.getName(), "cardId", drawnCard.getCardId(),
-                            "hand", incoming.getHand().size(), "deck", incoming.getDeck().size(),
-                            "phase", "DRAW"));
-        }
-        if (state.isGameOver()) {
-            state.appendEvent(GameEventType.GAME_WON, state.getWinnerId(), state.getEndReason());
-            return GameCommand.eventsSince(state, mark);
-        }
-
-        Optional<DieRoll> roll = state.rollFixerDie(incoming.getId());
-        if (roll.isPresent()) {
-            state.appendEvent(GameEventType.GIG_ROLLED, incoming.getId(),
-                    "lancer " + roll.get().getDie() + " → " + roll.get().getValue()
-                            + " (total " + incoming.getGigCount() + " Gigs)");
-            state.logSuccess(incoming.getId(), "GIG_ROLL",
-                    "Lancer de Gig : " + roll.get().getDie() + " → " + roll.get().getValue()
-                            + " (total " + incoming.getGigCount() + " Gigs, Street Cred "
-                            + incoming.getStreetCred() + ")",
-                    GameLog.details("die", roll.get().getDie(), "value", roll.get().getValue(),
-                            "gigs", incoming.getGigCount(), "streetCred", incoming.getStreetCred()));
-        }
-
-        state.setPhase(Phase.MAIN);
-        state.appendEvent(GameEventType.PHASE_CHANGED, incoming.getId(), "phase Main");
-        state.logInfo(incoming.getId(), "PHASE", "Phase MAIN : Joueur " + incoming.getId()
-                + " peut jouer, incliner ses Legends, vendre 1 carte et attaquer",
-                GameLog.details("phase", "MAIN", "hand", incoming.getHand().size(),
-                        "eddies", incoming.getEddies()));
+        // Mini-Feature 5 : on redresse tout et on s'arrête en AWAITING_DRAW ; la
+        // suite (DRAW_CARD puis SELECT_DIE) est ordonnée par le joueur entrant.
+        DrawPhaseHandler.readyAndAwaitDraw(state, incoming.getId());
         return GameCommand.eventsSince(state, mark);
     }
 }

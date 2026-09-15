@@ -23,7 +23,8 @@ import { useDeckStore } from '@/stores/deck'
 import { useGameStore } from '@/stores/game'
 import { useLobbyStore } from '@/stores/lobby'
 import { useUiStore } from '@/stores/ui'
-import type { CardInstance } from '@/types/game'
+import { DRAW_STEP_HINTS, DRAW_STEP_LABELS, type CardInstance } from '@/types/game'
+import { DIE_FACES, FIXER_DICE_ORDER } from '@/types/playmat'
 
 const route = useRoute()
 const router = useRouter()
@@ -70,6 +71,33 @@ const actionableIds = computed<string[]>(() => {
     if (card.type === 'unit' && !card.attachedTo && game.canAttackWith(card) === null) ids.push(card.instanceId)
   }
   return ids
+})
+
+// --- Phase DRAW interactive (Mini-Feature 5) -------------------------------
+/** Bandeau de guidage : titre et consigne de l'étape attendue de MA part. */
+const drawGuide = computed(() => {
+  const step = game.drawStep
+  if (!step || !game.awaitingMyDrawAction) return null
+  return { step, title: DRAW_STEP_LABELS[step], hint: DRAW_STEP_HINTS[step] }
+})
+/** Grille des dés de ma Fixer Area (d4 → d20) avec leur disponibilité. */
+const drawDice = computed(() => {
+  const owned = me.value?.fixerDice ?? []
+  return [...FIXER_DICE_ORDER]
+    .reverse()
+    .filter((die) => owned.includes(die))
+    .map((die) => ({
+      die,
+      faces: DIE_FACES[die] ?? 6,
+      selectable: game.selectableDice.includes(die),
+      reason: game.canSelectDie(die),
+    }))
+})
+/** Message d'attente côté rival pendant sa phase DRAW. */
+const opponentDrawHint = computed(() => {
+  if (game.isMyTurn || !game.isDrawPhase || game.isGameOver) return null
+  const name = opponent.value?.name ?? 'Ton adversaire'
+  return game.drawStep === 'AWAITING_DIE_SELECT' ? `${name} choisit son dé Gig…` : `${name} pioche sa carte…`
 })
 
 const selected = computed(() => game.selectedCard)
@@ -246,6 +274,7 @@ function onConcede(): void {
       :active-player-name="game.activePlayerId ?? '—'"
       :game-over="game.isGameOver"
       :waiting="game.waitingForServer"
+      :draw-step="game.drawStep"
     />
 
     <!-- TAPIS OFFICIEL : compteurs Gigs tout en haut, puis les deux demi-tapis -->
@@ -280,10 +309,81 @@ function onConcede(): void {
           :actionable-ids="actionableIds"
           :interactive="!game.isGameOver"
           :disconnection="disconnection && disconnection.playerId === me.playerId ? disconnection : null"
+          :awaiting-draw="game.canDrawNow"
+          :selectable-dice="game.selectableDice"
           @card-click="(card) => onCardClick(card, true)"
+          @draw-click="game.drawCard()"
+          @select-die="(die) => game.selectDie(die)"
         />
       </div>
     </div>
+
+    <!-- Mini-Feature 5 : phase DRAW interactive — action requise du joueur actif -->
+    <section
+      v-if="drawGuide"
+      class="cyber-panel draw-guide flex flex-col gap-2 px-4 py-3"
+      data-draw-guide=""
+      :data-step="drawGuide.step"
+      aria-live="assertive"
+    >
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+        <p class="font-mono text-[0.62rem] uppercase tracking-[0.25em] text-slate-400">
+          // phase de pioche · tour {{ game.turnNumber }}
+        </p>
+        <h2 class="cyber-title text-lg" :class="drawGuide.step === 'AWAITING_DRAW' ? 'text-cyber-yellow' : 'text-cyber-cyan'">
+          {{ drawGuide.title }}
+        </h2>
+        <span v-if="game.waitingForServer" class="cyber-chip animate-pulse border-cyber-cyan/60 text-cyber-cyan">
+          serveur…
+        </span>
+      </div>
+      <p class="text-xs text-slate-200">{{ drawGuide.hint }}</p>
+
+      <div v-if="drawGuide.step === 'AWAITING_DRAW'" class="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          class="cyber-btn cyber-btn--accent"
+          data-draw-button=""
+          :disabled="!game.canDrawNow"
+          @click="game.drawCard()"
+        >
+          Piocher ma carte ({{ me.deckCount }} dans le deck)
+        </button>
+        <p class="font-mono text-[0.62rem] text-slate-500">…ou clique directement sur ta pioche, sur le tapis.</p>
+      </div>
+
+      <div v-else-if="drawGuide.step === 'AWAITING_DIE_SELECT'" class="flex flex-col gap-2">
+        <div class="draw-guide__dice" role="group" aria-label="Dés Gig disponibles">
+          <button
+            v-for="entry in drawDice"
+            :key="entry.die"
+            type="button"
+            class="draw-guide__die"
+            :data-die-option="entry.die"
+            :data-selectable="entry.selectable ? 'true' : 'false'"
+            :disabled="!entry.selectable || game.waitingForServer"
+            :title="entry.reason ?? `Lancer le ${entry.die} (1 à ${entry.faces})`"
+            @click="game.selectDie(entry.die)"
+          >
+            <span class="text-base uppercase">{{ entry.die }}</span>
+            <span class="text-[0.55rem] font-normal tracking-[0.2em] text-slate-400">1–{{ entry.faces }}</span>
+          </button>
+        </div>
+        <p class="font-mono text-[0.62rem] text-slate-500">
+          Le résultat rejoint ta Gig Area (Street Cred) — 7 Gigs au début d'un tour = victoire.
+        </p>
+      </div>
+    </section>
+
+    <section
+      v-else-if="opponentDrawHint"
+      class="cyber-panel flex items-center gap-3 px-4 py-2"
+      data-draw-waiting=""
+      aria-live="polite"
+    >
+      <span class="cyber-chip animate-pulse border-cyber-magenta/60 text-cyber-magenta">phase de pioche</span>
+      <p class="text-xs text-slate-300">{{ opponentDrawHint }}</p>
+    </section>
 
     <div class="grid gap-3 xl:grid-cols-[minmax(0,1fr)_19rem]">
       <div class="flex min-w-0 flex-col gap-3">
@@ -346,6 +446,11 @@ function onConcede(): void {
               type="button"
               class="cyber-btn cyber-btn--green"
               :disabled="!game.canEndTurn"
+              :title="
+                game.isDrawPhase && game.isMyTurn
+                  ? 'Termine d’abord ta phase de pioche (pioche + choix du dé)'
+                  : 'Terminer le tour'
+              "
               @click="game.endTurn()"
             >
               Fin de tour

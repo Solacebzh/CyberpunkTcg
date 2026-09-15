@@ -6,6 +6,7 @@ import com.cyberpunktcg.domain.card.CardKeyword;
 import com.cyberpunktcg.domain.card.CardRarity;
 import com.cyberpunktcg.domain.card.CardType;
 import com.cyberpunktcg.domain.game.CardInstance;
+import com.cyberpunktcg.domain.game.DrawStep;
 import com.cyberpunktcg.domain.game.GameActionResult;
 import com.cyberpunktcg.domain.game.GameLogEntry;
 import com.cyberpunktcg.domain.game.GameState;
@@ -13,7 +14,9 @@ import com.cyberpunktcg.domain.game.Phase;
 import com.cyberpunktcg.domain.game.Player;
 import com.cyberpunktcg.domain.game.Zone;
 import com.cyberpunktcg.engine.command.AttackCommand;
+import com.cyberpunktcg.engine.command.DrawCardCommand;
 import com.cyberpunktcg.engine.command.EndTurnCommand;
+import com.cyberpunktcg.engine.command.SelectDieCommand;
 import com.cyberpunktcg.engine.command.PlayCardCommand;
 import com.cyberpunktcg.engine.command.SellCardCommand;
 import com.cyberpunktcg.engine.command.SpendEddiesCommand;
@@ -192,7 +195,7 @@ class GameIntegrationTest {
         assertThat(second.countSpentLegends()).isZero();
 
         // À l'ouverture de son tour, ses 3 Legends sont toujours prêtes
-        execute(state, new EndTurnCommand(starter));
+        passTurn(state, starter);
         assertThat(state.getTurn().getActivePlayerId()).isEqualTo(secondId);
         assertThat(second.countSpentLegends()).isZero();
         assertThat(second.legendsAvailableForEddies()).hasSize(GameConstants.REQUIRED_LEGENDS);
@@ -214,16 +217,21 @@ class GameIntegrationTest {
         assertThat(first.getEddies()).isEqualTo(1);
 
         // Le malus tient tout le tour 1 : rien n'est redressé avant le tour suivant
-        execute(state, new EndTurnCommand(starter));
+        passTurn(state, starter);
         assertThat(state.getTurn().getActivePlayerId()).isEqualTo(secondId);
         assertThat(first.countSpentLegends()).isEqualTo(GameConstants.REQUIRED_LEGENDS);
 
-        // Retour du premier joueur — phase DRAW : ON REDRESSE TOUT, Eddies à 0
+        // Retour du premier joueur — phase DRAW : ON REDRESSE TOUT, Eddies à 0.
+        // Le redressement a lieu dès l'ouverture de la phase DRAW (DRAW_START), avant
+        // même que le joueur ne pioche (Mini-Feature 5 : phase DRAW interactive).
         execute(state, new EndTurnCommand(secondId));
         assertThat(state.getTurn().getActivePlayerId()).isEqualTo(starter);
         assertThat(state.getTurn().getNumber()).isEqualTo(3);
-        assertThat(state.getPhase()).isEqualTo(Phase.MAIN); // DRAW résolue automatiquement
+        assertThat(state.getPhase()).isEqualTo(Phase.DRAW);
+        assertThat(state.getDrawStep()).isEqualTo(DrawStep.AWAITING_DRAW);
         assertThat(legends).allMatch(legend -> !legend.isExhausted());
+        completeDraw(state); // pioche + choix du dé → MAIN
+        assertThat(state.getPhase()).isEqualTo(Phase.MAIN);
         assertThat(first.countSpentLegends()).isZero();
         assertThat(first.legendsAvailableForEddies()).hasSize(GameConstants.REQUIRED_LEGENDS);
         assertThat(first.getEddies()).isZero();
@@ -249,14 +257,14 @@ class GameIntegrationTest {
         execute(state, new SpendLegendCommand("p1", legend.getInstanceId()));
         assertThat(state.getPlayer("p1").getEddies()).isEqualTo(1);
         // Fin de tour p1 : eddies perdus pour p1 (0), p2 démarre à 0
-        execute(state, new EndTurnCommand("p1"));
+        passTurn(state, "p1");
         assertThat(state.getPlayer("p1").getEddies()).isZero(); // perdu
         assertThat(state.getPlayer("p2").getEddies()).isZero(); // démarre à 0
         // p2 gagne un eddy aussi puis fin tour
         CardInstance l2 = state.getPlayer("p2").legendsAvailableForEddies().get(0);
         execute(state, new SpendLegendCommand("p2", l2.getInstanceId()));
         assertThat(state.getPlayer("p2").getEddies()).isEqualTo(1);
-        execute(state, new EndTurnCommand("p2"));
+        passTurn(state, "p2");
         // Tour 2 de p1 : toujours 0 au début (reset via startTurn)
         assertThat(state.getPlayer("p1").getEddies()).isZero();
         assertThat(state.getPlayer("p2").getEddies()).isZero();
@@ -268,7 +276,7 @@ class GameIntegrationTest {
         GameState state = newGame();
         GameFixtures.giveEddies(state, "p1", 5);
         assertThat(state.getPlayer("p1").getEddies()).isEqualTo(5);
-        execute(state, new EndTurnCommand("p1"));
+        passTurn(state, "p1");
         // Outgoing p1 a perdu ses eddies
         assertThat(state.getPlayer("p1").getEddies()).isZero();
     }
@@ -292,8 +300,8 @@ class GameIntegrationTest {
         execute(state, new SpendEddiesCommand("p1", toSell.getInstanceId()));
         assertThat(state.getPlayer("p1").getEddies()).isEqualTo(2);
         // Prochain tour : réserve remise à 0, la carte Eddies est redressée.
-        execute(state, new EndTurnCommand("p1"));
-        execute(state, new EndTurnCommand("p2"));
+        passTurn(state, "p1");
+        passTurn(state, "p2");
         // p1 début tour 2 : eddies reset 0, legends et eddies cards redressées
         assertThat(state.getPlayer("p1").getEddies()).isZero();
         CardInstance eddiesCard = state.getPlayer("p1").getEddiesArea().get(0);
@@ -328,8 +336,8 @@ class GameIntegrationTest {
         CardInstance legend = state.getPlayer("p1").legendsAvailableForEddies().get(0);
         execute(state, new SpendLegendCommand("p1", legend.getInstanceId()));
         assertThat(legend.isExhausted()).isTrue();
-        execute(state, new EndTurnCommand("p1"));
-        execute(state, new EndTurnCommand("p2"));
+        passTurn(state, "p1");
+        passTurn(state, "p2");
         // Tour 2 de p1 : legend redressée (R3 exige redress)
         assertThat(legend.isExhausted()).isFalse();
         // Peut à nouveau être inclinée
@@ -390,8 +398,8 @@ class GameIntegrationTest {
         String refusal = expectRefusal(state, new PlayCardCommand("p1", l2.getInstanceId()));
         assertThat(refusal).contains("une seule fois");
         // Tour suivant : réinitialise
-        execute(state, new EndTurnCommand("p1"));
-        execute(state, new EndTurnCommand("p2"));
+        passTurn(state, "p1");
+        passTurn(state, "p2");
         GameFixtures.giveEddies(state, "p1", 5);
         execute(state, new PlayCardCommand("p1", l2.getInstanceId()));
         assertThat(l2.isFaceDown()).isFalse();
@@ -450,8 +458,8 @@ class GameIntegrationTest {
         execute(state, new SpendEddiesCommand("p1", toSell.getInstanceId()));
         assertThat(state.getPlayer("p1").getEddies()).isEqualTo(1);
         // Tour suivant : redressée et de nouveau spendable
-        execute(state, new EndTurnCommand("p1"));
-        execute(state, new EndTurnCommand("p2"));
+        passTurn(state, "p1");
+        passTurn(state, "p2");
         assertThat(toSell.isExhausted()).isFalse();
         assertThat(state.getPlayer("p1").getEddiesArea()).contains(toSell);
         execute(state, new SpendEddiesCommand("p1", toSell.getInstanceId()));
@@ -465,8 +473,8 @@ class GameIntegrationTest {
         CardInstance a = GameFixtures.handCard(state, "p1", GameFixtures.unit("a",1,1));
         CardInstance b = GameFixtures.handCard(state, "p1", GameFixtures.unit("b",1,1));
         execute(state, new SellCardCommand("p1", a.getInstanceId()));
-        execute(state, new EndTurnCommand("p1"));
-        execute(state, new EndTurnCommand("p2"));
+        passTurn(state, "p1");
+        passTurn(state, "p2");
         // p1 nouveau tour : peut revendre
         assertThat(state.getPlayer("p1").hasSoldThisTurn()).isFalse();
         execute(state, new SellCardCommand("p1", b.getInstanceId()));
@@ -486,8 +494,8 @@ class GameIntegrationTest {
         GameState state = newGame();
         CardInstance sold = GameFixtures.handCard(state, "p1", GameFixtures.unit("to-sell",1,1));
         execute(state, new SellCardCommand("p1", sold.getInstanceId()));
-        execute(state, new EndTurnCommand("p1"));
-        execute(state, new EndTurnCommand("p2"));
+        passTurn(state, "p1");
+        passTurn(state, "p2");
         // sold maintenant ready
         assertThat(state.getPlayer("p1").getEddies()).isZero();
         assertThat(sold.isExhausted()).isFalse();
@@ -502,12 +510,12 @@ class GameIntegrationTest {
         GameState state = newGame();
         CardInstance card = GameFixtures.handCard(state, "p1", GameFixtures.unit("eddy",1,1));
         execute(state, new SellCardCommand("p1", card.getInstanceId()));
-        execute(state, new EndTurnCommand("p1"));
-        execute(state, new EndTurnCommand("p2"));
+        passTurn(state, "p1");
+        passTurn(state, "p2");
         execute(state, new SpendEddiesCommand("p1", card.getInstanceId()));
         assertThat(card.isExhausted()).isTrue();
-        execute(state, new EndTurnCommand("p1"));
-        execute(state, new EndTurnCommand("p2"));
+        passTurn(state, "p1");
+        passTurn(state, "p2");
         // De nouveau ready
         assertThat(card.isExhausted()).isFalse();
     }
@@ -518,8 +526,8 @@ class GameIntegrationTest {
         GameState state = newGame();
         CardInstance card = GameFixtures.handCard(state, "p1", GameFixtures.unit("dup",1,1));
         execute(state, new SellCardCommand("p1", card.getInstanceId()));
-        execute(state, new EndTurnCommand("p1"));
-        execute(state, new EndTurnCommand("p2"));
+        passTurn(state, "p1");
+        passTurn(state, "p2");
         execute(state, new SpendEddiesCommand("p1", card.getInstanceId()));
         String refusal = expectRefusal(state, new SpendEddiesCommand("p1", card.getInstanceId()));
         assertThat(refusal).contains("déjà inclinée");
@@ -569,12 +577,20 @@ class GameIntegrationTest {
     void testR8_PhasesOrder() {
         GameState state = newGame();
         assertThat(state.getPhase()).isEqualTo(Phase.MAIN);
-        // Fin tour p1 -> tour p2 DRAW puis MAIN
+        // Fin tour p1 -> tour p2 : phase DRAW interactive (Mini-Feature 5)
         int turnBefore = state.getTurn().getNumber();
         execute(state, new EndTurnCommand("p1"));
-        // Après EndTurn, on est en MAIN du joueur suivant (DRAW transitoire)
         assertThat(state.getTurn().getNumber()).isEqualTo(turnBefore + 1);
+        assertThat(state.getPhase()).isEqualTo(Phase.DRAW);
+        assertThat(state.getDrawStep()).isEqualTo(DrawStep.AWAITING_DRAW);
+        // Impossible de sauter la phase DRAW : END_TURN est refusé tant qu'on n'a pas pioché et lancé.
+        expectRefusal(state, new EndTurnCommand("p2"));
+        // Pioche (clic sur le deck) puis choix du dé → MAIN
+        execute(state, new DrawCardCommand("p2"));
+        assertThat(state.getDrawStep()).isEqualTo(DrawStep.AWAITING_DIE_SELECT);
+        execute(state, new SelectDieCommand("p2", "d4"));
         assertThat(state.getPhase()).isEqualTo(Phase.MAIN);
+        assertThat(state.getDrawStep()).isNull();
         // Logs doivent montrer DRAW, VICTORY_CHECK, GIG_ROLL, MAIN dans l'ordre
         List<String> logs = descriptions(state, 30);
         // Vérifie que la séquence DRAW avant Gig
@@ -603,13 +619,27 @@ class GameIntegrationTest {
         int deckBefore = p1.getDeck().size();
         int handBefore = p1.getHand().size();
         int gigsBefore = state.getPlayer("p2").getGigs().size();
+        int p2DeckBefore = state.getPlayer("p2").getDeck().size();
         execute(state, new EndTurnCommand("p1"));
-        // p2 a reçu le tour : son Field unit devrait exister? Mais p1's unit reste épuisée jusqu'à son prochain tour
-        // Vérifie p2 a bien pioché 1 et gagné un Gig
-        assertThat(state.getPlayer("p2").getHand()).hasSize(handBefore + 1); // handBefore was p2's hand same as p1's initial? placeholder
-        // Plus précis : p2 deck -1, hand +1, gigs +1
-        // On vérifie simplement que p2 a un Gig de plus
-        assertThat(state.getPlayer("p2").getGigs()).hasSize(gigsBefore+1);
+        // 1) READY : résolu à l'ouverture du tour (p1's unit reste épuisée jusqu'à SON prochain tour)
+        assertThat(u.isExhausted()).isTrue();
+        assertThat(state.getPhase()).isEqualTo(Phase.DRAW);
+        // 2) DRAW 1 : exige le clic du joueur (Mini-Feature 5)
+        assertThat(state.getPlayer("p2").getHand()).hasSize(handBefore);
+        execute(state, new DrawCardCommand("p2"));
+        assertThat(state.getPlayer("p2").getHand()).hasSize(handBefore + 1); // mains de départ identiques (6)
+        assertThat(state.getPlayer("p2").getDeck()).hasSize(p2DeckBefore - 1);
+        assertThat(state.getPlayer("p2").getGigs()).hasSize(gigsBefore);
+        // 3) GAIN A GIG : le d20 est refusé tant qu'il reste d'autres dés (d20 last)
+        expectRefusal(state, new SelectDieCommand("p2", "d20"));
+        execute(state, new SelectDieCommand("p2", "d8"));
+        assertThat(state.getPlayer("p2").getGigs()).hasSize(gigsBefore + 1);
+        assertThat(state.getPlayer("p2").getGigDice()).containsExactly("d8");
+        assertThat(state.getPlayer("p2").getFixerDice()).containsExactly("d4", "d6", "d10", "d12", "d20");
+        assertThat(state.getPhase()).isEqualTo(Phase.MAIN);
+        // Le tour suivant de p1 redresse enfin son Unit
+        passTurn(state, "p2");
+        assertThat(u.isExhausted()).isFalse();
     }
 
     @Test
@@ -617,7 +647,7 @@ class GameIntegrationTest {
     void testR8_EndPhaseEddiesLost() {
         GameState state = newGame();
         GameFixtures.giveEddies(state, "p1", 3);
-        execute(state, new EndTurnCommand("p1"));
+        passTurn(state, "p1");
         assertThat(state.getTurn().getActivePlayerId()).isEqualTo("p2");
         assertThat(state.getPlayer("p1").getEddies()).isZero();
     }
@@ -736,8 +766,8 @@ class GameIntegrationTest {
         execute(state, new PlayCardCommand("p1", u.getInstanceId()));
         assertThat(u.isSummoningSickness()).isTrue();
         // Passe 2 tours pour revenir à p1
-        execute(state, new EndTurnCommand("p1"));
-        execute(state, new EndTurnCommand("p2"));
+        passTurn(state, "p1");
+        passTurn(state, "p2");
         assertThat(u.isSummoningSickness()).isFalse();
         CardInstance defender = GameFixtures.fieldCard(state, "p2", GameFixtures.unit("def3",1,1));
         defender.setExhausted(true);
@@ -853,14 +883,14 @@ class GameIntegrationTest {
     void testR12_Victory_7GigsAtStart() {
         GameState state = newGame();
         GameFixtures.addGigs(state, "p1", 1,1,1,1,1,1); // 6
-        execute(state, new EndTurnCommand("p1"));
+        passTurn(state, "p1");
         assertThat(state.isGameOver()).isFalse();
-        execute(state, new EndTurnCommand("p2"));
+        passTurn(state, "p2");
         // Début tour 3 p1 : 6 -> roll ->7
         assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(7);
         assertThat(state.isGameOver()).isFalse(); // pas encore victoire, vérification au début du prochain tour
-        execute(state, new EndTurnCommand("p1"));
-        execute(state, new EndTurnCommand("p2"));
+        passTurn(state, "p1");
+        passTurn(state, "p2");
         // Début tour 5 p1 : 7 au début -> victoire
         assertThat(state.isGameOver()).isTrue();
         assertThat(state.getWinnerId()).isEqualTo("p1");
@@ -871,8 +901,8 @@ class GameIntegrationTest {
     void testR12_Victory_6GigsNoWin() {
         GameState state = newGame();
         GameFixtures.addGigs(state, "p1", 1,1,1,1,1,1); //6
-        execute(state, new EndTurnCommand("p1"));
-        execute(state, new EndTurnCommand("p2"));
+        passTurn(state, "p1");
+        passTurn(state, "p2");
         assertThat(state.isGameOver()).isFalse();
         assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(7); // after roll, but not victory yet
         // Still not winner because 7 achieved during turn, not at start
@@ -885,8 +915,8 @@ class GameIntegrationTest {
         GameState state = newGame();
         // p1 gagne Gig via dice (lancer de la phase DRAW de son tour 2)
         assertThat(state.getPlayer("p1").getGigCount()).isZero();
-        execute(state, new EndTurnCommand("p1"));
-        execute(state, new EndTurnCommand("p2"));
+        passTurn(state, "p1");
+        passTurn(state, "p2");
         assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(1);
         // Vol — p2 a déjà gagné 1 Gig en ouvrant son propre tour, on en ajoute un 2e
         GameFixtures.addGigs(state, "p2", 3);
@@ -904,11 +934,13 @@ class GameIntegrationTest {
         GameState state = newGame();
         // Vide le deck de p1
         state.getPlayer("p1").getDeck().clear();
-        // Fin tour p2 -> début tour p1 doit piocher et perdre
-        execute(state, new EndTurnCommand("p1"));
+        // Fin tour p1 (p2 pioche et lance), puis fin tour p2 -> début tour p1
+        passTurn(state, "p1");
         execute(state, new EndTurnCommand("p2"));
-        // Au début du tour de p1 suivant, pioche impossible -> défaite, p2 gagne
-        // Actually after p2's end, it's p1's turn, p1 must draw. Since deck empty, p2 wins.
+        // La défaite tombe au moment de piocher (clic sur le deck vide), pas avant.
+        assertThat(state.isGameOver()).isFalse();
+        assertThat(state.getDrawStep()).isEqualTo(DrawStep.AWAITING_DRAW);
+        execute(state, new DrawCardCommand("p1"));
         assertThat(state.isGameOver()).isTrue();
         assertThat(state.getWinnerId()).isEqualTo("p2");
     }
@@ -1127,6 +1159,33 @@ class GameIntegrationTest {
 
     private void execute(GameState state, com.cyberpunktcg.engine.command.GameCommand command) {
         service.executeCommand(state.getGameId(), command);
+    }
+
+    /**
+     * Fin de tour complète (Mini-Feature 5) : {@code from} termine son tour, puis
+     * le joueur entrant joue sa phase DRAW interactive (pioche + choix du dé).
+     */
+    private void passTurn(GameState state, String from) {
+        execute(state, new EndTurnCommand(from));
+        completeDraw(state);
+    }
+
+    /** Résout la phase DRAW interactive du joueur actif via le service (journal compris). */
+    private void completeDraw(GameState state) {
+        if (state.isGameOver() || state.getPhase() != Phase.DRAW) {
+            return;
+        }
+        String active = state.getTurn().getActivePlayerId();
+        if (state.getDrawStep() == DrawStep.AWAITING_DRAW) {
+            execute(state, new DrawCardCommand(active));
+        }
+        if (state.isGameOver() || state.getPhase() != Phase.DRAW) {
+            return;
+        }
+        if (state.getDrawStep() == DrawStep.AWAITING_DIE_SELECT) {
+            List<String> selectable = state.getPlayer(active).selectableFixerDice();
+            execute(state, new SelectDieCommand(active, selectable.get(0)));
+        }
     }
 
     private String expectRefusal(GameState state, com.cyberpunktcg.engine.command.GameCommand command) {

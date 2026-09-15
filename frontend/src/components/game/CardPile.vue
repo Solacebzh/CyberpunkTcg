@@ -32,6 +32,13 @@ const props = withDefaults(
     /** Texte affiché quand la zone est vide. */
     emptyLabel?: string
     size?: 'xs' | 'sm'
+    /**
+     * Mini-Feature 5 : la pile attend un clic du joueur (phase DRAW, étape
+     * `AWAITING_DRAW`) — elle devient un bouton et pulse pour inviter à piocher.
+     */
+    clickable?: boolean
+    /** Libellé du bouton quand `clickable` (accessibilité + infobulle). */
+    clickLabel?: string
   }>(),
   {
     cards: () => [],
@@ -40,8 +47,16 @@ const props = withDefaults(
     side: 'me',
     emptyLabel: 'vide',
     size: 'sm',
+    clickable: false,
+    clickLabel: 'Piocher',
   },
 )
+
+const emit = defineEmits<{ click: [] }>()
+
+function onClick(): void {
+  if (props.clickable) emit('click')
+}
 
 /** Carte du dessus : la dernière entrée de la zone (face visible pour le Trash). */
 const topCard = computed<CardInstance | null>(() => props.cards[props.cards.length - 1] ?? null)
@@ -55,13 +70,23 @@ function definitionOf(card: CardInstance): GameCard | null {
 </script>
 
 <template>
-  <div
+  <component
+    :is="clickable ? 'button' : 'div'"
+    :type="clickable ? 'button' : undefined"
     class="card-pile"
+    :class="clickable ? 'card-pile--clickable' : ''"
     :data-side="side"
     :data-face-up="faceUp"
     :data-count="count"
     :data-top="topCard ? topCard.name : null"
-    :aria-label="`${count} carte(s) dans la pile${topCard ? `, dessus : ${topCard.name}` : ''}`"
+    :data-clickable="clickable ? 'true' : null"
+    :title="clickable ? clickLabel : undefined"
+    :aria-label="
+      clickable
+        ? `${clickLabel} (${count} carte(s) dans la pile)`
+        : `${count} carte(s) dans la pile${topCard ? `, dessus : ${topCard.name}` : ''}`
+    "
+    @click="onClick"
   >
     <p v-if="count === 0" class="card-pile__empty">{{ emptyLabel }}</p>
 
@@ -87,6 +112,7 @@ function definitionOf(card: CardInstance): GameCard | null {
       </div>
 
       <span v-if="count > 1" class="card-pile__count font-mono" :title="`${count} cartes empilées`">×{{ count }}</span>
+      <span v-if="clickable" class="card-pile__cta font-mono" aria-hidden="true">{{ clickLabel }}</span>
     </div>
-  </div>
+  </component>
 </template>

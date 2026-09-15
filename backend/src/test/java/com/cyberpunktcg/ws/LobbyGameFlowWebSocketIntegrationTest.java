@@ -109,6 +109,12 @@ class LobbyGameFlowWebSocketIntegrationTest {
                     .isEqualTo(otherPseudo);
             assertThat(starterAfter.path("clientRequestId").asText()).isEqualTo("req-end-1");
             assertThat(starterAfter.path("newEvents")).isNotEmpty();
+            // Mini-Feature 5 : la phase DRAW est interactive — la partie attend le clic
+            // du joueur entrant sur sa pioche (rien n'est pioché ni lancé automatiquement).
+            assertThat(starterAfter.path("state").path("phase").asText()).isEqualTo("DRAW");
+            assertThat(starterAfter.path("state").path("turn").path("drawStep").asText()).isEqualTo("AWAITING_DRAW");
+            assertThat(player(otherAfter.path("state"), otherPseudo).path("hand")).hasSize(6);
+            assertThat(player(otherAfter.path("state"), otherPseudo).path("gigs")).isEmpty();
 
             // --- Le journal de diagnostic est diffusé en temps réel aux deux joueurs ---
             JsonNode hostLog = host.await(hostLogs, this::isLog, 10);
@@ -119,17 +125,79 @@ class LobbyGameFlowWebSocketIntegrationTest {
             assertThat(hostLog.path("entries")).isNotEmpty();
             List<String> actionTypes = fieldOf(hostLog.path("entries"), "actionType");
             List<String> descriptions = fieldOf(hostLog.path("entries"), "description");
-            // La fin de tour journalise la phase END, la vérification de victoire,
-            // la phase DRAW (pioche) et le lancer de Gig (cf. docs/DEBUG-GUIDE.md).
-            assertThat(actionTypes).contains("DRAW", "VICTORY_CHECK", "GIG_ROLL");
+            // La fin de tour journalise la phase END, la vérification de victoire et
+            // l'ouverture de la phase DRAW (cf. docs/DEBUG-GUIDE.md).
+            assertThat(actionTypes).contains("VICTORY_CHECK", "TURN_RESET", "DRAW_STEP");
             assertThat(descriptions).anyMatch(line -> line.contains("Phase DRAW"));
             assertThat(descriptions).anyMatch(line -> line.contains("Vérification victoire"));
-            assertThat(descriptions).anyMatch(line -> line.contains("Lancer de Gig"));
             assertThat(fieldOf(hostLog.path("entries"), "result")).doesNotContain("ILLEGAL");
             // L'état complet embarque le journal : le panneau de debug s'amorce après un resync.
             assertThat(starterAfter.path("state").path("gameLog")).isNotEmpty();
             assertThat(fieldOf(starterAfter.path("state").path("gameLog"), "description"))
                     .anyMatch(line -> line.contains("Vérification victoire"));
+
+            // --- Phase DRAW interactive : impossible de sauter la pioche ---
+            otherClient.send("/app/game/" + gameId + "/action",
+                    new GameCommandDTO("SELECT_DIE", null, null, null, null, null, null, List.of("d4"), "req-early-die"));
+            JsonNode earlyDie = otherClient.await(otherErrors,
+                    node -> "ILLEGAL_ACTION".equals(node.path("code").asText())
+                            && "req-early-die".equals(node.path("clientRequestId").asText()), 10);
+            assertThat(earlyDie).as("choisir un dé avant de piocher doit être refusé").isNotNull();
+            otherClient.send("/app/game/" + gameId + "/action",
+                    new GameCommandDTO("END_TURN", null, null, null, null, null, null, null, "req-early-end"));
+            JsonNode earlyEnd = otherClient.await(otherErrors,
+                    node -> "ILLEGAL_ACTION".equals(node.path("code").asText())
+                            && "req-early-end".equals(node.path("clientRequestId").asText()), 10);
+            assertThat(earlyEnd).as("terminer le tour pendant la phase DRAW doit être refusé").isNotNull();
+
+            // --- Le joueur entrant clique sur sa pioche : +1 carte, puis choix du dé ---
+            otherClient.send("/app/game/" + gameId + "/action",
+                    new GameCommandDTO("DRAW_CARD", null, null, null, null, null, null, null, "req-draw"));
+            JsonNode afterDraw = otherClient.await(otherStates,
+                    node -> isState(node) && "req-draw".equals(node.path("clientRequestId").asText()), 10);
+            assertThat(afterDraw).as("état après la pioche attendu").isNotNull();
+            assertThat(afterDraw.path("state").path("phase").asText()).isEqualTo("DRAW");
+            assertThat(afterDraw.path("state").path("turn").path("drawStep").asText()).isEqualTo("AWAITING_DIE_SELECT");
+            assertThat(player(afterDraw.path("state"), otherPseudo).path("hand")).hasSize(7);
+            assertThat(player(afterDraw.path("state"), otherPseudo).path("deckCount").asInt()).isEqualTo(3);
+            assertThat(fieldOf(afterDraw.path("newEvents"), "type")).contains("CARD_DRAWN");
+
+            // Le d20 se lance toujours en dernier : refusé tant qu'il reste d'autres dés.
+            otherClient.send("/app/game/" + gameId + "/action",
+                    new GameCommandDTO("SELECT_DIE", null, null, null, null, null, null, List.of("d20"), "req-d20"));
+            JsonNode d20Error = otherClient.await(otherErrors,
+                    node -> "ILLEGAL_ACTION".equals(node.path("code").asText())
+                            && "req-d20".equals(node.path("clientRequestId").asText()), 10);
+            assertThat(d20Error).isNotNull();
+            assertThat(d20Error.path("message").asText()).contains("d20");
+
+            // --- Choix d'un dé valide : Gig gagné, passage automatique en MAIN ---
+            otherClient.send("/app/game/" + gameId + "/action",
+                    new GameCommandDTO("SELECT_DIE", null, null, null, null, null, null, List.of("d6"), "req-die"));
+            JsonNode afterDie = otherClient.await(otherStates,
+                    node -> isState(node) && "req-die".equals(node.path("clientRequestId").asText()), 10);
+            JsonNode starterSeesMain = starterClient.await(starterStates,
+                    node -> isState(node) && "MAIN".equals(node.path("state").path("phase").asText())
+                            && node.path("state").path("turn").path("number").asInt() == 2, 10);
+            assertThat(afterDie).as("état après le lancer attendu").isNotNull();
+            assertThat(starterSeesMain).as("le rival doit voir la phase MAIN").isNotNull();
+            assertThat(afterDie.path("state").path("phase").asText()).isEqualTo("MAIN");
+            assertThat(afterDie.path("state").path("turn").path("drawStep").isMissingNode()
+                    || afterDie.path("state").path("turn").path("drawStep").isNull()).isTrue();
+            JsonNode roller = player(afterDie.path("state"), otherPseudo);
+            assertThat(roller.path("gigs")).hasSize(1);
+            assertThat(roller.path("gigs").get(0).asInt()).isBetween(1, 6);
+            assertThat(roller.path("gigDice")).hasSize(1);
+            assertThat(roller.path("gigDice").get(0).asText()).isEqualTo("d6");
+            assertThat(roller.path("gigCount").asInt()).isEqualTo(1);
+            assertThat(roller.path("fixerDice")).hasSize(5);
+            assertThat(textValues(roller.path("fixerDice"))).containsExactly("d4", "d8", "d10", "d12", "d20");
+            assertThat(fieldOf(afterDie.path("newEvents"), "type")).contains("GIG_ROLLED", "PHASE_CHANGED");
+            // Le journal a bien consigné la pioche puis le lancer.
+            JsonNode gigLog = host.await(hostLogs, node -> isLog(node)
+                    && fieldOf(node.path("entries"), "actionType").contains("GIG_ROLL"), 10);
+            assertThat(gigLog).as("journal du lancer de Gig attendu").isNotNull();
+            assertThat(fieldOf(gigLog.path("entries"), "description")).anyMatch(line -> line.contains("Lancer de Gig"));
 
             // --- Une action illégale du joueur actif n'erre QUE chez lui ---
             otherClient.send("/app/game/" + gameId + "/action",
@@ -224,6 +292,15 @@ class LobbyGameFlowWebSocketIntegrationTest {
             }
         }
         throw new IllegalStateException("Aucune entrée ILLEGAL dans : " + entries);
+    }
+
+    /** Valeurs d'un tableau JSON de chaînes. */
+    private List<String> textValues(JsonNode array) {
+        List<String> values = new java.util.ArrayList<String>();
+        for (JsonNode node : array) {
+            values.add(node.asText());
+        }
+        return values;
     }
 
     private List<String> fieldOf(JsonNode array, String field) {

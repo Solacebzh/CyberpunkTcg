@@ -47,11 +47,15 @@ const props = withDefaults(
     actionableIds: string[]
     interactive: boolean
     disconnection?: { secondsLeft: number } | null
+    /** Mini-Feature 5 : la pioche attend le clic du joueur (phase DRAW, `AWAITING_DRAW`). */
+    awaitingDraw?: boolean
+    /** Mini-Feature 5 : dés cliquables pendant `AWAITING_DIE_SELECT` (vide sinon). */
+    selectableDice?: string[]
   }>(),
-  { disconnection: null },
+  { disconnection: null, awaitingDraw: false, selectableDice: () => [] },
 )
 
-const emit = defineEmits<{ cardClick: [card: CardInstance] }>()
+const emit = defineEmits<{ cardClick: [card: CardInstance]; drawClick: []; selectDie: [die: string] }>()
 
 const side = computed<'me' | 'opponent'>(() => (props.isMe ? 'me' : 'opponent'))
 const units = computed(() => props.player.field.filter((card) => !card.attachedTo))
@@ -118,7 +122,13 @@ function isActionable(instanceId: string): boolean {
     <div class="playmat-grid">
       <!-- GAUCHE : Fixer (colonne des dés d20 → d4) -->
       <PlaymatZone zone="FIXER" :side="side" :badge="`${player.fixerDice.length}/6`">
-        <FixerArea :dice="player.fixerDice" :side="side" />
+        <FixerArea
+          :dice="player.fixerDice"
+          :side="side"
+          :selecting="isMe && interactive && selectableDice.length > 0"
+          :selectable-dice="isMe && interactive ? selectableDice : []"
+          @select-die="(die) => emit('selectDie', die)"
+        />
       </PlaymatZone>
 
       <!-- CENTRE-HAUT : Field (immense) -->
@@ -137,7 +147,14 @@ function isActionable(instanceId: string): boolean {
 
       <!-- MILIEU-DROITE : Deck -->
       <PlaymatZone zone="DECK" :side="side" :badge="player.deckCount">
-        <CardPile :count="player.deckCount" :side="side" empty-label="pioche vide" />
+        <CardPile
+          :count="player.deckCount"
+          :side="side"
+          empty-label="pioche vide"
+          :clickable="isMe && interactive && awaitingDraw"
+          click-label="Piocher"
+          @click="emit('drawClick')"
+        />
       </PlaymatZone>
 
       <!-- BAS-CENTRE-GAUCHE : Legends (exactement 3 slots) -->
