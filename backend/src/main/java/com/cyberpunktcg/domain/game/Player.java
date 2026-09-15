@@ -49,6 +49,12 @@ public class Player {
 
     /** Valeurs des dés dans la Gig Area (chaque entrée = 1 Gig contrôlé). */
     private List<Integer> gigs;
+    /**
+     * Type du dé physique de chaque Gig de la Gig Area, aligné index par index
+     * sur {@link #gigs} ({@code "d6"}, {@code "d20"}…). Un Gig obtenu autrement
+     * que par un lancer (vol, fixture) porte {@link #UNKNOWN_DIE}.
+     */
+    private List<String> gigDice;
     /** Dés restants dans la Fixer Area, dans l'ordre de lancer. */
     private List<String> fixerDice;
 
@@ -70,6 +76,7 @@ public class Player {
         this.eddiesArea = new ArrayList<CardInstance>();
         this.legendsArea = new ArrayList<CardInstance>();
         this.gigs = new ArrayList<Integer>();
+        this.gigDice = new ArrayList<String>();
         this.fixerDice = freshFixerDice();
         this.eddies = 0;
         this.costDiscount = 0;
@@ -77,9 +84,27 @@ public class Player {
         this.hasCalledLegendThisTurn = false;
     }
 
+    /** Le dé Gig le plus fort, réservé au dernier lancer (règle officielle § START PHASE). */
+    public static final String LAST_DIE = "d20";
+
+    /** Type de dé inconnu (Gig volé ou injecté hors lancer). */
+    public static final String UNKNOWN_DIE = "?";
+
     /** Les 6 dés Gig de départ, dans l'ordre de lancer imposé (d20 en dernier). */
     public static List<String> freshFixerDice() {
         return new ArrayList<String>(Arrays.asList("d4", "d6", "d8", "d10", "d12", "d20"));
+    }
+
+    /**
+     * Normalise un identifiant de dé reçu du client ({@code "D6"}, {@code " d6 "}
+     * → {@code "d6"}). Retourne {@code null} si l'entrée est vide.
+     */
+    public static String normalizeDie(String die) {
+        if (die == null) {
+            return null;
+        }
+        String trimmed = die.trim().toLowerCase(java.util.Locale.ROOT);
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     /** Nombre de faces d'un dé Gig. */
@@ -144,6 +169,48 @@ public class Player {
 
     public List<Integer> getGigs() {
         return gigs;
+    }
+
+    /**
+     * Types des dés de la Gig Area, alignés sur {@link #getGigs()} (le tableau
+     * est resynchronisé par {@link #syncGigDice()} : les Gigs ajoutés directement
+     * à la liste — vol, effets, fixtures — reçoivent {@link #UNKNOWN_DIE}).
+     */
+    public List<String> getGigDice() {
+        syncGigDice();
+        return gigDice;
+    }
+
+    /** Aligne la taille de {@link #gigDice} sur celle de {@link #gigs}. */
+    private void syncGigDice() {
+        while (gigDice.size() < gigs.size()) {
+            gigDice.add(UNKNOWN_DIE);
+        }
+        while (gigDice.size() > gigs.size()) {
+            gigDice.remove(gigDice.size() - 1);
+        }
+    }
+
+    /**
+     * Ajoute un Gig obtenu par un lancer : valeur dans la Gig Area et type de
+     * dé mémorisé (Mini-Feature 5 : le client affiche « d8 → 5 »).
+     */
+    public void addRolledGig(String die, int value) {
+        syncGigDice();
+        gigs.add(value);
+        gigDice.add(die == null ? UNKNOWN_DIE : die);
+    }
+
+    /**
+     * Retire le Gig d'index donné de la Gig Area (vol, effets).
+     *
+     * @return la valeur retirée et le type de dé qui la portait
+     */
+    public DieRoll removeGig(int index) {
+        syncGigDice();
+        String die = gigDice.remove(index);
+        int value = gigs.remove(index);
+        return new DieRoll(die, value);
     }
 
     public List<String> getFixerDice() {
@@ -446,6 +513,39 @@ public class Player {
         return Optional.of(fixerDice.remove(0));
     }
 
+    /**
+     * Dés de la Fixer Area que le joueur a le droit de choisir maintenant
+     * (Mini-Feature 5, règle officielle § START PHASE — « You can choose any die
+     * except the d20, which is always rolled last ») : tous les dés restants sauf
+     * le {@value #LAST_DIE}, ou le {@value #LAST_DIE} seul quand il est le dernier.
+     */
+    public List<String> selectableFixerDice() {
+        List<String> selectable = new ArrayList<String>();
+        for (String die : fixerDice) {
+            if (!LAST_DIE.equals(die)) {
+                selectable.add(die);
+            }
+        }
+        if (selectable.isEmpty() && fixerDice.contains(LAST_DIE)) {
+            selectable.add(LAST_DIE);
+        }
+        return selectable;
+    }
+
+    /** {@code true} si le dé (déjà normalisé) peut être choisi maintenant. */
+    public boolean canSelectFixerDie(String die) {
+        return die != null && selectableFixerDice().contains(die);
+    }
+
+    /**
+     * Retire un dé précis de la Fixer Area (dé choisi par le joueur).
+     *
+     * @return {@code true} si le dé était présent et a été retiré
+     */
+    public boolean removeFixerDie(String die) {
+        return die != null && fixerDice.remove(die);
+    }
+
     /** Units BLOCKER prêtes (non épuisées) sur le Field. */
     public List<CardInstance> readyBlockers() {
         List<CardInstance> blockers = new ArrayList<CardInstance>();
@@ -526,6 +626,7 @@ public class Player {
             }
         }
         copy.gigs = new ArrayList<Integer>(this.gigs);
+        copy.gigDice = new ArrayList<String>(this.getGigDice());
         copy.fixerDice = new ArrayList<String>(this.fixerDice);
         copy.eddies = this.eddies;
         copy.costDiscount = this.costDiscount;

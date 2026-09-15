@@ -289,7 +289,7 @@ omis ou `null`) :
   "chosen": null,                // option choisie dans une fenêtre de réaction
   "revealedLegendIds": null,     // réservé (effets de reveal avancés)
   "cardIds": null,               // réservé (ventes/pioches groupées futures)
-  "dice": null,                  // réservé (choix de dés futures)
+  "dice": null,                  // SELECT_DIE : dé Gig choisi en première position, ex. ["d6"]
   "clientRequestId": "doc-req"   // optionnel, renvoyé tel quel dans le STATE / l'ERROR
 }
 ```
@@ -304,7 +304,9 @@ omis ou `null`) :
 | `SPEND_RESOURCE` | **Mini-Feature 4 (R4)** : ressource à incliner pour +1 Eddie — soit une Legend non inclinée de sa Legends Area, soit une carte vendue non inclinée de son Eddies Area (ID unique, les deux zones acceptées) | — | `SpendResourceCommand` |
 | `SPEND_LEGEND` | alias historique de `SPEND_RESOURCE` (action de journal distincte) : Legend non inclinée de sa Legends Area à incliner (+1 Eddie) | — | `SpendLegendCommand` (hérite de `SpendResourceCommand`) |
 | `SPEND_EDDIES` | alias historique de `SPEND_RESOURCE` (action de journal distincte) : carte non inclinée de son Eddies Area à incliner (+1 Eddie) | — | `SpendEddiesCommand` (hérite de `SpendResourceCommand`) |
-| `END_TURN` | — | — | `EndTurnCommand` |
+| `END_TURN` | — | — | `EndTurnCommand` — **refusée pendant la phase `DRAW`** (piocher et choisir un dé d'abord) |
+| `DRAW_CARD` | — | — | **Mini-Feature 5** : clic sur sa pioche, uniquement en phase `DRAW` à l'étape `turn.drawStep = AWAITING_DRAW` → pioche 1 carte (deck vide = défaite immédiate) puis `AWAITING_DIE_SELECT`. `DrawCardCommand` |
+| `SELECT_DIE` | — (dé dans `dice[0]`, ex. `["d6"]`, repli `chosen`) | — | **Mini-Feature 5** : choix du dé Gig, uniquement à l'étape `AWAITING_DIE_SELECT` ; le dé doit être dans `fixerDice` et **le `d20` n'est accepté que s'il est le dernier dé** ; le serveur lance (`1..faces`), ajoute le résultat à `gigs`/`gigDice` et passe en `MAIN`. `SelectDieCommand` |
 | `CONCEDE` | — | — | abandon (victoire immédiate de l'adversaire) |
 
 Règles appliquées par le serveur (rappel) : on joue en phase `MAIN`/`COMBAT` ;
@@ -320,6 +322,22 @@ Legends Area **ou** carte non inclinée de l'Eddies Area, appartenant au joueur
 ordonnateur) — pour exactement 1 €$ chacune, une fois par tour et par carte
 (redressées au début du tour suivant), en phase `MAIN` uniquement.
 Le premier joueur commence avec 2 Legends déjà inclinées (malus de mise en place).
+
+**Phase DRAW interactive (Mini-Feature 5).** Après un `END_TURN` accepté, le
+`STATE` diffusé montre `phase = "DRAW"` et `turn.drawStep = "AWAITING_DRAW"` :
+les cartes du joueur entrant sont déjà redressées et ses Eddies à 0, mais **rien
+n'a été pioché ni lancé**. Le joueur actif doit envoyer, dans l'ordre :
+
+1. `DRAW_CARD` → `STATE` avec `newEvents = [CARD_DRAWN]`, `turn.drawStep =
+   "AWAITING_DIE_SELECT"` (ou `GAME_WON` si son deck était vide) ;
+2. `SELECT_DIE` avec `dice: ["d8"]` → `STATE` avec `newEvents = [GIG_ROLLED,
+   PHASE_CHANGED]`, `phase = "MAIN"`, `turn.drawStep` absent.
+
+Toute autre commande de jeu (`END_TURN`, `SELL_CARD`, `PLAY_CARD`, `ATTACK`,
+`SPEND_*`) est refusée pendant la phase `DRAW` (`ERROR ILLEGAL_ACTION`), de même
+qu'un `SELECT_DIE` avant la pioche, un second `DRAW_CARD`, un dé inconnu, un dé
+déjà lancé ou le `d20` tant qu'il reste d'autres dés (« *Le d20 se lance toujours
+en dernier* »). Un refus ne change pas l'état : le joueur rechoisit.
 
 Exemples de commandes :
 
@@ -345,6 +363,12 @@ Exemples de commandes :
 
 // Terminer son tour
 { "action": "END_TURN" }
+
+// Phase DRAW (Mini-Feature 5) : piocher la carte du tour (étape AWAITING_DRAW)
+{ "action": "DRAW_CARD" }
+
+// Phase DRAW (Mini-Feature 5) : choisir le dé Gig à lancer (étape AWAITING_DIE_SELECT)
+{ "action": "SELECT_DIE", "dice": ["d8"] }
 
 // Abandonner
 { "action": "CONCEDE" }
@@ -448,7 +472,7 @@ Enveloppe sur `/topic/game/{gameId}/{pseudo}` :
   "phase": "MAIN",
   "gameOver": false,
   "yourPlayerId": "DocHost",
-  "turn": { "number": 1, "activePlayerId": "DocHost" },
+  "turn": { "number": 1, "activePlayerId": "DocHost" },   // + "drawStep" pendant la phase DRAW
   "players": [ /* PlayerStateDTO hôte puis invité, §7.2 */ ],
   "reactionWindow": null,
   "log": [
@@ -478,6 +502,12 @@ Enveloppe sur `/topic/game/{gameId}/{pseudo}` :
 ```
 
 - `phase` : `DRAW` | `MAIN` | `COMBAT` | `END`.
+- `turn.drawStep` (Mini-Feature 5) : présent **uniquement en phase `DRAW`** —
+  `DRAW_START` | `AWAITING_DRAW` | `AWAITING_DIE_SELECT` | `ROLLING_DIE` |
+  `DRAW_COMPLETE`. Seules `AWAITING_DRAW` (le joueur actif doit envoyer
+  `DRAW_CARD`) et `AWAITING_DIE_SELECT` (il doit envoyer `SELECT_DIE`) sont des
+  états d'attente observables ; les autres sont transitoires côté serveur.
+  Exemple : `"turn": { "number": 2, "activePlayerId": "DocGuest", "drawStep": "AWAITING_DRAW" }`.
 - `gameLog` : les dernières entrées du **journal de diagnostic** (feature 6.5,
   50 par défaut) — utile pour amorcer le panneau de debug quand on rejoint une
   partie en cours. Détail des champs en §7.6.
@@ -502,6 +532,7 @@ Enveloppe sur `/topic/game/{gameId}/{pseudo}` :
   "eddiesArea": [ ],
   "legendsArea": [ /* 3 legends : visibles pour soi, masquées chez l'adversaire */ ],
   "gigs": [ ],
+  "gigDice": [ ],
   "fixerDice": [ "d4", "d6", "d8", "d10", "d12", "d20" ],
   "gigCount": 0,
   "streetCred": 0,
@@ -518,7 +549,8 @@ Enveloppe sur `/topic/game/{gameId}/{pseudo}` :
 | `deckCount` | taille de pioche (le contenu n'est jamais exposé) |
 | `hand` / `field` / `trash` / `eddiesArea` / `legendsArea` | les 5 zones de cartes (le deck n'a pas de zone exposée, juste `deckCount`) |
 | `gigs` | valeurs des dés Gig possédés (ex. `[2, 6]`), `gigCount` = `gigs.length` |
-| `fixerDice` | dés pas encore lancés (un dé en moins par tour joué) |
+| `gigDice` | type du dé de chaque Gig, aligné sur `gigs` (ex. `["d4", "d8"]` → « d4 → 2, d8 → 6 ») ; `"?"` pour un Gig obtenu hors lancer (Mini-Feature 5) |
+| `fixerDice` | dés pas encore lancés (un dé en moins par tour joué). Pendant `AWAITING_DIE_SELECT`, les dés proposables sont tous ceux de la liste **sauf `d20`**, ou `d20` seul s'il est le dernier |
 | `eddies` / `availableEddies` | Eddies possédés / immédiatement dépensables |
 | `costDiscount` | réduction de coût courante (effets de cartes) |
 | `hasSoldThisTurn` | garde-fou UI (le serveur applique de toute façon la limite 1/tour) |
@@ -627,7 +659,7 @@ Valeurs possibles de `type` (enum `GameEventType`) :
 | `REACTION_WINDOW_OPENED` / `REACTION_WINDOW_CLOSED` | fenêtre QUICK du défenseur |
 | `UNIT_DEFEATED` | Unit vaincue au combat |
 | `GIG_STOLEN` | vol de Gig réussi |
-| `GIG_ROLLED` | dé Gig lancé en début de tour |
+| `GIG_ROLLED` | dé Gig choisi par le joueur (`SELECT_DIE`) et lancé par le serveur pendant la phase DRAW |
 | `EFFECT_RESOLVED` | résolution d'un effet de carte |
 | `GAME_WON` | fin de partie |
 
@@ -667,7 +699,7 @@ Diffusé sur `/topic/game/{gameId}/log` à chaque action journalisée :
 | `type` | toujours `LOG` (permet de distinguer ce flux d'un `STATE`) |
 | `entries` | entrées **nouvelles uniquement** (`index` strictement croissant) |
 | `result` | `SUCCESS` (vert), `ILLEGAL` (rouge), `FAILED` (orange), `INFO` (jaune) |
-| `actionType` | `PLAY_CARD`, `ATTACK`, `SELL_CARD`, `SPEND_RESOURCE`, `SPEND_LEGEND`, `SPEND_EDDIES`, `END_TURN`, `DRAW`, `GIG_ROLL`, `VICTORY_CHECK`, `VICTORY`, `REACTION_WINDOW`, `UNIT_DEFEATED`, `GIG_STOLEN`, `EFFECT`, `SETUP`, `GAME_START`, `DEBUG_FORCE_PHASE`, `CONCEDE`… |
+| `actionType` | `PLAY_CARD`, `ATTACK`, `SELL_CARD`, `SPEND_RESOURCE`, `SPEND_LEGEND`, `SPEND_EDDIES`, `END_TURN`, `DRAW_CARD`, `SELECT_DIE`, `DRAW_STEP`, `TURN_RESET`, `DRAW`, `GIG_ROLL`, `VICTORY_CHECK`, `VICTORY`, `REACTION_WINDOW`, `UNIT_DEFEATED`, `GIG_STOLEN`, `EFFECT`, `SETUP`, `GAME_START`, `DEBUG_FORCE_PHASE`, `CONCEDE`… |
 
 Différence avec `log` (journal public `GameEvent`) : le journal de diagnostic
 consigne **aussi les refus** et les vérifications internes, avec leur motif
@@ -781,7 +813,14 @@ doit corréler via `clientRequestId`.
 18. S    → STATE aux deux (sequence=2, newEvents=[CARD_SOLD], clientRequestId=a1 pour Val)
 
 19. Val   SEND /app/game/{gameId}/action  { "action": "END_TURN" }
-20. S    → STATE aux deux (tour 2, Johnny actif, Gig d4 lancé, newEvents=6 entrées)
+20. S    → STATE aux deux (tour 2, Johnny actif, phase DRAW, turn.drawStep=AWAITING_DRAW :
+            cartes redressées, rien de pioché ni lancé)
+20a. Johnny SEND action { "action": "DRAW_CARD" }
+     S    → STATE aux deux (newEvents=[CARD_DRAWN], drawStep=AWAITING_DIE_SELECT)
+20b. Johnny SEND action { "action": "SELECT_DIE", "dice": ["d20"] }
+     S    → /user/queue/errors ERROR ILLEGAL_ACTION "Le d20 se lance toujours en dernier…"
+20c. Johnny SEND action { "action": "SELECT_DIE", "dice": ["d4"] }
+     S    → STATE aux deux (newEvents=[GIG_ROLLED, PHASE_CHANGED], phase MAIN, gigs=[2], gigDice=["d4"])
 
 21. Johnny (encore tour 1 logique) SEND action PLAY_CARD
     S    → /user/queue/errors ERROR ILLEGAL_ACTION "Ce n'est pas le tour de …"

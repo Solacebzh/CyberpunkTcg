@@ -133,8 +133,10 @@ class SpendResourceCommandTest {
         assertThat(sold.isExhausted()).isTrue();
         assertThat(p1.getEddies()).isEqualTo(1);
 
-        new EndTurnCommand("p1").execute(state);
-        new EndTurnCommand("p2").execute(state);
+        // Mini-Feature 5 : chaque fin de tour est suivie de la phase DRAW interactive
+        // du joueur entrant (pioche + choix du dé), jouée ici par la fixture.
+        GameFixtures.passTurn(state, "p1");
+        GameFixtures.passTurn(state, "p2");
 
         // START PHASE : carte redressée, réserve d'Eddies remise à 0 (R2).
         assertThat(sold.isExhausted()).isFalse();

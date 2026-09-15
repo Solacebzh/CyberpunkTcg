@@ -3,12 +3,15 @@ package com.cyberpunktcg.service;
 import com.cyberpunktcg.api.dto.ws.GameCommandDTO;
 import com.cyberpunktcg.engine.GameRuleException;
 import com.cyberpunktcg.engine.command.AttackCommand;
+import com.cyberpunktcg.engine.command.DrawCardCommand;
 import com.cyberpunktcg.engine.command.EndTurnCommand;
 import com.cyberpunktcg.engine.command.PlayCardCommand;
+import com.cyberpunktcg.engine.command.SelectDieCommand;
 import com.cyberpunktcg.engine.command.SellCardCommand;
 import com.cyberpunktcg.engine.command.SpendResourceCommand;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -98,6 +101,37 @@ class ActionCommandFactoryTest {
         assertThat(factory.build(new GameCommandDTO("end_turn", null, null, null,
                 null, null, null, null, null), "V"))
                 .isInstanceOf(EndTurnCommand.class);
+    }
+
+    @Test
+    void drawCard_etSelectDie_phaseDrawInteractive() {
+        // Mini-Feature 5 : pioche du tour (aucune cible) — playerId injecté depuis la session.
+        DrawCardCommand draw = (DrawCardCommand) factory.build(new GameCommandDTO("draw_card", null, null, null,
+                null, null, null, null, "req-draw"), "V");
+        assertThat(draw.getPlayerId()).isEqualTo("V");
+        assertThat(draw.actionType()).isEqualTo("DRAW_CARD");
+
+        // Choix du dé : transmis dans dice[0], normalisé en minuscules.
+        SelectDieCommand select = (SelectDieCommand) factory.build(new GameCommandDTO("SELECT_DIE", null, null, null,
+                null, null, null, List.of("D8"), null), "V");
+        assertThat(select.getPlayerId()).isEqualTo("V");
+        assertThat(select.getDie()).isEqualTo("d8");
+        assertThat(select.actionType()).isEqualTo("SELECT_DIE");
+
+        // Repli : le dé peut aussi arriver dans 'chosen'.
+        SelectDieCommand chosen = (SelectDieCommand) factory.build(new GameCommandDTO("select_die", null, null, null,
+                "d20", null, null, null, null), "V");
+        assertThat(chosen.getDie()).isEqualTo("d20");
+
+        // Dé obligatoire.
+        assertThatThrownBy(() -> factory.build(new GameCommandDTO("SELECT_DIE", null, null, null,
+                null, null, null, null, null), "V"))
+                .isInstanceOf(GameRuleException.class)
+                .hasMessageContaining("dice");
+        assertThatThrownBy(() -> factory.build(new GameCommandDTO("SELECT_DIE", null, null, null,
+                " ", null, null, List.of(), null), "V"))
+                .isInstanceOf(GameRuleException.class)
+                .hasMessageContaining("dice");
     }
 
     @Test

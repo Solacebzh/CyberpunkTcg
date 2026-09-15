@@ -39,6 +39,29 @@
   }
 }
 
+/* Mini-Feature 5 : invitations à cliquer (pioche, dés) pendant la phase DRAW */
+@keyframes deck-invite {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+    box-shadow: 0 0 0 0 rgba(252, 238, 10, 0.55);
+  }
+  50% {
+    transform: translateY(-4px) scale(1.03);
+    box-shadow: 0 0 0 6px rgba(252, 238, 10, 0);
+  }
+}
+
+@keyframes die-invite {
+  0%,
+  100% {
+    box-shadow: 0 0 6px rgba(5, 217, 232, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 16px rgba(5, 217, 232, 0.8);
+  }
+}
+
 /* --- Base --- */
 @layer base {
   html {
@@ -467,6 +490,36 @@
     opacity: 0.32;
   }
 
+  /* Mini-Feature 5 : choix du dé Gig (phase DRAW, étape AWAITING_DIE_SELECT) */
+  .fixer-die__shape--selectable {
+    cursor: pointer;
+    border-color: var(--color-cyber-cyan);
+    color: var(--color-cyber-cyan);
+    box-shadow: 0 0 12px rgba(5, 217, 232, 0.55);
+    animation: die-invite 1.4s ease-in-out infinite;
+  }
+
+  .fixer-die__shape--selectable:hover,
+  .fixer-die__shape--selectable:focus-visible {
+    transform: scale(1.15);
+    background: rgba(5, 217, 232, 0.18);
+    outline: none;
+  }
+
+  /* Dé prêt mais interdit pour l'instant (le d20 tant qu'il reste d'autres dés) */
+  .fixer-die__shape--locked {
+    cursor: not-allowed;
+    opacity: 0.4;
+    border-color: var(--color-cyber-line);
+    color: #64748b;
+    box-shadow: none;
+  }
+
+  .fixer-area[data-selecting='true'] {
+    border-radius: 0.5rem;
+    box-shadow: 0 0 0 1px rgba(5, 217, 232, 0.45), 0 0 18px rgba(5, 217, 232, 0.25);
+  }
+
   .fixer-die__value {
     font-family: var(--font-mono);
     font-size: 0.6rem;
@@ -586,6 +639,88 @@
     background: var(--color-cyber-bg);
     font-size: 0.6rem;
     color: #cbd5e1;
+  }
+
+  /* Mini-Feature 5 : la pioche attend le clic du joueur (phase DRAW, AWAITING_DRAW) */
+  .card-pile--clickable {
+    cursor: pointer;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    border-radius: 0.75rem;
+    animation: deck-invite 1.6s ease-in-out infinite;
+  }
+
+  .card-pile--clickable:hover,
+  .card-pile--clickable:focus-visible {
+    animation-play-state: paused;
+    transform: translateY(-3px) scale(1.04);
+    outline: none;
+    box-shadow: 0 0 0 2px var(--color-cyber-yellow), 0 0 26px rgba(252, 238, 10, 0.55);
+  }
+
+  .card-pile__cta {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    padding: 0.15rem 0.5rem;
+    border: 1px solid var(--color-cyber-yellow);
+    border-radius: 999px;
+    background: rgba(10, 10, 18, 0.92);
+    font-size: 0.6rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--color-cyber-yellow);
+    pointer-events: none;
+  }
+
+  /* Bandeau de guidage de la phase DRAW interactive */
+  .draw-guide {
+    border-color: rgba(252, 238, 10, 0.75);
+    box-shadow: 0 0 22px rgba(252, 238, 10, 0.25);
+  }
+
+  .draw-guide[data-step='AWAITING_DIE_SELECT'] {
+    border-color: rgba(5, 217, 232, 0.75);
+    box-shadow: 0 0 22px rgba(5, 217, 232, 0.25);
+  }
+
+  .draw-guide__dice {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .draw-guide__die {
+    display: grid;
+    place-items: center;
+    min-width: 3rem;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--color-cyber-cyan);
+    border-radius: 0.5rem;
+    background: rgba(5, 217, 232, 0.08);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--color-cyber-cyan);
+    cursor: pointer;
+    transition: transform 0.15s ease, background 0.15s ease;
+  }
+
+  .draw-guide__die:hover:not(:disabled),
+  .draw-guide__die:focus-visible:not(:disabled) {
+    transform: translateY(-2px) scale(1.06);
+    background: rgba(5, 217, 232, 0.22);
+    outline: none;
+  }
+
+  .draw-guide__die:disabled {
+    cursor: not-allowed;
+    opacity: 0.35;
+    border-color: var(--color-cyber-line);
+    color: #64748b;
+    background: rgba(0, 0, 0, 0.35);
   }
 
   /* --- Eddies Area : rangée de cartes face cachée, inclinables pour +1 Eddie (R4) --- */

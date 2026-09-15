@@ -15,7 +15,9 @@ import { useUiStore } from '@/stores/ui'
 import type { CardKeyword } from '@/types/card'
 import {
   GIGS_TO_WIN,
+  selectableFixerDice,
   type CardInstance,
+  type DrawStep,
   type GameActionLogEntry,
   type GameLogEntry,
   type GameLogMessage,
@@ -151,11 +153,48 @@ export const useGameStore = defineStore('game', () => {
     () => !!state.value && !isGameOver.value && (isMyTurn.value || iAmReacting.value) && isActionPhase.value,
   )
   const isActionPhase = computed(() => phase.value === 'MAIN' || phase.value === 'COMBAT')
-  const canEndTurn = computed(() => !!state.value && !isGameOver.value && isMyTurn.value && !waitingForServer.value)
+
+  // --- Phase DRAW interactive (Mini-Feature 5, miroir de DrawPhaseHandler) ---
+  const isDrawPhase = computed(() => phase.value === 'DRAW')
+  /** Sous-étape serveur de la phase DRAW (`null` hors DRAW). */
+  const drawStep = computed<DrawStep | null>(() => (isDrawPhase.value ? (state.value?.turn.drawStep ?? null) : null))
+  /** C'est à moi de cliquer sur ma pioche. */
+  const awaitingMyDraw = computed(
+    () => !isGameOver.value && isMyTurn.value && isDrawPhase.value && drawStep.value === 'AWAITING_DRAW',
+  )
+  /** C'est à moi de choisir le dé Gig à lancer. */
+  const awaitingMyDieSelect = computed(
+    () => !isGameOver.value && isMyTurn.value && isDrawPhase.value && drawStep.value === 'AWAITING_DIE_SELECT',
+  )
+  /** Une action de phase DRAW est attendue de ma part (bandeau de guidage). */
+  const awaitingMyDrawAction = computed(() => awaitingMyDraw.value || awaitingMyDieSelect.value)
+  const canDrawNow = computed(() => awaitingMyDraw.value && !waitingForServer.value)
+  /** Dés que je peux choisir maintenant (règle du d20 en dernier), vide hors AWAITING_DIE_SELECT. */
+  const selectableDice = computed<string[]>(() =>
+    awaitingMyDieSelect.value ? selectableFixerDice(me.value?.fixerDice ?? []) : [],
+  )
+
+  const canEndTurn = computed(
+    () => !!state.value && !isGameOver.value && isMyTurn.value && !isDrawPhase.value && !waitingForServer.value,
+  )
   const canSell = computed(
     () => !!me.value && !isGameOver.value && isMyTurn.value && phase.value === 'MAIN' && !me.value.hasSoldThisTurn,
   )
   const gigsToWin = GIGS_TO_WIN
+
+  /** Pourquoi un dé de la Fixer Area n'est pas cliquable (`null` = sélectionnable). */
+  function canSelectDie(die: string): Affordance {
+    if (!state.value) return 'État de partie indisponible'
+    if (isGameOver.value) return 'Partie terminée'
+    if (!isMyTurn.value) return `Ce n’est pas ton tour (${activePlayerId.value ?? '?'} joue)`
+    if (!isDrawPhase.value || drawStep.value !== 'AWAITING_DIE_SELECT') {
+      return drawStep.value === 'AWAITING_DRAW' ? 'Pioche d’abord ta carte' : 'Le choix du dé se fait en phase de pioche'
+    }
+    if (!(me.value?.fixerDice ?? []).includes(die)) return 'Ce dé a déjà été lancé'
+    if (!selectableDice.value.includes(die)) return 'Le d20 se lance toujours en dernier'
+    if (waitingForServer.value) return 'En attente du serveur…'
+    return null
+  }
 
   /**
    * Mini-Feature 4 (R4) — générer des Eddies : miroir des gardes serveur de
@@ -507,10 +546,48 @@ export const useGameStore = defineStore('game', () => {
 
   function endTurn(): boolean {
     if (!canEndTurn.value) {
-      ui.warn(isMyTurn.value ? 'Fin de tour indisponible pour le moment' : 'Ce n’est pas ton tour')
+      if (!isMyTurn.value) ui.warn('Ce n’est pas ton tour')
+      else if (isDrawPhase.value) {
+        ui.warn(
+          drawStep.value === 'AWAITING_DIE_SELECT'
+            ? 'Choisis d’abord ton dé Gig'
+            : 'Pioche d’abord ta carte pour commencer ton tour',
+        )
+      } else ui.warn('Fin de tour indisponible pour le moment')
       return false
     }
     const sent = dispatch({ action: 'END_TURN' })
+    if (sent) clearSelection()
+    return sent
+  }
+
+  /** Mini-Feature 5 : clic sur la pioche pendant `AWAITING_DRAW`. */
+  function drawCard(): boolean {
+    if (!awaitingMyDraw.value) {
+      ui.warn(
+        !isMyTurn.value
+          ? 'Ce n’est pas ton tour'
+          : drawStep.value === 'AWAITING_DIE_SELECT'
+            ? 'Carte déjà piochée : choisis ton dé Gig'
+            : 'La pioche se fait au début de ton tour',
+      )
+      return false
+    }
+    if (waitingForServer.value) return false
+    const sent = dispatch({ action: 'DRAW_CARD' })
+    if (sent) clearSelection()
+    return sent
+  }
+
+  /** Mini-Feature 5 : choix du dé Gig pendant `AWAITING_DIE_SELECT` (le serveur lance). */
+  function selectDie(die: string): boolean {
+    const normalized = die.trim().toLowerCase()
+    const reason = canSelectDie(normalized)
+    if (reason) {
+      ui.warn(reason)
+      return false
+    }
+    const sent = dispatch({ action: 'SELECT_DIE', dice: [normalized] })
     if (sent) clearSelection()
     return sent
   }
@@ -669,9 +746,18 @@ export const useGameStore = defineStore('game', () => {
     canEndTurn,
     canSell,
     gigsToWin,
+    // phase DRAW interactive (Mini-Feature 5)
+    isDrawPhase,
+    drawStep,
+    awaitingMyDraw,
+    awaitingMyDieSelect,
+    awaitingMyDrawAction,
+    canDrawNow,
+    selectableDice,
     // ergonomie
     canPlayCard,
     canSpendCard,
+    canSelectDie,
     canAttackWith,
     canEquipGear,
     canStealGig,
@@ -688,6 +774,8 @@ export const useGameStore = defineStore('game', () => {
     sellCard,
     spendResource,
     endTurn,
+    drawCard,
+    selectDie,
     concede,
     beginAttack,
     beginEquip,

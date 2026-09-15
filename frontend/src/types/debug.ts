@@ -16,6 +16,8 @@ export interface DebugPlayerState {
   costDiscount: number
   hasSoldThisTurn: boolean
   gigs: number[]
+  /** Type du dé de chaque Gig (aligné sur `gigs`). */
+  gigDice?: string[]
   gigCount: number
   streetCred: number
   fixerDice: string[]
@@ -44,6 +46,8 @@ export interface DebugGameState {
   gameId: string
   turnNumber: number
   phase: string
+  /** Sous-étape de la phase DRAW interactive (Mini-Feature 5), absente hors DRAW. */
+  drawStep?: string | null
   activePlayerId: string
   gameOver: boolean
   winnerId?: string | null

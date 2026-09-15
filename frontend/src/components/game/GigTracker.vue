@@ -22,6 +22,8 @@ const props = withDefaults(
     gigCount: number
     /** Valeurs des dés Gig possédés (ex. `[2, 6]`). */
     gigs: number[]
+    /** Type du dé de chaque Gig, aligné sur `gigs` (Mini-Feature 5 : « d8 → 5 »). */
+    gigDice?: string[]
     /** Dés de la Fixer Area pas encore lancés. */
     fixerDice: string[]
     streetCred: number
@@ -29,11 +31,17 @@ const props = withDefaults(
     fixerTotal?: number
     target?: number
   }>(),
-  { fixerTotal: 6, target: GIGS_TO_WIN },
+  { gigDice: () => [], fixerTotal: 6, target: GIGS_TO_WIN },
 )
 
 const pips = computed(() => Array.from({ length: props.target }, (_, index) => index))
 const leading = computed(() => props.gigCount >= props.target)
+
+/** Type de dé lisible du Gig n° `index` (`null` si inconnu : vol, ancien serveur). */
+function dieOf(index: number): string | null {
+  const die = props.gigDice[index]
+  return die && die !== '?' ? die : null
+}
 </script>
 
 <template>
@@ -75,9 +83,10 @@ const leading = computed(() => props.gigCount >= props.target)
           v-for="(value, index) in gigs"
           :key="`${side}-gig-${index}`"
           class="cyber-chip border-cyber-yellow/50 text-cyber-yellow"
-          :title="`Dé Gig de valeur ${value}`"
+          :data-gig-die="dieOf(index) ?? undefined"
+          :title="dieOf(index) ? `Gig : ${dieOf(index)} → ${value}` : `Dé Gig de valeur ${value}`"
         >
-          {{ value }}
+          <span v-if="dieOf(index)" class="text-slate-400">{{ dieOf(index) }}·</span>{{ value }}
         </li>
       </ul>
       <span v-else class="font-mono text-[0.6rem] text-slate-600">aucun Gig</span>

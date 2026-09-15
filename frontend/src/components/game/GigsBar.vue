@@ -33,6 +33,7 @@ function isActive(player: PlayerState | null): boolean {
         :player-name="opponent.name"
         :gig-count="opponent.gigCount"
         :gigs="opponent.gigs"
+        :gig-dice="opponent.gigDice ?? []"
         :fixer-dice="opponent.fixerDice"
         :street-cred="opponent.streetCred"
       />
@@ -49,6 +50,7 @@ function isActive(player: PlayerState | null): boolean {
         :player-name="me.name"
         :gig-count="me.gigCount"
         :gigs="me.gigs"
+        :gig-dice="me.gigDice ?? []"
         :fixer-dice="me.fixerDice"
         :street-cred="me.streetCred"
       />

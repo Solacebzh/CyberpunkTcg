@@ -2,19 +2,29 @@
 /** Indicateur de phase (Draw → Main → Combat → End) et de tour courant. */
 import { computed } from 'vue'
 
-import { PHASE_HINTS, PHASE_LABELS, PHASE_ORDER, type Phase } from '@/types/game'
+import { DRAW_STEP_HINTS, DRAW_STEP_LABELS, PHASE_HINTS, PHASE_LABELS, PHASE_ORDER, type DrawStep, type Phase } from '@/types/game'
 
-const props = defineProps<{
-  phase: Phase | null
-  turnNumber: number
-  isMyTurn: boolean
-  activePlayerName: string
-  gameOver: boolean
-  waiting?: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    phase: Phase | null
+    turnNumber: number
+    isMyTurn: boolean
+    activePlayerName: string
+    gameOver: boolean
+    waiting?: boolean
+    /** Mini-Feature 5 : sous-étape de la phase DRAW interactive (`null` hors DRAW). */
+    drawStep?: DrawStep | null
+  }>(),
+  { waiting: false, drawStep: null },
+)
 
 const currentIndex = computed(() => (props.phase ? PHASE_ORDER.indexOf(props.phase) : -1))
-const hint = computed(() => (props.phase ? PHASE_HINTS[props.phase] : ''))
+const hint = computed(() => {
+  if (props.phase === 'DRAW' && props.drawStep) {
+    return props.isMyTurn ? DRAW_STEP_HINTS[props.drawStep] : `${DRAW_STEP_LABELS[props.drawStep].toLowerCase()} (${props.activePlayerName})`
+  }
+  return props.phase ? PHASE_HINTS[props.phase] : ''
+})
 </script>
 
 <template>
@@ -33,6 +43,7 @@ const hint = computed(() => (props.phase ? PHASE_HINTS[props.phase] : ''))
       >
         <span
           class="rounded-sm border px-2 py-1 font-mono text-[0.6rem] uppercase tracking-widest transition"
+          :data-draw-step="step === 'DRAW' && step === phase ? drawStep : undefined"
           :class="
             step === phase
               ? 'border-cyber-cyan bg-cyber-cyan/15 text-cyber-cyan shadow-[0_0_14px_rgba(5,217,232,0.4)]'

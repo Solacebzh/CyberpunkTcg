@@ -2,13 +2,16 @@ package com.cyberpunktcg.engine;
 
 import com.cyberpunktcg.domain.card.CardKeyword;
 import com.cyberpunktcg.domain.game.CardInstance;
+import com.cyberpunktcg.domain.game.DrawStep;
 import com.cyberpunktcg.domain.game.GameEventType;
 import com.cyberpunktcg.domain.game.GameState;
 import com.cyberpunktcg.domain.game.Phase;
 import com.cyberpunktcg.domain.game.Zone;
 import com.cyberpunktcg.engine.command.AttackCommand;
+import com.cyberpunktcg.engine.command.DrawCardCommand;
 import com.cyberpunktcg.engine.command.EndTurnCommand;
 import com.cyberpunktcg.engine.command.PlayCardCommand;
+import com.cyberpunktcg.engine.command.SelectDieCommand;
 import com.cyberpunktcg.engine.command.SellCardCommand;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -196,8 +199,8 @@ class GameCommandTest {
                 .isInstanceOf(GameRuleException.class)
                 .hasMessageContaining("vente");
 
-        new EndTurnCommand("p1").execute(state);
-        new EndTurnCommand("p2").execute(state);
+        GameFixtures.passTurn(state, "p1");
+        GameFixtures.passTurn(state, "p2");
         new SellCardCommand("p1", second.getInstanceId()).execute(state);
         // R2 : les Eddies ne se reportent pas — la réserve retombe à 0 en début de
         // tour ; cette seconde vente ne crédite rien non plus, elle ajoute seulement
@@ -223,27 +226,40 @@ class GameCommandTest {
     }
 
     @Test
-    void endTurn_piocheLanceUnGigEtPasseEnMain() {
+    void endTurn_ouvreLaPhaseDrawInteractive_puisPiocheEtGigSurActionDuJoueur() {
         int deck = state.getPlayer("p2").getDeck().size();
 
         new EndTurnCommand("p1").execute(state);
 
+        // Mini-Feature 5 : la fin de tour s'arrête en phase DRAW, en attente de la pioche.
         assertThat(state.getTurn().getNumber()).isEqualTo(2);
         assertThat(state.getTurn().getActivePlayerId()).isEqualTo("p2");
-        assertThat(state.getPhase()).isEqualTo(Phase.MAIN);
+        assertThat(state.getPhase()).isEqualTo(Phase.DRAW);
+        assertThat(state.getDrawStep()).isEqualTo(DrawStep.AWAITING_DRAW);
+        assertThat(state.getPlayer("p2").getHand()).isEmpty();
+        assertThat(state.getPlayer("p2").getGigs()).isEmpty();
+        assertThat(state.isReactionWindowOpen()).isFalse();
+
+        new DrawCardCommand("p2").execute(state);
+        assertThat(state.getDrawStep()).isEqualTo(DrawStep.AWAITING_DIE_SELECT);
         assertThat(state.getPlayer("p2").getHand()).hasSize(1);
         assertThat(state.getPlayer("p2").getDeck()).hasSize(deck - 1);
+
+        new SelectDieCommand("p2", "d4").execute(state);
+        assertThat(state.getPhase()).isEqualTo(Phase.MAIN);
+        assertThat(state.getDrawStep()).isNull();
         assertThat(state.getPlayer("p2").getGigs()).hasSize(1);
         assertThat(state.getPlayer("p2").getGigs().get(0)).isBetween(1, 4);
         assertThat(state.getPlayer("p2").getFixerDice()).hasSize(5);
-        assertThat(state.isReactionWindowOpen()).isFalse();
     }
 
     @Test
-    void endTurn_deckVide_defaiteImmediate() {
+    void endTurn_deckVide_defaiteALaPioche() {
         state.getPlayer("p2").getDeck().clear();
 
         new EndTurnCommand("p1").execute(state);
+        assertThat(state.isGameOver()).isFalse();
+        new DrawCardCommand("p2").execute(state);
 
         assertThat(state.isGameOver()).isTrue();
         assertThat(state.getWinnerId()).isEqualTo("p1");

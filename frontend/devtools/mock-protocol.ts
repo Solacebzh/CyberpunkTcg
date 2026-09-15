@@ -80,11 +80,16 @@ interface MockPlayer {
   eddiesArea: Instance[]
   legendsArea: Instance[]
   gigs: number[]
+  /** Type du dé de chaque Gig, aligné sur `gigs` (Mini-Feature 5). */
+  gigDice: string[]
   fixerDice: string[]
   eddies: number
   costDiscount: number
   hasSoldThisTurn: boolean
 }
+
+/** Sous-étapes de la phase DRAW interactive (miroir de `DrawStep.java`). */
+type DrawStep = 'DRAW_START' | 'AWAITING_DRAW' | 'AWAITING_DIE_SELECT' | 'ROLLING_DIE' | 'DRAW_COMPLETE'
 
 interface LogEntry {
   index: number
@@ -112,7 +117,7 @@ interface MockGame {
   gameOver: boolean
   winnerId: string | null
   endReason: string | null
-  turn: { number: number; activePlayerId: string }
+  turn: { number: number; activePlayerId: string; drawStep: DrawStep | null }
   reactionWindow: { kind: string; defendingPlayerId: string; attackerInstanceId: string } | null
   players: MockPlayer[]
   log: LogEntry[]
@@ -172,6 +177,9 @@ interface ActionPayload {
   instanceId?: string | null
   targetInstanceId?: string | null
   clientRequestId?: string | null
+  /** `SELECT_DIE` : dé choisi en première position (`['d6']`). */
+  dice?: string[] | null
+  chosen?: string | null
   [key: string]: unknown
 }
 
@@ -183,6 +191,8 @@ const STARTING_HAND = 6
 const REQUIRED_LEGENDS = 3
 const REQUIRED_NON_LEGENDS = 10
 const DIE_FACES: Record<string, number> = { d4: 4, d6: 6, d8: 8, d10: 10, d12: 12, d20: 20 }
+/** Le d20 se lance toujours en dernier (règle officielle § START PHASE). */
+const LAST_DIE = 'd20'
 const ROOM_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
 /**
  * Zones internes → zones du **protocole** (`ZoneName`, alignées sur `ZoneDTO` Java).
@@ -742,7 +752,7 @@ export class MockGameServer {
       gameOver: false,
       winnerId: null,
       endReason: null,
-      turn: { number: 1, activePlayerId: host },
+      turn: { number: 1, activePlayerId: host, drawStep: null },
       reactionWindow: null,
       players: [buildPlayer(host, deckHost, this), buildPlayer(guest, deckGuest, this)],
       log: [],
@@ -884,6 +894,14 @@ export class MockGameServer {
       case 'END_TURN':
         this.endTurn(game, pseudo)
         break
+      case 'DRAW_CARD':
+        // Mini-Feature 5 : clic sur la pioche pendant AWAITING_DRAW.
+        this.drawCard(game, pseudo)
+        break
+      case 'SELECT_DIE':
+        // Mini-Feature 5 : choix du dé Gig pendant AWAITING_DIE_SELECT.
+        this.selectDie(game, pseudo, payload)
+        break
       case 'CONCEDE': {
         const rival = this.opponent(game, pseudo)
         game.winnerId = rival.playerId
@@ -1013,8 +1031,11 @@ export class MockGameServer {
     appendEvent(game, 'REACTION_WINDOW_OPENED', rival.playerId, 'fenêtre de réaction ouverte (QUICK uniquement)')
 
     if (steal) {
-      const stolen = rival.gigs.splice(rival.gigs.indexOf(Math.max(...rival.gigs)), 1)[0] as number
+      const stolenIndex = rival.gigs.indexOf(Math.max(...rival.gigs))
+      const stolen = rival.gigs.splice(stolenIndex, 1)[0] as number
+      const stolenDie = rival.gigDice.splice(stolenIndex, 1)[0] ?? '?'
       player.gigs.push(stolen)
+      player.gigDice.push(stolenDie)
       appendEvent(game, 'GIG_STOLEN', pseudo, `vol d’un Gig de valeur ${stolen} (total ${player.gigs.length})`)
       return
     }
@@ -1069,8 +1090,21 @@ export class MockGameServer {
     appendEvent(game, 'EFFECT_RESOLVED', pseudo, `${found.card.name} inclinée (+1 Eddie)`)
   }
 
+  /**
+   * Fin de tour — Mini-Feature 5 : la phase DRAW du joueur entrant est
+   * **interactive** (miroir de `EndTurnCommand` + `DrawPhaseHandler`). Le tour
+   * s'arrête à l'étape `AWAITING_DRAW` : rien n'est pioché ni lancé tant que le
+   * joueur n'a pas envoyé `DRAW_CARD` puis `SELECT_DIE`.
+   */
   endTurn(game: MockGame, pseudo: string): void {
     requireActive(game, pseudo)
+    if (game.phase === 'DRAW') {
+      throw new RuleError(
+        game.turn.drawStep === 'AWAITING_DIE_SELECT'
+          ? 'Impossible de terminer le tour pendant la phase Draw : choisissez d’abord votre dé Gig'
+          : 'Impossible de terminer le tour pendant la phase Draw : piochez d’abord votre carte',
+      )
+    }
     const outgoing = this.player(game, pseudo)
     const incoming = this.opponent(game, pseudo)
 
@@ -1087,7 +1121,13 @@ export class MockGameServer {
     game.turn.activePlayerId = incoming.playerId
     appendEvent(game, 'TURN_STARTED', incoming.playerId, `début du tour ${game.turn.number}`)
 
+    // DRAW_START : le tour commence (état transitoire, comme côté serveur).
+    game.phase = 'DRAW'
+    game.turn.drawStep = 'DRAW_START'
+    appendEvent(game, 'PHASE_CHANGED', incoming.playerId, 'phase Draw')
+
     if (incoming.gigs.length >= GIGS_TO_WIN) {
+      game.turn.drawStep = null
       game.winnerId = incoming.playerId
       game.endReason = `victoire : ${incoming.playerId} commence son tour avec ${incoming.gigs.length} Gigs`
       game.gameOver = true
@@ -1095,31 +1135,80 @@ export class MockGameServer {
       return
     }
 
-    game.phase = 'DRAW'
+    // Redressement (Legends, Eddies, Field), Eddies à 0 — puis on ATTEND le clic sur la pioche.
     startTurn(outgoing)
     startTurn(incoming)
+    game.turn.drawStep = 'AWAITING_DRAW'
+    appendActionLog(game, {
+      playerId: incoming.playerId,
+      actionType: 'DRAW_STEP',
+      description: `Phase DRAW : Joueur ${incoming.playerId} doit cliquer sur sa pioche (AWAITING_DRAW)`,
+      result: 'INFO',
+      details: { drawStep: 'AWAITING_DRAW' },
+    })
+  }
 
-    const drawn = incoming.deck.shift()
+  /** Mini-Feature 5 : `DRAW_CARD` — pioche 1 carte, deck vide = défaite immédiate. */
+  drawCard(game: MockGame, pseudo: string): void {
+    requireActive(game, pseudo)
+    requireDrawStep(game, 'AWAITING_DRAW')
+    const player = this.player(game, pseudo)
+    const rival = this.opponent(game, pseudo)
+
+    const drawn = player.deck.shift()
     if (!drawn) {
-      game.winnerId = outgoing.playerId
-      game.endReason = `Deck épuisé : ${incoming.playerId} ne peut plus piocher`
+      game.turn.drawStep = null
+      game.winnerId = rival.playerId
+      game.endReason = `Deck épuisé : ${player.playerId} ne peut plus piocher`
       game.gameOver = true
-      appendEvent(game, 'GAME_WON', outgoing.playerId, game.endReason)
+      appendEvent(game, 'GAME_WON', rival.playerId, game.endReason)
       return
     }
     drawn.zone = 'HAND'
-    incoming.hand.push(drawn)
-    appendEvent(game, 'CARD_DRAWN', incoming.playerId, 'pioche 1 carte')
+    player.hand.push(drawn)
+    appendEvent(game, 'CARD_DRAWN', pseudo, 'pioche 1 carte')
 
-    const die = incoming.fixerDice.shift()
-    if (die) {
-      const value = 1 + Math.floor(this.random() * (DIE_FACES[die] ?? 6))
-      incoming.gigs.push(value)
-      appendEvent(game, 'GIG_ROLLED', incoming.playerId, `lancer ${die} → ${value} (total ${incoming.gigs.length} Gigs)`)
+    if (selectableDice(player).length === 0) {
+      this.completeDrawPhase(game, pseudo)
+      return
     }
+    game.turn.drawStep = 'AWAITING_DIE_SELECT'
+    appendActionLog(game, {
+      playerId: pseudo,
+      actionType: 'DRAW_STEP',
+      description: `Phase DRAW : Joueur ${pseudo} doit choisir son dé Gig (AWAITING_DIE_SELECT)`,
+      result: 'INFO',
+      details: { drawStep: 'AWAITING_DIE_SELECT', selectable: selectableDice(player) },
+    })
+  }
 
+  /** Mini-Feature 5 : `SELECT_DIE` — d20 seulement en dernier, le serveur lance. */
+  selectDie(game: MockGame, pseudo: string, payload: ActionPayload): void {
+    requireActive(game, pseudo)
+    requireDrawStep(game, 'AWAITING_DIE_SELECT')
+    const player = this.player(game, pseudo)
+    const raw = payload.dice?.[0] ?? payload.chosen ?? ''
+    const die = String(raw).trim().toLowerCase()
+    if (!die) throw new RuleError('SELECT_DIE exige le dé à lancer dans ’dice’')
+    if (!(die in DIE_FACES)) throw new RuleError(`Dé Gig inconnu : ${die}`)
+    if (!player.fixerDice.includes(die)) throw new RuleError(`Le ${die} n’est plus dans la Fixer Area`)
+    if (!selectableDice(player).includes(die)) throw new RuleError('Le d20 se lance toujours en dernier')
+
+    game.turn.drawStep = 'ROLLING_DIE'
+    player.fixerDice.splice(player.fixerDice.indexOf(die), 1)
+    const value = 1 + Math.floor(this.random() * (DIE_FACES[die] ?? 6))
+    player.gigs.push(value)
+    player.gigDice.push(die)
+    appendEvent(game, 'GIG_ROLLED', pseudo, `lancer ${die} → ${value} (total ${player.gigs.length} Gigs)`)
+    this.completeDrawPhase(game, pseudo)
+  }
+
+  /** DRAW_COMPLETE → phase MAIN (automatique). */
+  completeDrawPhase(game: MockGame, pseudo: string): void {
+    game.turn.drawStep = 'DRAW_COMPLETE'
     game.phase = 'MAIN'
-    appendEvent(game, 'PHASE_CHANGED', incoming.playerId, 'phase Main')
+    game.turn.drawStep = null
+    appendEvent(game, 'PHASE_CHANGED', pseudo, 'phase Main')
   }
 
   // --- Diffusion d'état ---
@@ -1226,6 +1315,7 @@ function buildPlayer(pseudo: string, deckIds: string[], server: MockGameServer):
     eddiesArea: [],
     legendsArea: legends.map((card) => newInstance(card, pseudo, 'LEGENDS_AREA', { faceDown: true })),
     gigs: [],
+    gigDice: [],
     fixerDice: ['d4', 'd6', 'd8', 'd10', 'd12', 'd20'],
     eddies: 0,
     costDiscount: 0,
@@ -1290,6 +1380,27 @@ function requireActive(game: MockGame, pseudo: string): void {
   if (game.turn.activePlayerId !== pseudo) throw new RuleError(`Ce n’est pas le tour de ${pseudo}`)
 }
 
+/** Mini-Feature 5 : l'action n'est acceptée qu'à l'étape DRAW attendue. */
+function requireDrawStep(game: MockGame, expected: DrawStep): void {
+  if (game.phase !== 'DRAW') {
+    throw new RuleError(`Cette action n’est possible qu’en phase Draw (phase courante : ${game.phase})`)
+  }
+  if (game.turn.drawStep !== expected) {
+    throw new RuleError(
+      expected === 'AWAITING_DRAW'
+        ? `La pioche n’est attendue qu’à l’étape AWAITING_DRAW (étape courante : ${game.turn.drawStep ?? '—'})`
+        : `Le choix du dé n’est attendu qu’à l’étape AWAITING_DIE_SELECT (piochez d’abord) (étape courante : ${game.turn.drawStep ?? '—'})`,
+    )
+  }
+}
+
+/** Miroir de `Player.selectableFixerDice()` : tout sauf le d20, ou le d20 seul en dernier. */
+function selectableDice(player: MockPlayer): string[] {
+  const others = player.fixerDice.filter((die) => die !== LAST_DIE)
+  if (others.length > 0) return others
+  return player.fixerDice.includes(LAST_DIE) ? [LAST_DIE] : []
+}
+
 function appendEvent(game: MockGame, type: string, playerId: string, description: string): void {
   game.log.push({ index: game.log.length, type, playerId, description })
 }
@@ -1326,6 +1437,10 @@ function describeIntent(payload: ActionPayload, before: Located | null): string 
       return name ? `incline ${name} (+1 Eddie)` : 'incline une ressource'
     case 'END_TURN':
       return 'termine son tour'
+    case 'DRAW_CARD':
+      return 'pioche sa carte (phase Draw)'
+    case 'SELECT_DIE':
+      return `choisit le dé ${String(payload.dice?.[0] ?? payload.chosen ?? '?').toLowerCase()}`
     default:
       return `action ${String(payload.action ?? '?')}`
   }
@@ -1340,9 +1455,18 @@ function describeMockAction(
   events: LogEntry[],
 ): string {
   const acted = describeIntent(payload, before)
-  if (String(payload.action ?? '').toUpperCase() === 'END_TURN') {
+  const action = String(payload.action ?? '').toUpperCase()
+  if (action === 'END_TURN') {
     const phases = events.map((event) => event.description).join(' ; ')
-    return `Joueur ${pseudo} termine le tour ${game.turn.number}${phases ? ` (${phases})` : ''}`
+    return `Joueur ${pseudo} termine le tour ${game.turn.number - 1}${phases ? ` (${phases})` : ''}`
+  }
+  if (action === 'DRAW_CARD') {
+    const drawn = events.find((event) => event.type === 'CARD_DRAWN')
+    return drawn ? `Phase DRAW : Joueur ${pseudo} pioche 1 carte` : `Phase DRAW : Joueur ${pseudo} ne peut plus piocher (deck vide)`
+  }
+  if (action === 'SELECT_DIE') {
+    const rolled = events.find((event) => event.type === 'GIG_ROLLED')
+    return `Lancer de Gig : Joueur ${pseudo} ${rolled ? rolled.description : acted}`
   }
   return `Joueur ${pseudo} ${acted}`
 }
@@ -1428,6 +1552,7 @@ function playerView(player: MockPlayer, viewerId: string): Record<string, unknow
     eddiesArea: player.eddiesArea.map((card) => cardView(card, viewerId)),
     legendsArea: player.legendsArea.map((card) => cardView(card, viewerId)),
     gigs: [...player.gigs],
+    gigDice: [...player.gigDice],
     fixerDice: [...player.fixerDice],
     gigCount: player.gigs.length,
     streetCred: streetCred(player),
@@ -1446,7 +1571,10 @@ function stateView(game: MockGame, viewerId: string, sequence: number, now: stri
     winnerId: game.winnerId,
     endReason: game.endReason,
     yourPlayerId: viewerId,
-    turn: { ...game.turn },
+    // `drawStep` n'est présent qu'en phase DRAW (le serveur Java omet les null).
+    turn: game.turn.drawStep
+      ? { ...game.turn }
+      : { number: game.turn.number, activePlayerId: game.turn.activePlayerId },
     reactionWindow: game.reactionWindow,
     players: game.players.map((player) => playerView(player, viewerId)),
     log: game.log.map((entry) => ({ ...entry })),

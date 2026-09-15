@@ -3,9 +3,11 @@ package com.cyberpunktcg.service;
 import com.cyberpunktcg.api.dto.ws.GameCommandDTO;
 import com.cyberpunktcg.engine.GameRuleException;
 import com.cyberpunktcg.engine.command.AttackCommand;
+import com.cyberpunktcg.engine.command.DrawCardCommand;
 import com.cyberpunktcg.engine.command.EndTurnCommand;
 import com.cyberpunktcg.engine.command.GameCommand;
 import com.cyberpunktcg.engine.command.PlayCardCommand;
+import com.cyberpunktcg.engine.command.SelectDieCommand;
 import com.cyberpunktcg.engine.command.SellCardCommand;
 import com.cyberpunktcg.engine.command.SpendEddiesCommand;
 import com.cyberpunktcg.engine.command.SpendLegendCommand;
@@ -22,8 +24,10 @@ import org.springframework.stereotype.Component;
  * la Legends Area <em>ou</em> carte de l'Eddies Area, pour gagner 1 Eddie),
  * {@code SPEND_LEGEND} / {@code SPEND_EDDIES} (alias historiques de
  * {@code SPEND_RESOURCE} : mêmes règles, action de journal distincte),
- * {@code END_TURN}. {@code CONCEDE} est traité par le contrôleur (pas une
- * commande du moteur).</p>
+ * {@code END_TURN}, {@code DRAW_CARD} et {@code SELECT_DIE} (Mini-Feature 5 —
+ * phase DRAW interactive : pioche du tour puis choix du dé Gig, transmis dans
+ * {@code dice[0]} ou {@code chosen}). {@code CONCEDE} est traité par le
+ * contrôleur (pas une commande du moteur).</p>
  */
 @Component
 public class ActionCommandFactory {
@@ -35,6 +39,10 @@ public class ActionCommandFactory {
     public static final String SPEND_LEGEND = "SPEND_LEGEND";
     public static final String SPEND_EDDIES = "SPEND_EDDIES";
     public static final String END_TURN = "END_TURN";
+    /** Mini-Feature 5 : pioche du tour (phase DRAW, étape AWAITING_DRAW). */
+    public static final String DRAW_CARD = "DRAW_CARD";
+    /** Mini-Feature 5 : choix du dé Gig (phase DRAW, étape AWAITING_DIE_SELECT). */
+    public static final String SELECT_DIE = "SELECT_DIE";
     public static final String CONCEDE = "CONCEDE";
 
     /**
@@ -55,6 +63,8 @@ public class ActionCommandFactory {
             case SPEND_LEGEND -> buildSpendLegend(dto, playerId);
             case SPEND_EDDIES -> buildSpendEddies(dto, playerId);
             case END_TURN -> new EndTurnCommand(playerId);
+            case DRAW_CARD -> new DrawCardCommand(playerId);
+            case SELECT_DIE -> buildSelectDie(dto, playerId);
             case CONCEDE -> throw new GameRuleException("CONCEDE ne passe pas par le moteur");
             default -> throw new GameRuleException("Action inconnue : " + dto.action());
         };
@@ -94,6 +104,24 @@ public class ActionCommandFactory {
             throw new GameRuleException("SPEND_LEGEND exige 'instanceId' (Legend à incliner)");
         }
         return new SpendLegendCommand(playerId, dto.instanceId());
+    }
+
+    /**
+     * Le dé choisi arrive dans {@code dice[0]} (champ prévu pour les choix de dés)
+     * ou, à défaut, dans {@code chosen}.
+     */
+    private GameCommand buildSelectDie(GameCommandDTO dto, String playerId) {
+        String die = null;
+        if (dto.dice() != null && !dto.dice().isEmpty()) {
+            die = dto.dice().get(0);
+        }
+        if (die == null || die.isBlank()) {
+            die = dto.chosen();
+        }
+        if (die == null || die.isBlank()) {
+            throw new GameRuleException("SELECT_DIE exige le dé à lancer dans 'dice' (ex. [\"d6\"])");
+        }
+        return new SelectDieCommand(playerId, die);
     }
 
     private GameCommand buildSellCard(GameCommandDTO dto, String playerId) {
