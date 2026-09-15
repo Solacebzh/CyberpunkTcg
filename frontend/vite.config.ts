@@ -36,6 +36,10 @@ export default defineConfig(({ mode }) => {
           target: apiTarget,
           changeOrigin: true,
         },
+        '/images': {
+          target: apiTarget,
+          changeOrigin: true,
+        },
         // WebSocket STOMP → Spring Boot (même origine côté navigateur)
         '/ws': {
           target: apiTarget,

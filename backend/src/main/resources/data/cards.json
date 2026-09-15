@@ -18,7 +18,7 @@
     "abilities": [
       "When a friendly Unit steals a d6, increase a Gig by up to 6."
     ],
-    "imageUrl": "backend/src/main/resources/static/images/cards/6th-street-recruits.png",
+    "imageUrl": "/images/cards/6th-street-recruits.png",
     "setCode": "WELCOMETONIGHTCITYRETAIL",
     "collectorNumber": "006",
     "rarity": "common"
