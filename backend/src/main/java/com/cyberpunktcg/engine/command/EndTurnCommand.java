@@ -75,6 +75,15 @@ public class EndTurnCommand implements GameCommand {
         state.logInfo(playerId, "PHASE", "Phase END : Joueur " + playerId + " termine le tour "
                 + state.getTurn().getNumber(), GameLog.details("phase", "END"));
 
+        // R2 : Fin de tour — Eddies restants perdus (cycle mana)
+        if (outgoing.getEddies() > 0) {
+            int lost = outgoing.getEddies();
+            outgoing.setEddies(0);
+            state.logInfo(outgoing.getId(), "EDDIES_LOST",
+                    "Fin de tour : Joueur " + outgoing.getId() + " perd " + lost + " Eddies restants (remise à 0)",
+                    GameLog.details("lost", lost, "phase", "END"));
+        }
+
         List<CardInstance> endingField = new ArrayList<CardInstance>(outgoing.getField());
         for (CardInstance card : endingField) {
             engine.resolveEffects(state, card, TriggerType.ON_TURN_END, null);
@@ -124,12 +133,18 @@ public class EndTurnCommand implements GameCommand {
             return GameCommand.eventsSince(state, mark);
         }
 
+        // START PHASE : Ready (R2/R3/R6) — inclut reset Eddies à 0 et redress Legends/Eddies/Field
         incoming.startTurn();
         state.logInfo(incoming.getId(), "TURN_RESET",
-                "Début de tour : Units du Field redressées, mals d'invocation dissipés ; "
-                        + incoming.legendsAvailableForEddies().size()
-                        + " Legend(s) encore disponibles pour incliner (+1 Eddie chacune)",
+                "Début de tour : 0 Eddie, cartes redressées ; "
+                        + incoming.legendsAvailableForEddies().size() + "/"
+                        + incoming.getLegendsArea().size() + " Legend(s) prêtes, "
+                        + incoming.eddiesAvailableForEddies().size() + "/"
+                        + incoming.getEddiesArea().size() + " Eddies prêtes",
                 GameLog.details("legendsReady", incoming.legendsAvailableForEddies().size(),
+                        "legendsTotal", incoming.getLegendsArea().size(),
+                        "eddiesReady", incoming.eddiesAvailableForEddies().size(),
+                        "eddiesTotal", incoming.getEddiesArea().size(),
                         "eddies", incoming.getEddies()));
 
         int drawn = state.drawCards(incoming.getId(), 1);

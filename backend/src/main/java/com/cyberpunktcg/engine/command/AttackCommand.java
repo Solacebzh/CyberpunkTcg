@@ -118,7 +118,7 @@ public class AttackCommand implements GameCommand {
         if (attacker.isExhausted()) {
             throw new GameRuleException("Cette Unit est déjà épuisée");
         }
-        if (attacker.isSummoningSickness() && !attacker.hasGoSolo()) {
+        if (attacker.isSummoningSickness() && !attacker.canIgnoreSummoningSickness()) {
             throw new GameRuleException("Cette Unit vient d'être jouée (mal d'invocation)");
         }
 
@@ -205,20 +205,41 @@ public class AttackCommand implements GameCommand {
         }
 
         if (isGigSteal()) {
-            Optional<Integer> stolen = state.stealGig(rival.getId(), playerId);
-            if (stolen.isPresent()) {
-                state.appendEvent(GameEventType.GIG_STOLEN, playerId,
-                        "vol d'un Gig de valeur " + stolen.get()
-                                + " (total " + player.getGigCount() + ")");
-                state.logSuccess(playerId, "GIG_STOLEN",
-                        "Joueur " + playerId + " vole un Gig de valeur " + stolen.get()
-                                + " (total " + player.getGigCount() + " Gigs)",
-                        GameLog.details("value", stolen.get(), "gigsTotal", player.getGigCount(),
-                                "rivalGigs", rival.getGigCount()));
+            // R12 officiel : extra Gig par tranche de 10 power (0 power = 0 Gig)
+            int attackerPowerForSteal = state.totalPowerFor(attacker);
+            int gigsToSteal;
+            if (attackerPowerForSteal <= 0) {
+                gigsToSteal = 0;
             } else {
-                state.appendEvent(GameEventType.ATTACK_DECLARED, playerId,
-                        "vol de Gig sans effet (plus aucun Gig adverse)");
+                gigsToSteal = 1 + (attackerPowerForSteal / 10);
             }
+            // Mais on ne peut pas voler plus que le rival n'en possède
+            gigsToSteal = Math.min(gigsToSteal, rival.getGigCount());
+            if (gigsToSteal == 0) {
+                state.appendEvent(GameEventType.ATTACK_DECLARED, playerId,
+                        "vol de Gig sans effet (power 0 ou plus aucun Gig adverse)");
+                state.logInfo(playerId, "GIG_STOLEN",
+                        "Attaque Gig Area sans vol (power " + attackerPowerForSteal + ")",
+                        GameLog.details("power", attackerPowerForSteal, "gigsTotal", player.getGigCount()));
+                return GameCommand.eventsSince(state, mark);
+            }
+            StringBuilder stolenValues = new StringBuilder();
+            for (int i = 0; i < gigsToSteal; i++) {
+                Optional<Integer> stolen = state.stealGig(rival.getId(), playerId);
+                if (stolen.isPresent()) {
+                    if (stolenValues.length() > 0) stolenValues.append(", ");
+                    stolenValues.append(stolen.get());
+                    state.appendEvent(GameEventType.GIG_STOLEN, playerId,
+                            "vol d'un Gig de valeur " + stolen.get()
+                                    + " (total " + player.getGigCount() + ")");
+                }
+            }
+            state.logSuccess(playerId, "GIG_STOLEN",
+                    "Joueur " + playerId + " vole " + gigsToSteal + " Gig(s) (valeurs " + stolenValues
+                            + ", total " + player.getGigCount() + " Gigs, power " + attackerPowerForSteal + ")",
+                    GameLog.details("count", gigsToSteal, "values", stolenValues.toString(),
+                            "power", attackerPowerForSteal, "gigsTotal", player.getGigCount(),
+                            "rivalGigs", rival.getGigCount()));
             return GameCommand.eventsSince(state, mark);
         }
 

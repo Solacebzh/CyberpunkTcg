@@ -7,6 +7,7 @@ import com.cyberpunktcg.engine.command.EndTurnCommand;
 import com.cyberpunktcg.engine.command.GameCommand;
 import com.cyberpunktcg.engine.command.PlayCardCommand;
 import com.cyberpunktcg.engine.command.SellCardCommand;
+import com.cyberpunktcg.engine.command.SpendEddiesCommand;
 import com.cyberpunktcg.engine.command.SpendLegendCommand;
 import org.springframework.stereotype.Component;
 
@@ -27,6 +28,7 @@ public class ActionCommandFactory {
     public static final String ATTACK = "ATTACK";
     public static final String SELL_CARD = "SELL_CARD";
     public static final String SPEND_LEGEND = "SPEND_LEGEND";
+    public static final String SPEND_EDDIES = "SPEND_EDDIES";
     public static final String END_TURN = "END_TURN";
     public static final String CONCEDE = "CONCEDE";
 
@@ -45,6 +47,7 @@ public class ActionCommandFactory {
             case ATTACK -> buildAttack(dto, playerId);
             case SELL_CARD -> buildSellCard(dto, playerId);
             case SPEND_LEGEND -> buildSpendLegend(dto, playerId);
+            case SPEND_EDDIES -> buildSpendEddies(dto, playerId);
             case END_TURN -> new EndTurnCommand(playerId);
             case CONCEDE -> throw new GameRuleException("CONCEDE ne passe pas par le moteur");
             default -> throw new GameRuleException("Action inconnue : " + dto.action());
@@ -64,6 +67,13 @@ public class ActionCommandFactory {
         }
         // Pas de cible = attaque directe vers la Gig Area adverse (vol de Gig).
         return new AttackCommand(playerId, dto.instanceId(), dto.targetInstanceId());
+    }
+
+    private GameCommand buildSpendEddies(GameCommandDTO dto, String playerId) {
+        if (dto.instanceId() == null) {
+            throw new GameRuleException("SPEND_EDDIES exige 'instanceId' (carte Eddies à incliner)");
+        }
+        return new SpendEddiesCommand(playerId, dto.instanceId());
     }
 
     private GameCommand buildSpendLegend(GameCommandDTO dto, String playerId) {

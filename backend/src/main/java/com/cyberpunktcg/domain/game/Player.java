@@ -51,6 +51,7 @@ public class Player {
     private int eddies;
     private int costDiscount;
     private boolean hasSoldThisTurn;
+    private boolean hasCalledLegendThisTurn;
 
     public Player(String id, String name) {
         if (id == null) {
@@ -69,6 +70,7 @@ public class Player {
         this.eddies = 0;
         this.costDiscount = 0;
         this.hasSoldThisTurn = false;
+        this.hasCalledLegendThisTurn = false;
     }
 
     /** Les 6 dés Gig de départ, dans l'ordre de lancer imposé (d20 en dernier). */
@@ -172,14 +174,9 @@ public class Player {
     }
 
     /**
-     * Incline une Legend de la Legends Area pour gagner
-     * {@code GameConstants.EDDIES_PER_LEGEND} Eddie(s) (arbitrage joueur :
-     * « il suffit d'incliner la carte pour gagner 1 eddies »).
-     *
-     * @param legendInstanceId exemplaire présent dans la Legends Area
-     * @return la Legend inclinée
-     * @throws IllegalArgumentException si la carte n'est pas une Legend du joueur
-     * @throws IllegalStateException    si la Legend est déjà inclinée
+     * Incline une Legend de la Legends Area pour gagner 1 Eddie.
+     * <p>Règle officielle : Whether face-up or face-down, you can also spend a Legend to pay 1 €$ (Guide § LEGENDS AREA).
+     * Matérialisé par +1 au compteur Eddies et exhaustion ; redressée au début du tour suivant.</p>
      */
     public CardInstance spendLegendForEddies(java.util.UUID legendInstanceId) {
         CardInstance legend = findIn(Zone.LEGENDS_AREA, legendInstanceId)
@@ -191,6 +188,33 @@ public class Player {
         legend.setExhausted(true);
         this.eddies += 1;
         return legend;
+    }
+
+    /**
+     * Incline une carte de l'Eddies Area pour gagner 1 Eddie (R6).
+     * Même mécanique que les Legends : spend sideways = +1, redress au début du tour.
+     */
+    public CardInstance spendEddiesCardForEddies(java.util.UUID eddiesInstanceId) {
+        CardInstance eddiesCard = findIn(Zone.EDDIES_AREA, eddiesInstanceId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Carte Eddies introuvable : " + eddiesInstanceId));
+        if (eddiesCard.isExhausted()) {
+            throw new IllegalStateException("Cette carte Eddies est déjà inclinée");
+        }
+        eddiesCard.setExhausted(true);
+        this.eddies += 1;
+        return eddiesCard;
+    }
+
+    /** Cartes Eddies encore disponibles pour gagner un Eddie ce tour. */
+    public List<CardInstance> eddiesAvailableForEddies() {
+        List<CardInstance> available = new ArrayList<CardInstance>();
+        for (CardInstance c : eddiesArea) {
+            if (!c.isExhausted()) {
+                available.add(c);
+            }
+        }
+        return available;
     }
 
     /** Legends de la Legends Area encore disponibles pour gagner un Eddie. */
@@ -260,6 +284,14 @@ public class Player {
 
     public void setHasSoldThisTurn(boolean hasSoldThisTurn) {
         this.hasSoldThisTurn = hasSoldThisTurn;
+    }
+
+    public boolean hasCalledLegendThisTurn() {
+        return hasCalledLegendThisTurn;
+    }
+
+    public void setHasCalledLegendThisTurn(boolean hasCalledLegendThisTurn) {
+        this.hasCalledLegendThisTurn = hasCalledLegendThisTurn;
     }
 
     /** Nombre de Gigs contrôlés (condition de victoire : 7 au début du tour). */
@@ -375,16 +407,18 @@ public class Player {
     }
 
     /**
-     * Redresse les cartes prêtes au début du tour (règles §4.4 : « redresser les
-     * cartes qui doivent être prêtes »).
-     *
-     * <p>Seules les cartes du Field sont redressées. Les Legends inclinées pour
-     * encaisser un Eddie ({@link #spendLegendForEddies}) restent inclinées : un
-     * joueur ne dispose que des Eddies de ses Legends restantes (3 au total, dont
-     * {@code FIRST_PLAYER_SPENT_LEGENDS} déjà inclinées pour le premier joueur).</p>
+     * Redresse toutes les cartes dépensées au début du tour (R2/R3/R6).
+     * <p>Règle officielle : START PHASE — READY SPENT CARDS Return all your spent (sideways) cards to the ready position.
+     * Cela inclut Field, Legends Area et Eddies Area. Les Legends ne sont plus définitivement inclinées.</p>
      */
     public void readyAll() {
         for (CardInstance card : field) {
+            card.setExhausted(false);
+        }
+        for (CardInstance card : legendsArea) {
+            card.setExhausted(false);
+        }
+        for (CardInstance card : eddiesArea) {
             card.setExhausted(false);
         }
     }
@@ -396,9 +430,18 @@ public class Player {
         }
     }
 
-    /** Réinitialise les marqueurs de tour du joueur (vente, remise, redressement). */
+    /**
+     * Réinitialise les marqueurs de début de tour (R2/R8) :
+     * - Eddies remis à 0 (cycle mana : début 0, fin perdus)
+     * - vente et Call réinitialisés
+     * - remise de coût remise à 0
+     * - redressement de toutes les cartes dépensées (Field + Legends + Eddies)
+     * - Lag/mal d'invocation dissipé
+     */
     public void startTurn() {
+        this.eddies = 0;
         this.hasSoldThisTurn = false;
+        this.hasCalledLegendThisTurn = false;
         this.costDiscount = 0;
         readyAll();
         clearSummoningSickness();
@@ -432,6 +475,7 @@ public class Player {
         copy.eddies = this.eddies;
         copy.costDiscount = this.costDiscount;
         copy.hasSoldThisTurn = this.hasSoldThisTurn;
+        copy.hasCalledLegendThisTurn = this.hasCalledLegendThisTurn;
         return copy;
     }
 

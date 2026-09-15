@@ -56,6 +56,18 @@ public final class EffectParser {
     /** « Decrease a rival Gig by up to N. » */
     private static final Pattern REDUCE_GIG = Pattern.compile(
             "(?i)\\bdecrease a rival gig by up to (\\d+)(?=\\s*(?:\\.|,|$))");
+    /** « Trash N » / « Discard N » / « trash 3 » */
+    private static final Pattern DISCARD_PATTERN = Pattern.compile(
+            "(?i)\\b(?:trash|discard) (\\d+)\\b");
+    /** « steal a Gig » / « steal 2 Gigs » */
+    private static final Pattern STEAL_GIG_PATTERN = Pattern.compile(
+            "(?i)\\bsteal (?:a |)(\\d+)? ?gig");
+    /** « deal N damage » */
+    private static final Pattern DAMAGE_PATTERN = Pattern.compile(
+            "(?i)\\bdeal (\\d+) damage\\b");
+    /** « heal N » */
+    private static final Pattern HEAL_PATTERN = Pattern.compile(
+            "(?i)\\bheal (\\d+)\\b");
 
     /** Marqueurs qui n'ouvrent aucune fenêtre de résolution implémentée en V1. */
     private static final String[] SKIPPED_MARKERS = {"spend", "call", "go solo", "blocker"};
@@ -147,6 +159,10 @@ public final class EffectParser {
                 return EffectTarget.SELF_PLAYER;
             case REDUCE_GIG:
                 return EffectTarget.RIVAL_PLAYER;
+            case DISCARD:
+                return EffectTarget.SELF_PLAYER;
+            case BUFF:
+                return EffectTarget.SELF;
             default:
                 return EffectTarget.SELF;
         }

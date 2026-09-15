@@ -114,7 +114,15 @@ public class PlayCardCommand implements GameCommand {
             if (card.getZone() != Zone.LEGENDS_AREA || !card.isFaceDown()) {
                 throw new GameRuleException("Seule une Legend face cachée de la Legends Area peut être retournée");
             }
+            if (player.hasCalledLegendThisTurn()) {
+                throw new GameRuleException("Call a Legend : une seule fois par tour");
+            }
             requireStreetCred(player, card);
+            int callCost = 1;
+            if (player.getAvailableEddies() < callCost) {
+                throw new GameRuleException("Eddies insuffisants pour Call a Legend : "
+                        + player.getAvailableEddies() + " pour un coût de " + callCost);
+            }
             return;
         }
 
@@ -122,7 +130,7 @@ public class PlayCardCommand implements GameCommand {
             throw new GameRuleException("Cette carte n'est pas jouable depuis " + card.getZone());
         }
         requireStreetCred(player, card);
-        requireRamCeiling(player, card);
+        // R7 : RAM uniquement deckbuilding — aucune vérification en jeu
         int toPay = Math.max(0, card.getEffectiveCost() - player.getCostDiscount());
         if (player.getAvailableEddies() < toPay) {
             throw new GameRuleException("Eddies insuffisants : " + player.getAvailableEddies()
@@ -146,15 +154,21 @@ public class PlayCardCommand implements GameCommand {
                 && state.getReactionWindow().getDefendingPlayerId().equals(playerId);
 
         if (card.isLegend()) {
+            // R4 : Call a Legend coûte 1 Eddie (et une seule fois par tour)
+            int callCost = 1;
+            player.spendEddies(callCost);
+            player.setHasCalledLegendThisTurn(true);
             card.setFaceDown(false);
             state.appendEvent(GameEventType.LEGEND_FLIPPED, playerId,
-                    "legend retournée : " + card.getName());
+                    "legend retournée : " + card.getName() + " (coût " + callCost + ")");
             state.logSuccess(playerId, actionType(),
                     "Joueur " + playerId + " retourne la Legend " + card.getName()
-                            + " (gratuit, effet FLIP — pas ON_PLAY)",
+                            + " (coût " + callCost + " Eddie, effet CALL/FLIP)",
                     GameLog.details("card", card.getName(), "cardId", card.getCardId(),
-                            "eddiesPaid", 0, "trigger", "FLIP"));
+                            "eddiesPaid", callCost, "trigger", "CALL", "eddiesLeft", player.getEddies()));
             engine.resolveEffects(state, card, TriggerType.FLIP, null);
+            // Certaines Legends utilisent le trigger CALL, d'autres FLIP — on résout les deux pour compatibilité
+            engine.resolveEffects(state, card, TriggerType.CALL, null);
             return GameCommand.eventsSince(state, mark);
         }
 
@@ -173,7 +187,7 @@ public class PlayCardCommand implements GameCommand {
             player.moveToZone(card, Zone.FIELD);
             card.setExhausted(false);
             card.setFaceDown(false);
-            card.setSummoningSickness(!card.hasGoSolo());
+            card.setSummoningSickness(!card.canIgnoreSummoningSickness());
             state.appendEvent(GameEventType.CARD_PLAYED, playerId,
                     "unit jouée : " + card.getName() + " (coût " + toPay + ")");
             logPlay(state, player, card, toPay, "Unit");
