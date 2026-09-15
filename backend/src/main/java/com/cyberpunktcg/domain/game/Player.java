@@ -240,6 +240,38 @@ public class Player {
     }
 
     /**
+     * Incline les {@code count} Legends les plus à gauche de la Legends Area
+     * <strong>sans</strong> gagner d'Eddie : c'est le malus de mise en place du
+     * premier joueur (R1.4).
+     *
+     * <p>Règle officielle (§ SETUP · DETERMINE PLAY ORDER) : « The player going
+     * first spends their 2 leftmost Legends and doesn't ready them on their first
+     * turn. » L'ordre de la liste {@code legendsArea} est l'ordre gauche → droite
+     * du playmat : ce sont donc les index {@code 0 .. count-1} qui sont inclinés.</p>
+     *
+     * <p>Le malus ne survit pas au premier tour : {@link #startTurn()} redresse
+     * tout au début du tour suivant (phase DRAW).</p>
+     *
+     * @param count nombre de Legends à incliner ({@link com.cyberpunktcg.engine.GameConstants#FIRST_PLAYER_SPENT_LEGENDS})
+     * @return le nombre de Legends effectivement inclinées (borné par la taille de la zone)
+     * @throws IllegalArgumentException si {@code count} est négatif
+     */
+    public int exhaustLeftmostLegends(int count) {
+        if (count < 0) {
+            throw new IllegalArgumentException("Nombre de Legends à incliner négatif : " + count);
+        }
+        int exhausted = 0;
+        for (CardInstance legend : legendsArea) {
+            if (exhausted >= count) {
+                break;
+            }
+            legend.setExhausted(true);
+            exhausted++;
+        }
+        return exhausted;
+    }
+
+    /**
      * Plafond de RAM d'une couleur, dérivé des Legends (règles officielles §2 :
      * les RAM des Legends s'additionnent par couleur). Une carte est jouable si
      * sa RAM imprimée ne dépasse pas ce plafond.

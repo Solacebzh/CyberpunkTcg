@@ -133,7 +133,11 @@ public class EndTurnCommand implements GameCommand {
             return GameCommand.eventsSince(state, mark);
         }
 
-        // START PHASE : Ready (R2/R3/R6) — inclut reset Eddies à 0 et redress Legends/Eddies/Field
+        // Phase DRAW — règle officielle § START PHASE, étape 1 « READY SPENT CARDS »
+        // (R2/R3/R6/R8) : ON REDRESSE TOUT (Field, Legends Area, Eddies Area) et la
+        // réserve d'Eddies retombe à 0. C'est aussi ce qui lève le malus de mise en
+        // place du premier joueur (R1.4) : ses 2 Legends inclinées pendant le tour 1
+        // sont redressées au début de son tour 2.
         incoming.startTurn();
         state.logInfo(incoming.getId(), "TURN_RESET",
                 "Début de tour : 0 Eddie, cartes redressées ; "

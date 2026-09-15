@@ -12,11 +12,12 @@ Légende : `- [x]` = à faire, `- [x]` = test écrit + impl + vert + documenté.
 - [x] **R1.1** Chaque joueur : 3 Legends face-down aléatoires en Legends Area — *Source: Guide § PLAYMAT AREAS “3 cards here are your Legends” + § SETUP “randomize your Legends face-down”*
 - [x] **R1.2** Deck principal 40-50 cartes (hors Legends), 6 dés Gig (d4,d6,d8,d10,d12,d20) en Fixer Area — *Source: Guide § PLAYMAT AREAS Fixer Area + § DECK BUILDING “40-50 cards”*
 - [x] **R1.3** Premier joueur tiré au sort (d20, reroll tie, higher decides) — *Source: § SETUP “Both players roll a d20 (reroll on a tie). Whoever rolls higher decides who goes first.”*
-- [x] **R1.4** Premier joueur T1 : 2 leftmost Legends spent (épuisées) et ne se redressent pas au 1er tour — *Source: § SETUP “The player going first spends their 2 leftmost Legends and doesn't ready them on their first turn.”*
-- [x] **R1.5** Second joueur T1 : 0 Legend pré-inclinée — *Source: § SETUP (absence de malus pour le second)*
+- [x] **R1.4** Premier joueur T1 : 2 leftmost Legends spent (épuisées) et ne se redressent pas au 1er tour — *Source: § SETUP “The player going first spends their 2 leftmost Legends and doesn't ready them on their first turn.”* — *Tests: `testR1_Setup_FirstPlayerHasTwoExhaustedLegends`, `testR1_FirstPlayerMalus_2LegendsExhausted`*
+- [x] **R1.5** Second joueur T1 : 0 Legend pré-inclinée — *Source: § SETUP (absence de malus pour le second)* — *Test: `testR1_Setup_SecondPlayerHasZeroExhaustedLegends`*
+- [x] **R1.7** Phase DRAW de chaque tour : toutes les Legends sont redressées et les Eddies retombent à 0 (lève le malus du premier joueur à son tour 2) — *Source: § START PHASE “READY SPENT CARDS Return all your spent (sideways) cards to the ready position.”* — *Test: `testR1_DrawPhase_ReadiesAllLegends`*
 - [x] **R1.6** Main de départ : 6 cartes (+ mulligan once) — *Source: § SETUP “DRAW 6 ... you can mulligan once.”*
 
-**Implémentation attendue :** `GameService.createGame` + `Player.freshFixerDice()` + `STARTING_HAND_SIZE=6` + `FIRST_PLAYER_SPENT_LEGENDS=2` + tirage Random.
+**Implémentation attendue :** `GameService.createGame` (+ `applyFirstPlayerPenalty`) + `Player.exhaustLeftmostLegends(2)` + `Player.freshFixerDice()` + `STARTING_HAND_SIZE=6` + `FIRST_PLAYER_SPENT_LEGENDS=2` + tirage Random ; redressement en phase DRAW via `Player.startTurn()` → `readyAll()` appelé par `EndTurnCommand`.
 
 ---
 
@@ -150,7 +151,8 @@ Légende : `- [x]` = à faire, `- [x]` = test écrit + impl + vert + documenté.
 
 Suivre ici le cochage règle par règle (Phase 2 A→E) — tous verts le 2026-09-15 via TDD :
 
-- R1 : ✅ 4 tests testR1_* vert (setup complet, malus 2 Legends, second 0, deck 30+)
+- R1 : ✅ 7 tests testR1_* vert (setup complet, malus 2 Legends, second 0, deck 30+,
+  2 Legends inclinées du premier joueur, 0 Legend inclinée du second, phase DRAW qui redresse tout)
 - R2 : ✅ 3 tests testR2_* vert (reset 0 chaque tour, lost at end, sources Legend/Eddies/effets)
 - R3 : ✅ 3 tests testR3_* vert (Legends tap +1, stay, ready next turn)
 - R4 : ✅ 3 tests testR4_* vert (Call coûts 1, once per turn, stay)
@@ -163,4 +165,4 @@ Suivre ici le cochage règle par règle (Phase 2 A→E) — tous verts le 2026-0
 - R11: ✅ 6 tests testR11_* vert (Play, Blocker, GoSolo, Quick, Defeated, Spend/Call skip)
 - R12: ✅ 4 tests testR12_* vert (7 win at start, 6 no win, gig via dice/steal, deck-out)
 - R13: ✅ 10 tests testR13_* vert (DRAW, DAMAGE, DEFEAT, GRANT_POWER, STEAL_GIG, HEAL, DISCARD, BUFF, Call modal ignored, conditional ignored, real card)
-- **Total: 51 tests testR* — tous au vert (même run, pas de régression)**
+- **Total: 54 tests testR* — tous au vert (même run, pas de régression)**
