@@ -40,11 +40,18 @@ frontend/
 │   │   ├── ConnectionBadge.vue   # Badge API/WebSocket de l'en-tête
 │   │   ├── TargetingOverlay.vue  # Sélection de cible (attaques, Gear)
 │   │   ├── game/
+│   │   │   ├── PlayerBoard.vue   # Demi-tapis officiel : la grille `.playmat-grid`
+│   │   │   ├── PlaymatZone.vue   # Cadre d'une zone imprimée (grid-area + libellé)
+│   │   │   ├── GigsBar.vue       # Bandeau du haut : Rival Gigs | Friendly Gigs
+│   │   │   ├── GigTracker.vue    # Compteur de Gigs / 7 + dés + Street Cred
+│   │   │   ├── FixerArea.vue     # Colonne FIXER (dés d20 → d4)
+│   │   │   ├── FieldArea.vue     # FIELD : Units + Gears attachés
+│   │   │   ├── LegendsArea.vue   # LEGENDS : exactement 3 slots
+│   │   │   ├── CardPile.vue      # Piles DECK / EDDIES / TRASH
+│   │   │   ├── HandRow.vue       # Main (hors tapis)
 │   │   │   ├── GameLogPanel.vue  # Journal de partie (doc §7.4)
 │   │   │   ├── GameOverOverlay.vue
-│   │   │   ├── GigTracker.vue    # Compteur de Gigs / 7 + dés
-│   │   │   ├── PhaseIndicator.vue# Draw → Main → Combat → End + tour
-│   │   │   └── PlayerArea.vue    # Demi-plateau (Legends, Field, main, compteurs)
+│   │   │   └── PhaseIndicator.vue# Draw → Main → Combat → End + tour
 │   │   └── ui/CyberToast.vue     # Pile de notifications
 │   ├── composables/
 │   │   ├── useGameAnimations.ts  # Animations GSAP (pioche, pose, attaque, Gig, phase)
@@ -61,7 +68,8 @@ frontend/
 │   │   └── ui.ts                 # Toasts
 │   ├── types/
 │   │   ├── card.ts               # Miroir de card-schema.json (feature 02)
-│   │   └── game.ts               # Miroir des DTO WS + destinations + libellés
+│   │   ├── game.ts               # Miroir des DTO WS + destinations + libellés
+│   │   └── playmat.ts            # Zones **d'affichage** du tapis officiel (Fixer, Eddies…)
 │   └── views/
 │       ├── HomeView.vue          # Diagnostic (API + ping) — feature 01
 │       ├── LobbyView.vue         # Pseudo, créer/rejoindre, attente 2e joueur
@@ -253,7 +261,9 @@ GSAP scopé au plateau (`gsap.context`, nettoyé via `onScopeDispose`),
 | Sélecteur | Usage |
 | --- | --- |
 | `[data-instance-id="…"]` | chaque carte (`CardComponent`) |
-| `[data-anim="hand|field|trash|gigs|legends|deck"][data-side="me|opponent"]` | zones (`PlayerArea`, `GigTracker`) |
+| `[data-zone="FIXER|FIELD|DECK|LEGENDS|EDDIES|TRASH"][data-side="me|opponent"]` | zones imprimées (`PlaymatZone`) — `data-anim` est dérivé du nom (`FIELD` → `field`) |
+| `[data-anim="hand"][data-side="me|opponent"]` | main (`HandRow`) |
+| `[data-anim="gigs"][data-side="me|opponent"]` | compteurs de Gigs (`GigTracker`, bandeau `GigsBar`) |
 | `[data-anim="phase"]` | indicateur de phase |
 | `[data-anim="turn-banner"]` | bannière « À ton tour » |
 | `[data-anim="gig-pip"]` | pips du compteur de Gigs |
@@ -269,10 +279,17 @@ mettre à jour `GameView` et ce tableau.
 | Composant | Props principales | Emits |
 | --- | --- | --- |
 | `CardComponent` | `card` (CardInstance), `definition` (GameCard du catalogue), `side`, `size` (`xs/sm/md/lg`), `selectable`, `selected`, `targetable`, `dimmed`, `showKeywords`, `showAbilities` | `click(card)` |
-| `PlayerArea` | `player`, `isMe`, `isActive`, `definitions` (Map), `selectedInstanceId`, `targetableIds`, `actionableIds`, `interactive`, `disconnection` | `cardClick(card)` |
+| `PlayerBoard` | `player`, `isMe`, `isActive`, `definitions` (Map), `selectedInstanceId`, `targetableIds`, `actionableIds`, `interactive`, `disconnection` | `cardClick(card)` |
+| `PlaymatZone` | `zone` (`FIXER|FIELD|DECK|LEGENDS|EDDIES|TRASH`), `side`, `label`, `badge`, `hint`, `minHeight` | — (slot `header` pour des chips) |
+| `LegendsArea` | `legends`, `definitions`, `side`, `selectedInstanceId`, `targetableIds`, `actionableIds`, `interactive` | `cardClick(card)` |
+| `FieldArea` | `field`, `definitions`, `side`, `selectedInstanceId`, `targetableIds`, `actionableIds`, `interactive` | `cardClick(card)` |
+| `FixerArea` | `dice` (dés restants), `side` | — |
+| `CardPile` | `cards`, `count`, `faceUp`, `definitions`, `side`, `emptyLabel`, `size` | — |
+| `HandRow` | `player`, `definitions`, `isMe`, `selectedInstanceId`, `targetableIds`, `actionableIds`, `interactive` | `cardClick(card)` |
 | `TargetingOverlay` | `kind` (`attack|gear`), `sourceName`, `candidates`, `allowDirect` | `cancel`, `direct` |
 | `PhaseIndicator` | `phase`, `turnNumber`, `isMyTurn`, `activePlayerName`, `gameOver`, `waiting` | — |
-| `GigTracker` | `side`, `playerName`, `gigCount`, `gigs`, `fixerDice`, `streetCred`, `target` | — |
+| `GigsBar` | `me`, `opponent`, `activePlayerId` | — |
+| `GigTracker` | `label` (« Rival Gigs » / « Friendly Gigs »), `side`, `playerName`, `gigCount`, `gigs`, `fixerDice`, `streetCred`, `fixerTotal`, `target` | — |
 | `GameLogPanel` | `entries`, `meId`, `playerName`, `opponentName` | — |
 | `GameOverOverlay` | `winnerId`, `endReason`, `iWon`, `playerName`, `opponentName` | `leave` |
 | `CyberToast` | — (lit `uiStore`) | — |
@@ -285,6 +302,52 @@ grayscale), **ciblable** (anneau magenta pulsant + réticule), **dos de carte**
 
 `TargetingOverlay` est en `pointer-events-none` : seules sa bannière et ses
 boutons captent les clics, les cartes restent cliquables en dessous.
+
+---
+
+## 6 bis. Tapis officiel (mini-feature « Layout exact du Playmat »)
+
+La disposition du plateau n'est pas improvisée : elle reproduit le tapis officiel
+(`docs/OFFICIAL-RULES.md` § PLAYMAT AREAS). Elle tient dans **une seule grille CSS**,
+`.playmat-grid` de `src/assets/main.css` — les zones sont placées par
+`grid-template-areas`, jamais par l'ordre du DOM.
+
+```
+                 RIVAL GIGS            FRIENDLY GIGS        ← GigsBar (tout en haut)
+        ┌────────┬──────────────────────────────┬────────┐
+        │        │                              │        │
+        │ FIXER  │  FIELD (immense)             │  DECK  │   ← centre-haut / milieu-droite
+        │ d20→d4 ├───────────────┬──────────────┼────────┤
+        │        │  LEGENDS (×3) │  EDDIES      │ TRASH  │   ← ligne du bas
+        └────────┴───────────────┴──────────────┴────────┘
+              · bas-centre-gauche = Legends   · bas-centre-droite = Eddies
+```
+
+| Zone affichée | `data-zone` | `grid-area` | Source serveur (inchangée) |
+| --- | --- | --- | --- |
+| Fixer Area | `FIXER` | `fixer` | `PlayerState.fixerDice` (dés pas encore lancés) |
+| Gig Area (haut) | `GIGS` | bandeau `GigsBar` | `gigs`, `gigCount`, `streetCred` |
+| Field | `FIELD` | `field` | `field` (+ `attachedTo` pour les Gears) |
+| Deck | `DECK` | `deck` | `deckCount` (contenu jamais envoyé) |
+| Legends | `LEGENDS` | `legends` | `legendsArea` → **3 slots** (`LEGEND_SLOTS`) |
+| Eddies | `EDDIES` | `eddies` | `eddiesArea` (cartes vendues `faceDown`) |
+| Trash | `TRASH` | `trash` | `trash` (face visible) |
+| Main | `HAND` | hors grille | `hand` (masquée pour l'adversaire) |
+
+Points à respecter avant de toucher au plateau :
+
+* **aucun renommage côté transport** : le serveur (Spring **et** mock) émet toujours
+  `FIELD | HAND | TRASH | EDDIES_AREA | LEGENDS_AREA | DECK`. Les identifiants du tapis
+  (`FIXER`, `GIGS`, `LEGENDS`, `EDDIES`…) sont purement **présentationnels** et vivent
+  dans `src/types/playmat.ts` ;
+* la zone LEGENDS rend **toujours 3 slots** (`LegendsArea`), remplis par index : une
+  Legend retournée ou dépensée garde son emplacement, un slot vide reste visible ;
+* `PlayerBoard` sert aux **deux** sièges (le rival affiche les mêmes zones, cartes masquées) ;
+* les hooks d'animation restent adossés aux zones : `PlaymatZone` dérive `data-anim` du
+  nom de la zone (`data-zone="FIELD"` → `data-anim="field"`), `HandRow` porte
+  `data-anim="hand"` et `GigTracker` `data-anim="gigs"` ;
+* le contrat est verrouillé par `src/__tests__/playmatLayout.spec.ts` (zones, 3 slots,
+  6 dés, `grid-template-areas` et `grid-area` lus dans `main.css`).
 
 ---
 
@@ -361,6 +424,9 @@ sur le serveur simulé (`src/__tests__/helpers/stompHarness.ts`).
 * `frontendFlow.spec.ts` : deck builder (catalogue `/api/cards`, ajout, doublons,
   validation, glisser-déposer, persistance) et bascule en reconnexion
   automatique quand le transport tombe.
+* `playmatLayout.spec.ts` : disposition du tapis officiel — zones des deux demi-tapis,
+  3 slots de Legends, colonne Fixer (d20 → d4), piles Deck/Eddies/Trash, bandeau
+  `Rival Gigs` / `Friendly Gigs` et grille CSS (`grid-template-areas`, `grid-area`) ;
 * `presence.spec.ts` : fermeture d'un socket — siège d'un salon en attente
   libéré (le même pseudo peut recréer un salon), `PLAYER_DISCONNECTED` puis
   `PLAYER_RECONNECTED` reçus par le joueur resté en ligne (minuteur de 120 s
@@ -382,8 +448,9 @@ sont donc aussi vérifiés typiquement.
   « passe » explicite (le serveur ferme la fenêtre en fin de tour).
 * Deck builder : pas de persistance serveur ni de plafonds de RAM par couleur
   (feature comptes/decks) ; le deck vit dans `localStorage`.
-* Le responsive du plateau est fonctionnel mais perfectible (`PlayerArea` passe
-  en colonne sous `lg`) ; accessibilité : `aria-*` posés, navigation clavier
-  partielle (Échap pour le ciblage).
+* Le responsive du plateau est fonctionnel mais perfectible : sous `lg` (1024 px),
+  `.playmat-grid` empile les zones en une colonne (Field → Legends → Eddies →
+  Trash → Deck → Fixer) au lieu de reproduire le tapis ; accessibilité : `aria-*`
+  posés, navigation clavier partielle (Échap pour le ciblage).
 * Aucun son, aucun tutoriel intégré, pas d'affichage des textes de cartes au
   survol (`showAbilities` existe, le tooltip riche reste à faire).

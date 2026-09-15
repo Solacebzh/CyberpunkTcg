@@ -231,3 +231,401 @@
     color: #64748b;
   }
 }
+
+/* =============================================================================
+   Mini-feature : « Layout exact du Playmat »
+   La grille CSS ci-dessous est la transposition du tapis officiel
+   (docs/OFFICIAL-RULES.md § PLAYMAT AREAS) — ne pas réordonner les zones sans
+   mettre à jour `types/playmat.ts`, `PlayerBoard.vue` et les tests.
+   ============================================================================= */
+@layer components {
+  /* Tapis complet : bandeau Gigs en haut + les deux demi-tapis */
+  .playmat-surface {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--color-cyber-line);
+    border-radius: var(--radius-cyber);
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
+  }
+
+  /* Voile sombre : l'illustration du tapis reste une texture lisible sous les zones */
+  .playmat-surface::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(10, 10, 18, 0.84), rgba(10, 10, 18, 0.92));
+    pointer-events: none;
+  }
+
+  .playmat-surface__content {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.5rem;
+  }
+
+  /* --- Bandeau du haut : RIVAL GIGS | FRIENDLY GIGS ----------------------- */
+  .gigs-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+
+  .gigs-bar__side {
+    display: flex;
+    min-width: 0;
+  }
+
+  .gigs-bar__side > * {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .gigs-bar__waiting {
+    align-self: center;
+    margin: 0 auto;
+  }
+
+  .gigs-bar__side[data-active='true'] > .gig-counter {
+    border-color: var(--color-cyber-yellow);
+    box-shadow: 0 0 18px rgba(252, 238, 10, 0.25);
+  }
+
+  .gig-counter {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.4rem 0.6rem;
+  }
+
+  .gig-counter--leading {
+    border-color: rgba(57, 255, 136, 0.7);
+    box-shadow: 0 0 18px rgba(57, 255, 136, 0.3);
+  }
+
+  .gig-counter__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem 0.6rem;
+  }
+
+  /* --- Demi-tapis d'un joueur -------------------------------------------- */
+  .playmat-board {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.5rem;
+  }
+
+  .playmat-board--active {
+    border-color: rgba(5, 217, 232, 0.6);
+    box-shadow: 0 0 24px rgba(5, 217, 232, 0.18);
+  }
+
+  .playmat-board--rival {
+    background: rgba(0, 0, 0, 0.2);
+  }
+
+  .playmat-board--rival.playmat-board--active {
+    border-color: rgba(255, 42, 109, 0.6);
+    box-shadow: 0 0 24px rgba(255, 42, 109, 0.2);
+  }
+
+  .playmat-board__plate {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.5rem;
+  }
+
+  /* --- LA GRILLE DU TAPIS (disposition officielle) ------------------------
+     FIXER à gauche (colonne) · FIELD immense au centre-haut · DECK milieu-droite
+     LEGENDS / EDDIES / TRASH sur la ligne du bas.
+     ┌────────┬───────────────────┬────────┐
+     │        │  FIELD            │  DECK  │
+     │ FIXER  ├──────────┬────────┼────────┤
+     │        │ LEGENDS  │ EDDIES │ TRASH  │
+     └────────┴──────────┴────────┴────────┘
+   ----------------------------------------------------------------------- */
+  .playmat-grid {
+    display: grid;
+    gap: 0.4rem;
+    grid-template-columns:
+      minmax(3.4rem, 0.42fr)
+      minmax(0, 1.3fr)
+      minmax(0, 0.85fr)
+      minmax(3.4rem, 0.42fr);
+    grid-template-rows: minmax(10rem, 1fr) auto;
+    grid-template-areas:
+      'fixer field   field   deck'
+      'fixer legends eddies trash';
+  }
+
+  .playmat-zone {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+    min-height: 0;
+    padding: 0.25rem 0.3rem 0.35rem;
+    border: 1px dashed var(--color-cyber-line);
+    border-radius: var(--radius-cyber);
+    background: linear-gradient(180deg, rgba(10, 10, 18, 0.5), rgba(10, 10, 18, 0.85));
+  }
+
+  .playmat-zone__bar {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .playmat-zone__badge {
+    padding: 0 0.35rem;
+    font-size: 0.58rem;
+  }
+
+  .playmat-zone__body {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .playmat-zone__body > * {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .playmat-zone[data-zone='FIXER'] {
+    grid-area: fixer;
+  }
+
+  .playmat-zone[data-zone='FIELD'] {
+    grid-area: field;
+  }
+
+  .playmat-zone[data-zone='DECK'] {
+    grid-area: deck;
+  }
+
+  .playmat-zone[data-zone='LEGENDS'] {
+    grid-area: legends;
+  }
+
+  .playmat-zone[data-zone='EDDIES'] {
+    grid-area: eddies;
+  }
+
+  .playmat-zone[data-zone='TRASH'] {
+    grid-area: trash;
+  }
+
+  /* --- FIXER : colonne des dés d20 → d4 ---------------------------------- */
+  .fixer-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+  }
+
+  .fixer-dice {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+  }
+
+  .fixer-die {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.05rem;
+  }
+
+  .fixer-die__shape {
+    display: grid;
+    place-items: center;
+    width: 1.55rem;
+    height: 1.55rem;
+    border: 1px solid var(--color-cyber-line);
+    border-radius: 0.3rem;
+    background: rgba(0, 0, 0, 0.45);
+    transition: all 0.18s ease;
+  }
+
+  .fixer-die__shape--ready {
+    border-color: rgba(252, 238, 10, 0.65);
+    color: var(--color-cyber-yellow);
+    box-shadow: 0 0 10px rgba(252, 238, 10, 0.3);
+  }
+
+  .fixer-die__shape--spent {
+    opacity: 0.32;
+  }
+
+  .fixer-die__value {
+    font-family: var(--font-mono);
+    font-size: 0.6rem;
+    font-weight: 700;
+  }
+
+  .fixer-die__label {
+    font-family: var(--font-mono);
+    font-size: 0.45rem;
+    letter-spacing: 0.08em;
+    color: #64748b;
+  }
+
+  /* --- FIELD : la grande zone de combat ---------------------------------- */
+  .field-area {
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    align-items: flex-start;
+    gap: 0.4rem;
+    padding: 0.35rem;
+    border-radius: var(--radius-cyber);
+  }
+
+  .field-unit {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .field-unit__gears {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.25rem;
+  }
+
+  /* --- LEGENDS : exactement 3 emplacements ------------------------------- */
+  .legends-area {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.35rem;
+  }
+
+  .legend-slot {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+  }
+
+  .legend-slot__empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.2rem;
+    width: 74px;
+    min-height: 6.5rem;
+    border: 1px dashed var(--color-cyber-line);
+    border-radius: 0.6rem;
+    background: rgba(0, 0, 0, 0.3);
+  }
+
+  /* --- Piles de cartes (Deck, Eddies, Trash) ----------------------------- */
+  .card-pile {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+  }
+
+  .card-pile__empty {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 0.55rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: #475569;
+  }
+
+  .card-pile__top {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Épaisseur de la pile : couches décalées derrière la carte du dessus */
+  .card-pile__layer {
+    position: absolute;
+    inset: 0;
+    border: 1px solid var(--color-cyber-line);
+    border-radius: 0.6rem;
+    background: #0d0d16;
+    transform: translate(calc(var(--pile-layer) * 3px), calc(var(--pile-layer) * -3px));
+  }
+
+  /* Dos de carte de la pioche (le serveur n'envoie pas les cartes non piochées) */
+  .card-pile__back {
+    display: grid;
+    place-items: center;
+    width: 104px;
+    height: 146px;
+    border: 2px solid rgba(42, 42, 61, 0.9);
+    border-radius: 0.75rem;
+  }
+
+  .card-pile__count {
+    position: absolute;
+    right: -0.4rem;
+    bottom: -0.4rem;
+    padding: 0 0.3rem;
+    border: 1px solid var(--color-cyber-line);
+    border-radius: 999px;
+    background: var(--color-cyber-bg);
+    font-size: 0.6rem;
+    color: #cbd5e1;
+  }
+
+  /* --- Main (hors tapis) ------------------------------------------------- */
+  .hand-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    padding-top: 0.25rem;
+    border-top: 1px solid rgba(42, 42, 61, 0.7);
+  }
+
+  .hand-row__cards {
+    display: flex;
+    gap: 0.5rem;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+  }
+
+  /* --- Écrans étroits : le tapis s'empile (Field → Legends → Eddies → Trash → Deck → Fixer) --- */
+  @media (max-width: 1023px) {
+    .playmat-grid {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: auto;
+      grid-template-areas:
+        'field'
+        'legends'
+        'eddies'
+        'trash'
+        'deck'
+        'fixer';
+    }
+
+    .fixer-dice {
+      flex-direction: row;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .gigs-bar {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+}

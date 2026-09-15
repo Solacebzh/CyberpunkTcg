@@ -11,6 +11,11 @@
  * Vite proxifie `/api` et `/ws` vers ce port : `npm run dev` + `npm run mock:ws`
  * donnent une application jouable de bout en bout **sans JVM ni PostgreSQL**.
  *
+ * Les zones servies sont celles du protocole (`FIELD`, `HAND`, `TRASH`,
+ * `EDDIES_AREA`, `LEGENDS_AREA`, `DECK` + `gigs`/`fixerDice`) : le layout du tapis
+ * (« FIXER / GIGS / LEGENDS / EDDIES / TRASH / DECK ») est une traduction
+ * d'affichage faite par le frontend (`src/types/playmat.ts`) — rien à renommer ici.
+ *
  * ⚠️ Les règles appliquées ici sont un sous-ensemble de démonstration ; le
  * serveur de référence reste le backend Spring (docs/RULE-ENGINE.md).
  */

@@ -12,8 +12,9 @@ import { useRoute, useRouter } from 'vue-router'
 import GameOverOverlay from '@/components/game/GameOverOverlay.vue'
 import DebugPanel from '@/components/game/DebugPanel.vue'
 import GameLogPanel from '@/components/game/GameLogPanel.vue'
+import GigsBar from '@/components/game/GigsBar.vue'
 import PhaseIndicator from '@/components/game/PhaseIndicator.vue'
-import PlayerArea from '@/components/game/PlayerArea.vue'
+import PlayerBoard from '@/components/game/PlayerBoard.vue'
 import TargetingOverlay from '@/components/TargetingOverlay.vue'
 import { useGameAnimations } from '@/composables/useGameAnimations'
 import playmatUrl from '@/assets/playmat/playmat.jpg'
@@ -205,15 +206,7 @@ function onConcede(): void {
     <button type="button" class="cyber-btn" @click="backToLobby">Retour au lobby</button>
   </div>
 
-  <div v-else ref="board" class="flex flex-col gap-3 relative bg-cover bg-center" :style="{ backgroundImage: 'url(' + playmatUrl + ')' }">
-    <!-- Overlay zones du playmat officiel -->
-    <div class="absolute inset-0 pointer-events-none z-0">
-      <div class="absolute top-[8%] left-[10%] w-[20%] h-[10%] flex items-center justify-center bg-black/30 rounded text-cyber-cyan text-[0.6rem] font-mono border border-cyber-cyan/50">Fixer Area</div>
-      <div class="absolute top-[35%] left-[60%] w-[25%] h-[12%] flex items-center justify-center bg-black/30 rounded text-cyber-cyan text-[0.6rem] font-mono border border-cyber-cyan/50">Gig Area</div>
-      <div class="absolute bottom-[12%] left-[12%] w-[18%] h-[10%] flex items-center justify-center bg-black/30 rounded text-cyber-cyan text-[0.6rem] font-mono border border-cyber-cyan/50">RAM</div>
-      <div class="absolute bottom-[12%] right-[12%] w-[18%] h-[10%] flex items-center justify-center bg-black/30 rounded text-cyber-cyan text-[0.6rem] font-mono border border-cyber-cyan/50">Street</div>
-    </div>
-
+  <div v-else ref="board" class="flex flex-col gap-3">
     <PhaseIndicator
       :phase="game.phase"
       :turn-number="game.turnNumber"
@@ -223,9 +216,14 @@ function onConcede(): void {
       :waiting="game.waitingForServer"
     />
 
-    <div class="grid gap-3 xl:grid-cols-[minmax(0,1fr)_19rem]">
-      <div class="flex min-w-0 flex-col gap-3">
-        <PlayerArea
+    <!-- TAPIS OFFICIEL : compteurs Gigs tout en haut, puis les deux demi-tapis -->
+    <div class="playmat-surface" :style="{ backgroundImage: 'url(' + playmatUrl + ')' }">
+      <div class="playmat-surface__content">
+        <!-- TOUT EN HAUT : Rival Gigs | Friendly Gigs -->
+        <GigsBar :me="me" :opponent="opponent" :active-player-id="game.activePlayerId ?? null" />
+
+        <!-- Demi-tapis adverse : même grille officielle, cartes masquées par le serveur -->
+        <PlayerBoard
           v-if="opponent"
           :player="opponent"
           :is-me="false"
@@ -239,6 +237,24 @@ function onConcede(): void {
           @card-click="(card) => onCardClick(card, false)"
         />
 
+        <!-- Demi-tapis du joueur local -->
+        <PlayerBoard
+          :player="me"
+          :is-me="true"
+          :is-active="game.isMyTurn"
+          :definitions="decks.byId"
+          :selected-instance-id="game.selectedInstanceId"
+          :targetable-ids="targetingCandidates"
+          :actionable-ids="actionableIds"
+          :interactive="!game.isGameOver"
+          :disconnection="disconnection && disconnection.playerId === me.playerId ? disconnection : null"
+          @card-click="(card) => onCardClick(card, true)"
+        />
+      </div>
+    </div>
+
+    <div class="grid gap-3 xl:grid-cols-[minmax(0,1fr)_19rem]">
+      <div class="flex min-w-0 flex-col gap-3">
         <!-- Barre d'action -->
         <section class="cyber-panel flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2.5">
           <div data-anim="turn-banner" data-side="me" class="sr-only" aria-live="polite" />
@@ -301,19 +317,6 @@ function onConcede(): void {
             Termine ton intervention en cliquant « Fin de tour » (le serveur ferme la fenêtre).
           </p>
         </section>
-
-        <PlayerArea
-          :player="me"
-          :is-me="true"
-          :is-active="game.isMyTurn"
-          :definitions="decks.byId"
-          :selected-instance-id="game.selectedInstanceId"
-          :targetable-ids="targetingCandidates"
-          :actionable-ids="actionableIds"
-          :interactive="!game.isGameOver"
-          :disconnection="disconnection && disconnection.playerId === me.playerId ? disconnection : null"
-          @card-click="(card) => onCardClick(card, true)"
-        />
       </div>
 
       <div class="min-h-[22rem] space-y-3">
@@ -357,5 +360,9 @@ function onConcede(): void {
 </template>
 
 <style scoped>
-/* Alignement visuel fidèle au design officiel du playmat */
+/*
+ * La disposition du tapis officiel (grille `.playmat-grid`, zones `.playmat-zone`,
+ * piles, colonne Fixer…) vit dans `assets/main.css` : elle est partagée par les deux
+ * demi-tapis (`PlayerBoard`) et testée telle quelle.
+ */
 </style>

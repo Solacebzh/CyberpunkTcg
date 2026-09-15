@@ -184,6 +184,25 @@ const REQUIRED_LEGENDS = 3
 const REQUIRED_NON_LEGENDS = 10
 const DIE_FACES: Record<string, number> = { d4: 4, d6: 6, d8: 8, d10: 10, d12: 12, d20: 20 }
 const ROOM_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
+/**
+ * Zones internes → zones du **protocole** (`ZoneName`, alignées sur `ZoneDTO` Java).
+ *
+ * ⚠️ Ce vocabulaire est celui du transport et ne change pas : il est consommé tel quel
+ * par `frontend/src/types/game.ts`. Depuis la mini-feature « Layout exact du Playmat »,
+ * l'écran de jeu nomme les zones *à l'affichage* (`data-zone="FIXER|GIGS|FIELD|LEGENDS|
+ * EDDIES|TRASH|DECK"`, voir `frontend/src/types/playmat.ts`) mais continue de lire les
+ * mêmes champs serveur :
+ *
+ * | Zone jouée (serveur) | Zone playmat (affichage) |
+ * | --- | --- |
+ * | `field` / `FIELD` | `FIELD` (+ Gears attachés via `attachedTo`) |
+ * | `legendsArea` / `LEGENDS_AREA` | `LEGENDS` (3 slots) |
+ * | `eddiesArea` / `EDDIES_AREA` | `EDDIES` (cartes vendues face cachée) |
+ * | `trash` / `TRASH` | `TRASH` |
+ * | `deck` / `DECK` (`deckCount`) | `DECK` |
+ * | `hand` / `HAND` | `HAND` (hors tapis) |
+ * | `gigs` + `fixerDice` | `GIGS` (compteurs du haut) + `FIXER` (colonne des dés) |
+ */
 const ZONE_NAMES: Record<ZoneKey, ZoneName> = {
   deck: 'DECK',
   hand: 'HAND',
