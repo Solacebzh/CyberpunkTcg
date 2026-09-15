@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 /**
  * Carte en jeu (main, Field, Legends Area…).
  *
@@ -43,7 +43,7 @@ const props = withDefaults(
   },
 )
 
-const emit = defineEmits<{ click: [card: CardInstance] }>()
+
 
 const imageFailed = ref(false)
 
@@ -91,8 +91,16 @@ const effectiveCost = computed(() => props.card.cost ?? props.card.baseCost ?? n
 const buffed = computed(() => (props.card.powerBonus ?? 0) > 0)
 const damaged = computed(() => (props.card.damage ?? 0) > 0)
 
-function onClick(): void {
-  if (!props.selectable && !props.targetable) return
+
+
+// Correction de la Feature 5.5
+const emit = defineEmits<{
+  (e: 'click', card: CardInstance): void
+}>()
+
+const attachmentCount = computed(() => props.card.attachments?.length || 0)
+
+function handleClick(): void {
   emit('click', props.card)
 }
 </script>
@@ -102,11 +110,7 @@ function onClick(): void {
     :data-instance-id="card.instanceId"
     :data-card-zone="card.zone"
     :data-card-side="side"
-<<<<<<< HEAD
     class="relative shrink-0 select-none rounded-xl overflow-hidden shadow-[inset_0_0_30px_rgba(255,215,0,0.15)] border-2 bg-gradient-to-b from-[#18182b] to-[#0d0d18] transition-[transform,box-shadow,opacity] duration-150"
-=======
-    class="relative shrink-0 select-none overflow-hidden rounded-xl shadow-[0_0_25px_rgba(5,217,232,0.25)] border-[1.5px] bg-gradient-to-b from-[#171720] via-[#12121e] to-[#0a0a14] transition-all duration-200"
->>>>>>> bf258eb21253dbc7f528e11dcce637352b224c38
     :class="[
       size.box,
       selected ? 'ring-2 ring-cyber-cyan shadow-[0_0_30px_rgba(5,217,232,0.5)]' : '',
@@ -117,7 +121,7 @@ function onClick(): void {
     ]"
     :title="hidden ? 'Carte masquée' : card.name"
     :aria-label="hidden ? 'Carte masquée' : card.name"
-    @click="onClick"
+    @click="handleClick"
   >
     <!-- DOS -->
     <div
@@ -183,7 +187,6 @@ function onClick(): void {
         <div class="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-[#0a0a14]/90 via-[#0a0a14]/40 to-transparent pointer-events-none" />
       </div>
 
-<<<<<<< HEAD
       <!-- Nom + stats -->
       <div class="flex flex-col gap-1 px-1.5 py-1">
         <p class="truncate font-semibold leading-tight text-slate-100" :class="size.name">{{ card.name }}</p>
@@ -206,15 +209,6 @@ function onClick(): void {
           <span v-if="attachmentCount > 0" class="text-cyber-green" :title="`${attachmentCount} Gear(s) équipé(s)`">
             ⚙{{ attachmentCount }}
           </span>
-=======
-      <!-- TEXTE (Textbox officiel) -->
-      <div class="relative z-10 mx-2 mb-1 rounded border border-cyber-yellow/30 bg-gradient-to-b from-[#11111e]/95 to-[#0d0d18]/95 px-2 py-1.5 shadow-inner shadow-cyber-yellow/5">
-        <!-- Tags / Attributs -->
-        <div class="mb-1 flex flex-wrap gap-0.5">
-          <span v-if="definition?.tags?.includes('quick')" class="rounded-sm bg-cyber-yellow/20 px-1 text-[0.45rem] font-mono uppercase text-cyber-yellow">QUICK</span>
-          <span v-if="definition?.tags?.includes('blocker')" class="rounded-sm bg-cyber-cyan/20 px-1 text-[0.45rem] font-mono uppercase text-cyber-cyan">BLOCKER</span>
-          <span v-if="definition?.tags?.includes('go_solo')" class="rounded-sm bg-cyber-green/20 px-1 text-[0.45rem] font-mono uppercase text-cyber-green">GO SOLO</span>
->>>>>>> bf258eb21253dbc7f528e11dcce637352b224c38
         </div>
 
         <!-- Règles / Abilities -->
