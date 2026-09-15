@@ -17,7 +17,7 @@ Compléments : `docs/OFFICIAL-RULES.md` (scrap gameplay-guide 2026-09-15) | `doc
 | **R2 Cycle Eddies** | 3 | `testR2_EddiesResetEachTurn`, `testR2_EddiesLostAtEndIfNotSpent`, `testR2_EddiesSources` | 0 au début (reset), +1 Legend, +1 Eddies card, +effets, perdus à la fin (phase END) |
 | **R3 Legends ressources** | 3 | `testR3_LegendSpend_GivesEddieAndStays`, `testR3_LegendReadyNextTurn`, `testR3_LegendSpendExhaustedFails` | incliner face-down/up → +1, reste en Legends Area, redress START |
 | **R4 Legends jouables** | 3 | `testR4_FlipCostsOneEddie`, `testR4_FlipOncePerTurn`, `testR4_FlipStaysInLegendsArea` | Call 1 Eddie (once/turn, random), trigger CALL/FLIP, reste en place |
-| **R5 Vente** | 3 | `testR5_Sell_OnePerTurn_FaceDownEddiesArea`, `testR5_Sell_StaysAsFutureResource`, `testR5_Sell_ResetNextTurn` | 1/tour, révélée (CARD_REVEALED), faceDown EDDIES_AREA, +1 immédiat, ressource future |
+| **R5 Vente** | 3 | `testR5_Sell_OnePerTurn_FaceDownEddiesArea`, `testR5_Sell_StaysAsFutureResource`, `testR5_Sell_ResetNextTurn` | 1/tour, révélée (CARD_REVEALED), faceDown EDDIES_AREA **prête** (`exhausted=false`), **0 Eddie immédiat**, ressource inclinable (1 €$/tour) |
 | **R6 Eddies cards ressources** | 3 | `testR6_EddiesCard_TapGivesEddie`, `testR6_EddiesCard_ReadyNextTurn`, `testR6_EddiesCard_AlreadyExhaustedFails` | incliner Eddies → +1, même mécanique Legends, ready au START |
 | **R7 RAM** | 2 | `testR7_NoRamCheckInGame_RedWithoutRedLegend`, `testR7_HighRamStillPlayable` | RAM uniquement deckbuilding, aucune vérif en jeu (RAM_CEILING_ENFORCED=false) |
 | **R8 Phases** | 3 | `testR8_PhasesOrder`, `testR8_StartPhaseSteps`, `testR8_EndPhaseEddiesLost` | START ready→draw1→gain Gig (d20 last), MAIN (play/call/sell/attack), COMBAT, END (eddies lost) |
@@ -29,6 +29,14 @@ Compléments : `docs/OFFICIAL-RULES.md` (scrap gameplay-guide 2026-09-15) | `doc
 
 **Total: 51 tests `testR*` — tous au vert.**
 
+> **Mini-Feature 3 (« Vente = Création de ressource », 2026-09-15)** — une classe unitaire
+> dédiée s'ajoute hors de `GameIntegrationTest` :
+> `backend/src/test/java/com/cyberpunktcg/engine/command/SellCardCommandTest.java`
+> (5 tests `testR3_SellCard_*` : succès `EDDIES_AREA`/`faceDown`/`exhausted=false`, limite
+> 1 vente par tour, ressource inclinable dès ce tour, contextes illégaux, contrat de la
+> commande). Les 3 tests `testR5_Sell_*` ci-dessus restent au vert avec la règle corrigée
+> (**0 Eddie immédiat**, carte posée **prête**), de même que `testR2_EddiesSources`.
+
 ## Sources comparées
 
 - `docs/OFFICIAL-RULES.md` (scrap https://cyberpunktcg.com/gameplay-guide 2026-09-15)
@@ -37,7 +45,7 @@ Compléments : `docs/OFFICIAL-RULES.md` (scrap gameplay-guide 2026-09-15) | `doc
 - `backend/src/main/java/com/cyberpunktcg/engine/**` (RuleEngine, 5 commandes + SpendEddies)
 - `backend/src/main/java/com/cyberpunktcg/domain/game/Player.java` (eddies cycle, readyAll, hasCalledLegendThisTurn)
 - `backend/src/main/java/com/cyberpunktcg/service/GameService.java` (setup, first player Random)
-- `frontend/devtools/mock-protocol.ts` (aligné: vente 1/tour, QUICK, BLOCKER, 7 Gigs)
+- `frontend/devtools/mock-protocol.ts` (vente 1/tour, QUICK, BLOCKER, 7 Gigs — **à réaligner Mini-Feature 3** : le mock crédite encore `+1 Eddie` à la vente, `sellCard()` ligne ~1038 ; suivi frontend hors périmètre backend)
 
 ## Extraits d'assertions (TDD)
 
@@ -67,11 +75,14 @@ execute(state, new PlayCardCommand("p1", legend.getInstanceId()));
 assertThat(state.getPlayer("p1").getEddies()).isZero();
 assertThat(expectRefusal(state, new PlayCardCommand("p1", otherLegend.getInstanceId()))).contains("une seule fois");
 
-// R5 — vente
+// R5 — vente (Mini-Feature 3 : création de ressource, aucun Eddie immédiat)
 execute(state, new SellCardCommand("p1", first.getInstanceId()));
 assertThat(first.getZone()).isEqualTo(Zone.EDDIES_AREA);
 assertThat(first.isFaceDown()).isTrue();
-assertThat(state.getPlayer("p1").getEddies()).isEqualTo(1);
+assertThat(first.isExhausted()).isFalse();          // posée prête
+assertThat(state.getPlayer("p1").getEddies()).isZero();
+execute(state, new SpendEddiesCommand("p1", first.getInstanceId()));
+assertThat(state.getPlayer("p1").getEddies()).isEqualTo(1); // 1 €$ gagné en l'inclinant
 
 // R7 — RAM non vérifiée
 CardInstance red = GameFixtures.handCard(state, "p1", GameFixtures.coloredUnit("red", CardColor.RED, 6, 1,2));
@@ -105,7 +116,7 @@ Chaque test vérifie aussi le **journal de diagnostic** (`GameLog`) :
 3. **Premier joueur (R1)** : déjà tiré au sort via `Random` injectable ; malus 2 Legends spent vérifié.
 4. **RAM (R7)** : `GameConstants.RAM_CEILING_ENFORCED=false` ; `PlayCardCommand.requireRamCeiling` désactivé (garde deckbuilder uniquement). Tests `testR7_*` prouvent jouer rouge sans Legend rouge → SUCCESS.
 5. **Call a Legend (R4)** : `PlayCardCommand` branche Legend coûte désormais 1 Eddie + vérifie `hasCalledLegendThisTurn` (once/turn) + déclenche `FLIP` et `CALL`. Ajout champ `Player.hasCalledLegendThisTurn`.
-6. **Vente (R5)** : déjà révélée + faceDown EDDIES_AREA +1 immédiat ; carte reste future ressource (tap next turn). Tests `testR5_*`.
+6. **Vente (R5 → Mini-Feature 3 « Vente = Création de ressource »)** : carte révélée (`CARD_REVEALED`) puis posée en `EDDIES_AREA` `faceDown=true` **et `exhausted=false`** (prête). `SellCardCommand` **ne crédite plus aucun Eddie** (`player.addEddy()` supprimé) : l'Eddie est gagné en inclinant la carte (`SpendEddiesCommand`, R6), possible dès le tour de la vente. Limite inchangée : `SALES_PER_TURN=1`, phase `MAIN`. Tests `testR5_*` (intégration) + `engine/command/SellCardCommandTest` (`testR3_SellCard_GoesToEddiesArea_FaceDown_NotExhausted`, `testR3_SellCard_LimitOnePerTurn`, cas de refus).
 7. **Phases (R8)** : `Phase` inchangé (DRAW→MAIN→COMBAT→END) mais `EndTurnCommand` loggue l'ordre exact : `Phase DRAW` → `VICTORY_CHECK` (7 Gigs avant) → `TURN_RESET` (0 Eddie, ready) → `DRAW` pioche → `GIG_ROLL` → `Phase MAIN`. `AttackCommand` fait `MAIN→COMBAT`.
 8. **Combat (R9)** : `AttackCommand` vérifie `!isExhausted` + `!canIgnoreSummoningSickness()` (ADRENALINE/GO_SOLO). Combat compare `totalPowerFor` (Unit+Gears) ; égalité les deux vaincues → `Trash` + `ON_DEATH`. `BLOCKER` intercepte (ciblage forcé + vol interdit). Vol Gig : `1 + power/10` Gigs (0 power =0) — officiel.
 9. **Lag (R10)** : `CardInstance.canIgnoreSummoningSickness()` (GO_SOLO ou ADRENALINE) ; `Player.clearSummoningSickness` au `startTurn`.

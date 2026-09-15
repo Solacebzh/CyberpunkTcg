@@ -300,7 +300,7 @@ omis ou `null`) :
 | --- | --- | --- | --- |
 | `PLAY_CARD` | carte à jouer (main, ou Legend de la legends area pour la retourner) | obligatoire pour un **Gear** (l'Unit alliée équipée) ; optionnel pour les autres cartes qui ciblent | `PlayCardCommand` |
 | `ATTACK` | l'Unit attaquante | UUID d'une **Unit rivale** pour la combattre ; **absent/null** pour une attaque directe de vol de Gig | `AttackCommand` |
-| `SELL_CARD` | carte de sa main à vendre (1 vente/tour, phase Main) | — | `SellCardCommand` |
+| `SELL_CARD` | carte de sa main à vendre (1 vente/tour, phase Main ; **aucun Eddie immédiat** — la carte est révélée puis posée face cachée et prête en Eddies Area) | — | `SellCardCommand` |
 | `SPEND_LEGEND` | Legend **face cachée** de sa Legends Area à incliner (+1 Eddie, définitif) | — | `SpendLegendCommand` |
 | `END_TURN` | — | — | `EndTurnCommand` |
 | `CONCEDE` | — | — | abandon (victoire immédiate de l'adversaire) |
@@ -309,9 +309,11 @@ Règles appliquées par le serveur (rappel) : on joue en phase `MAIN`/`COMBAT` ;
 une Unit attaquante doit être prête, sans mal d'invocation (sauf `go_solo`) ;
 un `BLOCKER` rival prêt doit être attaqué avant de pouvoir voler un Gig ;
 pendant une fenêtre de réaction, le défenseur ne peut jouer que des cartes
-`quick` hors de son tour. La vente rapporte exactement 1 Eddie, et l'inclinaison
-d'une Legend face cachée également (`SPEND_LEGEND`, une seule fois par Legend :
-une Legend inclinée n'est jamais redressée). Le premier joueur commence avec
+`quick` hors de son tour. La vente ne rapporte **aucun** Eddie : elle crée une
+ressource (carte révélée, posée `faceDown` et prête en Eddies Area). L'Eddie est
+gagné en inclinant une carte — Legend (`SPEND_LEGEND`) ou carte de l'Eddies Area
+(`SPEND_EDDIES`) — pour exactement 1 €$ chacune, une fois par tour et par carte
+(redressées au début du tour suivant). Le premier joueur commence avec
 2 Legends déjà inclinées (malus de mise en place).
 
 Exemples de commandes :
@@ -614,7 +616,7 @@ Valeurs possibles de `type` (enum `GameEventType`) :
 | `PHASE_CHANGED` | transition Draw/Main/Combat/End |
 | `CARD_DRAWN` | pioche |
 | `CARD_PLAYED` | Unit posée / Program résolue / Gear équipé / Legend retournée |
-| `CARD_SOLD` | vente (+1 Eddie) |
+| `CARD_SOLD` | vente (carte révélée → Eddies Area face cachée, prête ; aucun Eddie immédiat) |
 | `LEGEND_FLIPPED` | retournement d'une Legend |
 | `ATTACK_DECLARED` | attaque déclarée (cible ou vol direct) |
 | `REACTION_WINDOW_OPENED` / `REACTION_WINDOW_CLOSED` | fenêtre QUICK du défenseur |

@@ -10,7 +10,7 @@ réservées aux cartes **QUICK**. Ils ne doivent plus être traités comme des o
 | --- | --- |
 | **Fixer Area** | Contient au départ les 6 dés Gig du joueur (`d4`, `d6`, `d8`, `d10`, `d12`, `d20`). |
 | **Gig Area** | Contient les Gigs contrôlés, y compris ceux volés au rival. |
-| **Eddies Area** | Chaque carte vendue face cachée vaut 1 Eddie ; la carte est révélée avant d'y être posée. |
+| **Eddies Area** | Chaque carte vendue face cachée vaut 1 Eddie **par tour** (en l'inclinant) ; la carte est révélée avant d'y être posée, face cachée et prête. La vente elle-même ne crédite aucun Eddie. |
 | **Legends Area** | Les 3 Legends du joueur commencent face cachée. Une Legend — face cachée ou révélée — peut être **inclinée** (dépensée) pour gagner 1 Eddie : c'est la réserve d'Eddies du joueur. Elle reste inclinée jusqu'au début du tour suivant de son propriétaire, qui la **redresse** (phase de début). |
 | **Field** | Units et cartes qui leur sont équipées. |
 | **Trash** | Cartes défaussées, vaincues ou résolues. |
@@ -59,14 +59,16 @@ Exemple : deux Legends à 2 RAM vert et une Legend à 2 RAM rouge autorisent les
 
 Le joueur actif peut jouer des cartes, activer des effets et attaquer dans l'ordre autorisé par les règles.
 
-**Vente confirmée : une seule fois par tour.** Le joueur peut vendre une carte de sa main portant le tag de
-vente. Elle est révélée puis placée face cachée dans l'Eddies Area et vaut exactement 1 Eddie, quel que soit
-son coût imprimé. Une deuxième vente pendant le même tour est illégale.
+**Vente confirmée : une seule fois par tour — la vente crée une ressource.** Le joueur peut vendre une carte
+de sa main portant le tag de vente. Elle est révélée au rival puis placée face cachée dans l'Eddies Area,
+**prête** (non inclinée) : la vente ne rapporte **aucun Eddie immédiatement**. Quel que soit son coût imprimé,
+la carte vendue vaut ensuite exactement 1 Eddie **par tour**, gagné en l'inclinant — y compris dès le tour de
+la vente. Une deuxième vente pendant le même tour est illégale.
 
 **Eddies : incliner une Legend.** Une Legend de la Legends Area — face cachée ou révélée — peut être inclinée
 pendant la phase principale ou la phase de combat pour +1 Eddie ; elle reste inclinée jusqu'au début du tour
-suivant de son propriétaire, qui la redresse. Les Eddies ainsi obtenus, comme ceux des ventes, sont dépensés pour payer les
-coûts : `coût payé = max(0, coût imprimé − remise)`. Le Street Cred est un seuil : il n'est pas consommé
+suivant de son propriétaire, qui la redresse. Les Eddies ainsi obtenus, comme ceux des cartes vendues
+inclinées, sont dépensés pour payer les coûts : `coût payé = max(0, coût imprimé − remise)`. Le Street Cred est un seuil : il n'est pas consommé
 lorsqu'un effet vérifie sa valeur.
 
 **RAM en partie.** Le plafond de RAM par couleur (somme des RAM des Legends) est vérifié à la pose d'une
@@ -124,7 +126,8 @@ Le scraper détecte ces mots-clés dans le champ API et dans le balisage du text
 - `salesPerTurn = 1` ;
 - une action dans la fenêtre de réaction exige `quick` ;
 - les limites RAM sont calculées par couleur lors de la validation du deck **et** vérifiées à la pose ;
-- les Eddies proviennent des Legends inclinées (+1, redressées au début du tour suivant), des cartes de
-  l'Eddies Area inclinées (+1) et de la vente unique du tour (+1) ; la réserve retombe à 0 en début de tour ;
+- les Eddies proviennent des Legends inclinées (+1, redressées au début du tour suivant) et des cartes de
+  l'Eddies Area inclinées (+1) ; la vente unique du tour ne crédite **rien** — elle crée la ressource
+  (carte révélée, posée face cachée et prête en Eddies Area) ; la réserve retombe à 0 en début de tour ;
 - le premier joueur commence avec 2 Legends inclinées (malus de mise en place), le second avec 0 ;
 - les tirages et lancers utilisent une graine journalisée pour permettre les replays déterministes.

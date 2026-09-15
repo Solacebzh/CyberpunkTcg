@@ -19,9 +19,13 @@ import java.util.UUID;
  *   {@code d4, d6, d8, d10, d12, d20} : le {@code d20} est donc lancé en
  *   dernier, conformément aux règles ;</li>
  *   <li>les Eddies (notés « €$ ») forment une réserve persistante ; ils
- *   s'obtiennent en inclinant une Legend (épuisée, +1 Eddie) ou en vendant une
- *   carte de sa main (+1 Eddie, 1 vente par tour), et se dépensent pour payer
- *   les coûts imprimés ;</li>
+ *   s'obtiennent en inclinant une Legend ({@link #spendLegendForEddies}, +1 Eddie)
+ *   ou une carte de l'Eddies Area ({@link #spendEddiesCardForEddies}, +1 Eddie),
+ *   et se dépensent pour payer les coûts imprimés ;</li>
+ *   <li>vendre une carte de sa main (1 vente par tour, {@link #hasSoldThisTurn()})
+ *   ne crédite <strong>aucun</strong> Eddie : la vente <em>crée</em> la ressource —
+ *   la carte est révélée puis posée face cachée et prête dans l'Eddies Area, où
+ *   elle vaut 1 €$ par tour en l'inclinant ;</li>
  *   <li>la Legends Area sert aussi de réserve d'Eddies : une Legend inclinée
  *   ({@link #spendLegendForEddies}) est dépensée jusqu'au début du tour suivant
  *   ({@link #startTurn()} la redresse) ;</li>
@@ -159,6 +163,14 @@ public class Player {
         return eddies;
     }
 
+    /**
+     * Crédite 1 Eddie à la réserve du joueur.
+     *
+     * <p>Mini-Feature 3 : la vente d'une carte n'utilise plus cette méthode — elle
+     * crée une ressource dans l'Eddies Area ({@code SellCardCommand}). Les Eddies
+     * sont gagnés en inclinant une carte ({@link #spendLegendForEddies},
+     * {@link #spendEddiesCardForEddies}) ou via un effet de carte.</p>
+     */
     public void addEddy() {
         this.eddies += 1;
     }
