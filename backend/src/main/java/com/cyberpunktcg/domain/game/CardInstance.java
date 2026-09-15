@@ -282,6 +282,15 @@ public class CardInstance {
         return hasKeyword(CardKeyword.GO_SOLO);
     }
 
+    public boolean hasAdrenaline() {
+        return hasKeyword(CardKeyword.ADRENALINE) || hasKeyword(CardKeyword.GO_SOLO);
+    }
+
+    /** Peut attaquer le tour où elle est jouée (Lag ignoré). */
+    public boolean canIgnoreSummoningSickness() {
+        return hasGoSolo() || hasAdrenaline();
+    }
+
     /**
      * Coût en Eddies de l'exemplaire (0 si aucun coût imprimé).
      * La remise du joueur ({@code REDUCE_COST}) est appliquée par l'appelant.

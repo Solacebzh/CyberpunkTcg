@@ -33,5 +33,9 @@ public enum EffectType {
      * Diminue la valeur d'un Gig du bénéficiaire (« Decrease a rival Gig by up to N »),
      * sans descendre sous 1.
      */
-    REDUCE_GIG
+    REDUCE_GIG,
+    /** Défausse/trash N cartes du dessus du deck (R13 DDCARD). */
+    DISCARD,
+    /** Buff générique (+N power) alias de GRANT_POWER (R13 BUFF). */
+    BUFF
 }

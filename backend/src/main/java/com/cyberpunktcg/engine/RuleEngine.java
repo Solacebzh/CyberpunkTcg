@@ -48,6 +48,8 @@ public class RuleEngine {
         registered.put(EffectType.DEFEAT_UNIT, new DefeatUnitHandler());
         registered.put(EffectType.BOOST_GIG, new BoostGigHandler());
         registered.put(EffectType.REDUCE_GIG, new ReduceGigHandler());
+        registered.put(EffectType.DISCARD, new DiscardHandler());
+        registered.put(EffectType.BUFF, new BuffHandler());
         this.handlers = Collections.unmodifiableMap(registered);
         this.triggerDepth = 0;
     }
@@ -465,6 +467,51 @@ public class RuleEngine {
             state.appendEvent(GameEventType.EFFECT_RESOLVED, victim.getId(),
                     "Gig diminué (nouvelle valeur " + lowered.get()
                             + ", Street Cred " + victim.getStreetCred() + ")");
+        }
+    }
+
+    /** Gère l'effet DISCARD : trash N cartes du dessus du deck (Glossary TRASH). */
+    private class DiscardHandler implements EffectHandler {
+        @Override
+        public void apply(GameState state, CardInstance source, GameEffect effect, CardInstance target) {
+            String ownerId = source.getOwnerId();
+            if (effect.getTarget() == EffectTarget.RIVAL_PLAYER) {
+                ownerId = state.getOpponent(source.getOwnerId()).getId();
+            }
+            Player player = state.getPlayer(ownerId);
+            int count = effect.getValue();
+            int trashed = 0;
+            for (int i = 0; i < count; i++) {
+                if (player.getDeck().isEmpty()) break;
+                CardInstance top = player.getDeck().remove(0);
+                top.setZone(Zone.TRASH);
+                player.getTrash().add(top);
+                trashed++;
+            }
+            state.appendEvent(GameEventType.EFFECT_RESOLVED, ownerId,
+                    "DISCARD " + trashed + "/" + count + " cartes trashées");
+        }
+    }
+
+    /** Gère l'effet BUFF : alias de GRANT_POWER (+N power sur SELF). */
+    private class BuffHandler implements EffectHandler {
+        @Override
+        public void apply(GameState state, CardInstance source, GameEffect effect, CardInstance target) {
+            List<CardInstance> targets = resolveUnitTargets(state, source, effect, target);
+            if (targets.isEmpty()) {
+                // Fallback : buff self if no target resolved
+                targets = Collections.singletonList(source);
+            }
+            for (CardInstance buffed : targets) {
+                if (buffed.getBasePower() == null) {
+                    state.appendEvent(GameEventType.EFFECT_RESOLVED, source.getOwnerId(),
+                            "BUFF sans effet (cible sans puissance)");
+                    continue;
+                }
+                buffed.setPowerBonus(buffed.getPowerBonus() + effect.getValue());
+                state.appendEvent(GameEventType.EFFECT_RESOLVED, source.getOwnerId(),
+                        "BUFF +" + effect.getValue() + " (puissance " + buffed.getEffectivePowerOrZero() + ")");
+            }
         }
     }
 

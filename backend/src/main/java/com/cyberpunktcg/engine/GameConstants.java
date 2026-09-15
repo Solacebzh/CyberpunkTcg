@@ -42,12 +42,12 @@ public final class GameConstants {
     public static final int REQUIRED_LEGENDS = 3;
 
     /**
-     * Plafond de RAM activé en partie : une carte dont la RAM dépasse le plafond
-     * de sa couleur (somme des RAM des Legends du joueur) est illégale.
-     * Il ne s'agit pas d'une ressource consommée : un joueur peut jouer autant de
-     * cartes que voulu sous le plafond (arbitrage joueur, feature 6.5).
+     * Plafond de RAM activé en partie — <strong>désactivé en V0 (R7)</strong> :
+     * la RAM sert UNIQUEMENT au deckbuilding (Guide § DECK BUILDING & RAM).
+     * En jeu, aucune vérification de RAM n'est effectuée ({@link com.cyberpunktcg.engine.command.PlayCardCommand}
+     * ne vérifie plus la RAM). Conserver la constante pour le deckbuilder frontend.
      */
-    public static final boolean RAM_CEILING_ENFORCED = true;
+    public static final boolean RAM_CEILING_ENFORCED = false;
 
     /** Nombre maximal d'entrées conservées par le journal de diagnostic. */
     public static final int MAX_LOG_ENTRIES = GameLog.MAX_ENTRIES;

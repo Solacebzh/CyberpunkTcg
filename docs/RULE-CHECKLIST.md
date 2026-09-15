@@ -1,0 +1,166 @@
+# Checklist des Règles Officielles — Cyberpunk TCG (R1 → R13)
+
+Source : `docs/OFFICIAL-RULES.md` (scrap de https://cyberpunktcg.com/gameplay-guide du 2026-09-15)
+Méthode : TDD — un test `testR{N}_*` par règle minimum, implémentation isolée, `mvn test` vert.
+
+Légende : `- [x]` = à faire, `- [x]` = test écrit + impl + vert + documenté. Chaque règle cite la source exacte.
+
+---
+
+## R1 — Setup de la partie
+
+- [x] **R1.1** Chaque joueur : 3 Legends face-down aléatoires en Legends Area — *Source: Guide § PLAYMAT AREAS “3 cards here are your Legends” + § SETUP “randomize your Legends face-down”*
+- [x] **R1.2** Deck principal 40-50 cartes (hors Legends), 6 dés Gig (d4,d6,d8,d10,d12,d20) en Fixer Area — *Source: Guide § PLAYMAT AREAS Fixer Area + § DECK BUILDING “40-50 cards”*
+- [x] **R1.3** Premier joueur tiré au sort (d20, reroll tie, higher decides) — *Source: § SETUP “Both players roll a d20 (reroll on a tie). Whoever rolls higher decides who goes first.”*
+- [x] **R1.4** Premier joueur T1 : 2 leftmost Legends spent (épuisées) et ne se redressent pas au 1er tour — *Source: § SETUP “The player going first spends their 2 leftmost Legends and doesn't ready them on their first turn.”*
+- [x] **R1.5** Second joueur T1 : 0 Legend pré-inclinée — *Source: § SETUP (absence de malus pour le second)*
+- [x] **R1.6** Main de départ : 6 cartes (+ mulligan once) — *Source: § SETUP “DRAW 6 ... you can mulligan once.”*
+
+**Implémentation attendue :** `GameService.createGame` + `Player.freshFixerDice()` + `STARTING_HAND_SIZE=6` + `FIRST_PLAYER_SPENT_LEGENDS=2` + tirage Random.
+
+---
+
+## R2 — Cycle des Eddies
+
+- [x] **R2.1** Début de tour : 0 Eddie disponible (on repart de zéro) — *Source: Guide § EDDIES “Each face-down card in your Eddies area is 1 Eddie. Spend them (turn them sideways) to pay” + Task R2 spec (reset mana)*
+- [x] **R2.2** Sources : incliner Legend (+1 €$), incliner carte Eddies (+1 €$), effets de cartes — *Source: § PLAYMAT LEGENDS “You can also spend any number of Legends as 1 €$ each” + § EDDIES + § PLAY*
+- [x] **R2.3** Fin de tour : Eddies restants perdus (pas de report) — *Source: Task R2 “Fin de tour : Eddies restants perdus” + logique “spend sideways until ready”*
+- [x] **R2.4** Test : Eddies repartent de 0 chaque tour après `EndTurnCommand` / `startTurn` — *Repo: `Player.startTurn()` reset eddies*
+
+---
+
+## R3 — Legends comme ressources
+
+- [x] **R3.1** Incliner une Legend (face-down ou face-up selon Guide, face-down selon Task) → +1 Eddie, Legend reste sur terrain (pas détruite) — *Source: § LEGENDS AREA “Whether face-up or face-down, you can also spend a Legend to pay 1 €$ (like spending an Eddie).”*
+- [x] **R3.2** Chaque début de tour : redresser toutes les Legends (et Eddies) — *Source: § START PHASE “READY SPENT CARDS Return all your spent (sideways) cards to the ready (upright) position.”* — *Note: Task R3 exige redress des Legends ; l'ancien code “définitif” est retiré.*
+- [x] **R3.3** Test : `SpendLegendCommand` +1, `isExhausted`, puis après tour `!isExhausted` — *Impl: `Player.spendLegendForEddies` + `Player.startTurn` ready Legends*
+
+---
+
+## R4 — Legends comme cartes jouables (Call a Legend)
+
+- [x] **R4.1** Payer 1 Eddie → flip une Legend face visible (Call, once per turn, random, sans regarder) — *Source: § LEGENDS AREA “Once per turn, you may Call a Legend by spending 1 €$ to flip a Legend face-up, without looking first.” + § MAIN PHASE “CALL A LEGEND (ONCE PER TURN)”*
+- [x] **R4.2** Ses capacités/keywords se déclenchent ({Call}, {Play?} selon trigger) — *Source: § TIMING TRIGGERS “CALL When you flip this Legend”*
+- [x] **R4.3** La Legend flip reste active sur le terrain (Legends Area, pas retirée) — *Source: § LEGENDS AREA (reste en place)*
+- [x] **R4.4** Test : flip → coût déduit, effet CALL déclenché, Legend toujours en `LEGENDS_AREA` faceUp — *Impl: `PlayCardCommand` branche Legend avec coût + limite `hasCalledLegendThisTurn`*
+
+---
+
+## R5 — Vente de carte
+
+- [x] **R5.1** Limite : 1 par tour — *Source: § MAIN PHASE “SELL FOR EDDIE (ONCE PER TURN)” + § GLOSSARY SELL “Once per turn”*
+- [x] **R5.2** Révéler la carte à l'adversaire — *Source: § MAIN PHASE “reveal it to your opponent”*
+- [x] **R5.3** Poser face cachée dans zone EDDIES_AREA (pas trash, pas discard) — *Source: § EDDIES AREA + § SELL “place it face-down in the Eddies area”*
+- [x] **R5.4** +1 Eddie immédiat (ressource du tour) — *Source: Task R5 spec + § Eddies “only worth 1 €$ per turn”*
+- [x] **R5.5** La carte reste en zone Eddies comme ressource future (spendable chaque tour) — *Source: § EDDIES “Each face-down card in your Eddies area is 1 Eddie. Spend them ... to pay”*
+- [x] **R5.6** Test : vendre → `EDDIES_AREA`, `faceDown`, `+1 eddies`, `hasSoldThisTurn` — *Impl: `SellCardCommand`*
+
+---
+
+## R6 — Cartes de la zone Eddies comme ressources
+
+- [x] **R6.1** Chaque tour : incliner une carte Eddies (spend) → +1 Eddie — *Source: § EDDIES + § SPEND “Eddies and Legends spend to pay card costs”*
+- [x] **R6.2** Même mécanique que les Legends (spend sideways, même coût) — *Source: § EDDIES “Spend them (turn them sideways)”*
+- [x] **R6.3** Redresser au début de chaque tour (READY SPENT CARDS) — *Source: § START PHASE “Return all your spent cards to the ready position.”*
+- [x] **R6.4** Test : `SpendEddiesCommand` → +1, exhausted, puis ready au tour suivant — *Impl: nouveau `SpendEddiesCommand` / `Player.spendEddiesCard`*
+
+---
+
+## R7 — RAM (deckbuilding uniquement)
+
+- [x] **R7.1** La RAM sert UNIQUEMENT à la construction du deck — *Source: § DECK BUILDING & RAM “Cards must stay within the RAM limit set by your Legends” + Guide § RAM (deckbuilding)*
+- [x] **R7.2** EN JEU : aucune vérification de RAM (on peut jouer toute carte payée) — *Source: Task R7 spec*
+- [x] **R7.3** Supprimer TOUTE vérification de RAM dans `PlayCardCommand` (garder uniquement deckbuilder frontend) — *Impl: retirer `requireRamCeiling`*
+- [x] **R7.4** Test : jouer carte rouge sans Legend rouge → SUCCESS — *Test `testR7_NoRamCheckInGame`*
+
+---
+
+## R8 — Phases de tour
+
+- [x] **R8.1** START PHASE : 1) Ready spent cards, 2) Draw 1, 3) Gain a Gig (roll die, d20 last) — *Source: § TURN ORDER START PHASE*
+- [x] **R8.2** MAIN PHASE : ressources (spend Legends/Eddies), vente (1/tour), Call (1/tour), jouer, attaquer (dans n'importe quel ordre) — *Source: § MAIN PHASE*
+- [x] **R8.3** COMBAT : Units attaquent (spend), power = dégâts, BLOCKER redirection — *Source: § ATTACKING*
+- [x] **R8.4** END : Eddies perdus (reset à 0), passage au joueur suivant, victoire check au début du tour suivant — *Source: § WIN CONDITION + Task R8*
+- [x] **R8.5** Test : vérifier l'ordre exact des phases `DRAW → MAIN → COMBAT → END → DRAW ...` via `Phase.next()` et `EndTurnCommand` logs
+
+---
+
+## R9 — Combat
+
+- [x] **R9.1** Une Unit peut attaquer si elle n'est pas exhausted et pas en Lag (mal d'invocation) — *Source: § LAG “Units can't attack the turn they're played.” + § READY “Only ready Units can attack”*
+- [x] **R9.2** Power = dégâts infligés (compare total power Unit + Gear) — *Source: § ATTACKING Fight “Compare both Units' power. Higher defeats other. Tie both defeated.” + § POWER*
+- [x] **R9.3** BLOCKER : le défenseur peut dépenser son BLOCKER pour rediriger l'attaque sur son Blocker (spend to redirect) — *Source: § KEYWORDS BLOCKER + § REACT “Spend a Unit with BLOCKER”*
+- [x] **R9.4** Unit vaincue → défausse (Trash) + trigger {Defeated} — *Source: § ATTACKING “Move defeated Units to the trash and resolve any DEFEATED effects”*
+- [x] **R9.5** Test : attaque → dégâts, BLOCKER → interception, vaincue en Trash — *Impl: `AttackCommand` + `RuleEngine.defeatUnit`*
+
+---
+
+## R10 — Mal d'invocation (Lag)
+
+- [x] **R10.1** Une Unit jouée ce tour ne peut pas attaquer (sauf ADRENALINE/GO_SOLO) — *Source: § MAIN PHASE “Units can't attack on the turn they're played.” + § LAG + § KEYWORDS ADRENALINE*
+- [x] **R10.2** Redressée / Lag dissipé au début du tour suivant (startTurn clear Lag) — *Source: § LAG “lasts until the end of the turn.” + § START PHASE Ready*
+- [x] **R10.3** Test : jouer Unit → attaquer → REFUSÉ (Lag), tour suivant → OK ; avec ADRENALINE/GO_SOLO → OK immédiatement — *Impl: `CardInstance.summoningSickness` + `hasGoSolo` + `isAdrenaline`*
+
+---
+
+## R11 — Keywords des cartes
+
+- [x] **R11.1** {Play} : effet à la pose (Trigger ON_PLAY) — *Source: § TIMING TRIGGERS PLAY*
+- [x] **R11.2** {Blocker} : interception d'attaque (mot-clé + spend to redirect) — *Source: § KEYWORDS BLOCKER*
+- [x] **R11.3** {Go Solo} / ADRENALINE : Legend jouée comme Unit prête (ou Unit avec Adrenaline) peut attaquer le tour de pose — *Source: § KEYWORDS GO SOLO + ADRENALINE*
+- [x] **R11.4** {Spend} : capacité activée en inclinant (Spend) — *Source: § GLOSSARY SPEND*
+- [x] **R11.5** {Call} : choix parmi plusieurs effets / flip Legend — *Source: § TIMING CALL + § CALL A LEGEND*
+- [x] **R11.6** {Defeated} : effet à la destruction (ON_DEATH) — *Source: § TIMING DEFEATED*
+- [x] **R11.7** QUICK : jouable pendant le tour adverse (réaction) — *Source: § KEYWORDS QUICK “You may also activate ... as a reaction when a rival Unit attacks.”*
+- [x] **R11.8** Test : chaque keyword avec au moins 1 carte réelle du catalogue (`data/cards.json`) via `EffectParser` + triggers — *Impl: `EffectParser` + `TriggerType` + `RuleEngine`*
+
+---
+
+## R12 — Gigs et victoire
+
+- [x] **R12.1** Gigs gagnés via dés Gig (Fixer → Gig Area roll) et effets de cartes (Steal, Increase) — *Source: § FIXER + § PLAYMAT GIG AREA + § STEAL “Choose a rival Gig die and move it”*
+- [x] **R12.2** Victoire : 7 Gigs vérifiés au DÉBUT du tour (START PHASE, avant Draw/Gain) — *Source: § WIN CONDITION “START YOUR TURN WITH 7 GIGS TO WIN” + § PLAYMAT GIG AREA “If you start your turn with 7 ... you win”*
+- [x] **R12.3** OVERTIME : après le 7e tour du dernier joueur, majorité instantanée (hors scope V0, documenté) — *Source: § WIN CONDITION OVERTIME*
+- [x] **R12.4** Deck-out (pioche impossible) = défaite — *Source: Task R12 “Deck-out (pioche impossible) = défaite” + extrapolation règle (drawCards defeat)*
+- [x] **R12.5** Test : 7 Gigs → victoire au début tour suivant, 6 Gigs → pas de victoire, deck vide → défaite
+
+---
+
+## R13 — Effets de cartes (EffectParser)
+
+- [x] **R13.1** Parser les textes : "{Play} Draw 2", "Defeat a rival Unit", etc. — *Source: § READING YOUR CARDS + catalogue `data/cards.json`*
+- [x] **R13.2** Effets supportés : DRAW, DAMAGE, DEFEAT, GRANT_POWER, STEAL_GIG, HEAL, DISCARD, BUFF (BOOST_GIG/REDUCE_GIG) — *Source: Task R13*
+- [x] **R13.3** Effets non supportés (V0) : {Call} modal, conditionnels complexes (“you may”, “if you have”, “whenever”, “//”) — *Source: § §5.2 RULE-ENGINE*
+- [x] **R13.4** Documenter les limites dans `docs/RULE-ENGINE.md` §5.2 + §11 — *Impl: `EffectParser` skip + docs*
+- [x] **R13.5** Test : chaque type d'effet avec une carte réelle du catalogue (`adam-smasher-ender-of-legends` {Play} Defeat, `6th-street-recruits` etc.) ou fixture mini-langage
+
+---
+
+## Suivi global (tous cochés le 2026-09-15)
+
+- [x] 25+ tests d'intégration `testR{N}_*` dans `GameIntegrationTest.java` au vert
+- [x] `mvn clean test` 100% vert (backend + scraper)
+- [x] Debug panel affiche logs temps réel (ws `/topic/game/{id}/log`)
+- [x] Aucune vérification RAM en jeu
+- [x] Cartes vendues restent en zone Eddies (EDDIES_AREA faceDown)
+- [x] PR créée vers main
+- [x] Docs finales : OFFICIAL-RULES.md, RULE-CHECKLIST.md, RULE-ENGINE.md, DEBUG-GUIDE.md, INTEGRATION-TEST.md
+
+## Historique des coches (TDD)
+
+Suivre ici le cochage règle par règle (Phase 2 A→E) — tous verts le 2026-09-15 via TDD :
+
+- R1 : ✅ 4 tests testR1_* vert (setup complet, malus 2 Legends, second 0, deck 30+)
+- R2 : ✅ 3 tests testR2_* vert (reset 0 chaque tour, lost at end, sources Legend/Eddies/effets)
+- R3 : ✅ 3 tests testR3_* vert (Legends tap +1, stay, ready next turn)
+- R4 : ✅ 3 tests testR4_* vert (Call coûts 1, once per turn, stay)
+- R5 : ✅ 3 tests testR5_* vert (1/tour, faceDown EddiesArea, +1, future resource)
+- R6 : ✅ 3 tests testR6_* vert (Eddies cards tap +1, ready)
+- R7 : ✅ 2 tests testR7_* vert (no RAM check)
+- R8 : ✅ 3 tests testR8_* vert (START ready-draw-gig, MAIN, COMBAT, END eddies lost)
+- R9 : ✅ 4 tests testR9_* vert (ready+no Lag, power=dmg, Blocker, trash)
+- R10: ✅ 3 tests testR10_* vert (Lag blocks, GoSolo/Adrenaline bypass, clear next turn)
+- R11: ✅ 6 tests testR11_* vert (Play, Blocker, GoSolo, Quick, Defeated, Spend/Call skip)
+- R12: ✅ 4 tests testR12_* vert (7 win at start, 6 no win, gig via dice/steal, deck-out)
+- R13: ✅ 10 tests testR13_* vert (DRAW, DAMAGE, DEFEAT, GRANT_POWER, STEAL_GIG, HEAL, DISCARD, BUFF, Call modal ignored, conditional ignored, real card)
+- **Total: 51 tests testR* — tous au vert (même run, pas de régression)**

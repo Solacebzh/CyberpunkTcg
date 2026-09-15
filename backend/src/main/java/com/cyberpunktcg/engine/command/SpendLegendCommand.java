@@ -15,16 +15,11 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Incline une Legend pour gagner un Eddie (« €$ »).
+ * Incline une Legend pour gagner un Eddie (« €$ ») — R3 / R6.
  *
- * <p>Économie confirmée (feature 6.5) : les Legends face cachée de la Legends Area
- * forment la réserve d'Eddies du joueur. Incliner une Legend (l'épuiser) rapporte
- * {@link GameConstants#EDDIES_PER_LEGEND} Eddie et la dépense
- * <strong>définitivement</strong> — elle n'est pas redressée au début du tour
- * suivant, contrairement aux Units du Field. Une Legend retournée (jouée) ne
- * sert plus de réserve. Le premier joueur subit le malus de mise en place : ses
- * {@link GameConstants#FIRST_PLAYER_SPENT_LEGENDS} premières Legends sont déjà
- * inclinées, il ne peut donc encaisser qu'un seul Eddie de cette réserve.</p>
+ * <p>Règle officielle (Guide § LEGENDS AREA) : Whether face-up or face-down, you can also spend a Legend to pay 1 €$ (like spending an Eddie).
+ * En V0 on matérialise par : incliner la carte (exhausted = true) → +1 au compteur Eddies.<br>
+ * Le compteur est remis à 0 au début de chaque tour (R2), et la carte est redressée au START PHASE (R3).</p>
  *
  * <p>Timing : phase {@code MAIN} ou {@code COMBAT} du joueur actif (l'inclinaison
  * sert à payer les cartes jouées dans le même tour).</p>
@@ -76,9 +71,7 @@ public class SpendLegendCommand implements GameCommand {
         if (!legend.isPresent()) {
             throw new GameRuleException("Legend introuvable dans la Legends Area");
         }
-        if (!legend.get().isFaceDown()) {
-            throw new GameRuleException("Cette Legend est retournée (jouée) : elle ne peut plus servir d'Eddie");
-        }
+        // R3 : Legend reste sur le terrain ; inclinable qu'elle soit face-down ou face-up (Guide officiel)
         if (legend.get().isExhausted()) {
             throw new GameRuleException("Cette Legend est déjà inclinée (Eddies déjà perçus)");
         }

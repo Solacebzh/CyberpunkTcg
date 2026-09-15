@@ -15,5 +15,7 @@ public enum TriggerType {
     /** Une Legend est retournée face visible (gratuit, sans coût Eddies). */
     FLIP,
     /** Carte {@code QUICK} jouée en réaction (fenêtre ouverte par une attaque). */
-    QUICK
+    QUICK,
+    /** Legend Call : flip via Call a Legend (Guide § CALL A LEGEND). */
+    CALL
 }

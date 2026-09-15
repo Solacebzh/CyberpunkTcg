@@ -7,11 +7,15 @@ import java.util.Arrays;
 
 public enum CardKeyword {
     GO_SOLO("go_solo"),
+    ADRENALINE("adrenaline"),
     BLOCKER("blocker"),
     QUICK("quick"),
     FLIP("flip"),
     PLAY("play"),
-    ATTACK("attack");
+    ATTACK("attack"),
+    CALL("call"),
+    DEFEATED("defeated"),
+    SPEND("spend");
 
     private final String value;
 
