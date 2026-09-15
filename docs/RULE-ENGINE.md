@@ -9,6 +9,8 @@ Documents liés : `game-rules.md` (règles), `architecture.md` (§2-3, couches),
 
 ## 1. Carte du code
 
+> Feature 6.5.2 (2026-09-15) : corrections TDD R1-R13 — Eddies cycle 0, Legends/Eddies ready, Call 1 Eddie once/turn, RAM désactivée en jeu, SpendEddiesCommand, ADRENALINE, DISCARD/BUFF. Ancienne doc “Legends définitivement inclinées” retirée.
+>
 > Feature 6.5 : le moteur journalise désormais **chaque** action dans un journal de
 > diagnostic (`GameLog`) et expose un panneau de debug
 > (`docs/DEBUG-GUIDE.md`). Les règles confirmées sont rappelées au §6.
@@ -89,19 +91,9 @@ appellera `executeCommand`, puis diffusera `getGameState(gameId, joueur)` à cha
 - Ressources : `eddies` (réserve persistante : vente +1, inclinaison d'une Legend
   +1, jeu = dépense), `costDiscount` (remise `REDUCE_COST`, réinitialisée au début
   du tour), `hasSoldThisTurn` (1 vente/tour).
-- **Économie des Legends** (feature 6.5) : les Legends face cachée de la Legends
-  Area servent de réserve d'Eddies. `spendLegendForEddies` incline une Legend
-  (épuisée) pour +`GameConstants.EDDIES_PER_LEGEND` Eddie ; l'inclinaison est
-  **définitive** (une Legend inclinée n'est pas redressée au début du tour).
-  `legendsAvailableForEddies()` et `countSpentLegends()` exposent l'état de la
-  réserve (3 Legends, dont `FIRST_PLAYER_SPENT_LEGENDS` déjà inclinées pour le
-  premier joueur).
-- **RAM** : `ramCeilingFor(CardColor)` = somme des RAM des Legends de cette
-  couleur ; `hasLegendCeiling()` indique qu'un plafond s'applique (parties créées
-  par `GameService`). La RAM n'est pas consommée : plusieurs cartes à la RAM
-  maximale restent jouables (`docs/official-rules.md` §2).
-- `startTurn()` : vente/remise réinitialisées, redressement du Field, fin des
-  mals d'invocation (les Legends inclinées restent inclinées).
+- **Économie des Eddies (R2/R3/R6)** : chaque carte face-down en Eddies Area vaut 1 Eddie par tour, et chaque Legend (face-up ou face-down) vaut aussi 1 Eddie par tour (Guide § EDDIES & LEGENDS). `spendLegendForEddies` et `spendEddiesCardForEddies` inclinent la carte (exhausted) pour +1 Eddie (compteur remis à 0 au début de chaque tour — `Player.startTurn` fait `eddies=0` et `readyAll` redresse Field+Legends+Eddies). `legendsAvailableForEddies()`, `eddiesAvailableForEddies()` et `countSpentLegends()` exposent la réserve. Le premier joueur démarre avec `FIRST_PLAYER_SPENT_LEGENDS=2` Legends déjà inclinées (ne se redressent qu'à son 2e tour).
+- **RAM (R7)** : `ramCeilingFor` existe pour le deckbuilder, mais `GameConstants.RAM_CEILING_ENFORCED=false` — **aucune vérification en jeu** (`PlayCardCommand` ne vérifie plus la RAM). La RAM n'est donc qu'une limite de construction de deck (Guide § DECK BUILDING).
+- `startTurn()` : **Eddies remis à 0**, vente (`hasSoldThisTurn`) et Call (`hasCalledLegendThisTurn`) réinitialisés, remise remise à 0, redressement de **toutes** les cartes dépensées (Field+Legends+EddiesArea), fin des mals d'invocation (Lag).
 - `readyBlockers()` / `controlsReadyBlocker()` : BLOCKERs prêts (non épuisés).
 
 ### 3.3 CardInstance
@@ -276,13 +268,13 @@ pas de double `ON_DEATH`.
 | Défaite : pioche impossible (deck vide) | `GameState.drawCards` + journal `DRAW`/`VICTORY` |
 | Premier joueur tiré au sort + malus | `GameService.createGame` (`setupRandom`), `FIRST_PLAYER_SPENT_LEGENDS` |
 | Phases Draw → Main → Combat → End | `Phase`, transitions auto (`EndTurnCommand`, `AttackCommand`) |
-| Legend : pas de coût, effet FLIP | `PlayCardCommand` (branche Legend, déclencheur `FLIP`) |
+| Legend Call : 1 Eddie, once per turn, effet CALL/FLIP (R4) | `PlayCardCommand` branche Legend (coût 1, `hasCalledLegendThisTurn`, triggers `FLIP`+`CALL`) |
 | Unit : power = dégâts | comparaison des puissances (`AttackCommand`), `DAMAGE` létal |
 | Unit posée : pas d'attaque sauf `GO_SOLO` | `summoningSickness` (`PlayCardCommand`), levée au tour suivant, exemption `hasGoSolo()` |
 | Program : effet Play puis défausse | `PlayCardCommand` (branche Program) |
 | Gear : attaché à une Unit | `PlayCardCommand` (hôte obligatoire), `totalPowerFor`, suivi en défausse |
-| RAM par couleur = plafond (jamais consommée) | `CardInstance.getRam()` (snapshot), `Player.ramCeilingFor`, `PlayCardCommand.requireRamCeiling` |
-| Eddies : Legends inclinées + ventes | `SpendLegendCommand` (+1 Eddie, définitif), `SellCardCommand` (+1 Eddie, 1/tour) |
+| RAM = deckbuilding uniquement (R7) — aucune vérif en jeu | `GameConstants.RAM_CEILING_ENFORCED=false`, `PlayCardCommand` sans vérif RAM |
+| Eddies : cycle 0→tap→pay→lost (R2) ; Legends et Eddies cards +1 par tap, redress au START, reset à 0 | `Player.spendLegendForEddies`, `Player.spendEddiesCardForEddies`, `SpendLegendCommand`, `SpendEddiesCommand`, `Player.startTurn` (eddies=0 & readyAll) |
 | Eddies / Street Cred | réserve dépensée / seuil non consommé (`Player`, `PlayCardCommand`) |
 | Vente 1 carte/tour | `SALES_PER_TURN`, `SellCardCommand` + `hasSoldThisTurn` |
 | Réactions QUICK uniquement | `ReactionWindow`, `PlayCardCommand` (défenseur), fermeture en fin de tour |
@@ -354,10 +346,9 @@ cd backend && mvn clean test   # profil H2 (aucun Docker requis)
 - `ws/LobbyGameFlowWebSocketIntegrationTest` : partie STOMP de bout en bout
   (états masqués, actions, erreurs privées, abandon) avec premier joueur aléatoire.
 - `docs/DEBUG-GUIDE.md` : mode d'emploi du journal et des endpoints de debug.
-- `engine/GameIntegrationTest` (feature 6.5) : les 7 scénarios critiques —
-  `testFullGameFlow`, `testPlayCardCostValidation`, `testSellCardLimit`,
-  `testCombatWithBlocker`, `testVictoryCondition`, `testLegendFlip`,
-  `testQuickReaction` (voir `docs/INTEGRATION-TEST.md`).
+- `engine/GameIntegrationTest` (feature 6.5.2, TDD R1→R13) : les 51 scénarios `testR{N}_*` —
+  R1(4) Setup, R2(3) Eddies cycle 0→+1→lost, R3(3) Legends ressources, R4(3) Legends jouables (Call 1 Eddie), R5(3) vente, R6(3) Eddies cards, R7(2) RAM deck-only,
+  R8(3) phases DRAW/MAIN/COMBAT/END, R9(4) combat, R10(3) mal d'invoc., R11(6) keywords, R12(4) Gigs 7-victoire, R13(10) effets (voir `docs/INTEGRATION-TEST.md`).
 - `engine/GameFixtures` : cartes synthétiques au mini-langage + duels frais
   (`coloredCard`/`coloredUnit`/`coloredProgram`/`coloredLegend` pour la couleur
   et la RAM).
@@ -372,8 +363,8 @@ cd backend && mvn clean test   # profil H2 (aucun Docker requis)
   catalogue non résolues (voir §5.2) ; cohérences de ciblage fin (choix du joueur)
   non implémentées : les effets génériques choisissent la cible de façon
   déterministe.
-- L'inclinaison d'une Legend est définitive : elle n'est pas redressée au début du
-  tour suivant (arbitrage feature 6.5).
+- L'inclinaison d'une Legend / Eddies card est **redressée** au début du tour suivant (`Player.startTurn` → `readyAll` Field+Legends+Eddies, `eddies=0`, `hasCalled/hasSold/costDiscount` reset, lag cleared) — économie R2/R3/R6.
+- RAM en partie désactivée (`GameConstants.RAM_CEILING_ENFORCED=false`) — seuls Eddies comptent ; contrôles RAM réservés au deckbuilder (R7).
 - Legends non jouables comme Units (`GO_SOLO` des Legends), pas de coût activé.
 - Pas de déséquipement / destruction ciblée de Gear (seulement suivi en défausse).
 - Pas de ciblage fin au-delà de `TARGET_UNIT` (pas de « Unit engagée », etc.).

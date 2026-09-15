@@ -41,7 +41,7 @@ motif exact (`Eddies insuffisants`, `Une seule vente par tour`,
 | `index` | ordre global dans la partie (1, 2, 3…) — sert à réconcilier temps réel et état |
 | `turnNumber`, `phase` | contexte au moment de l'action |
 | `playerId` | auteur (`null` pour une ligne système) |
-| `actionType` | `PLAY_CARD`, `ATTACK`, `SELL_CARD`, `SPEND_LEGEND`, `END_TURN`, `DRAW`, `GIG_ROLL`, `VICTORY_CHECK`, `VICTORY`, `REACTION_WINDOW`, `UNIT_DEFEATED`, `GIG_STOLEN`, `EFFECT`, `SETUP`, `GAME_START`, `DEBUG_FORCE_PHASE`, `CONCEDE`… |
+| `actionType` | `PLAY_CARD` (ou `FLIP`/`CALL` pour Legend), `ATTACK`, `SELL_CARD`, `SPEND_LEGEND`, `SPEND_EDDIES`, `END_TURN`, `DRAW`, `GIG_ROLL`, `VICTORY_CHECK`, `VICTORY`, `TURN_RESET`, `EDDIES_LOST`, `REACTION_WINDOW`, `UNIT_DEFEATED`, `GIG_STOLEN`, `EFFECT` (incl. DISCARD/BUFF/DAMAGE/HEAL/DEFEAT/BOOST_GIG), `SETUP`, `GAME_START`, `DEBUG_FORCE_PHASE`, `CONCEDE`… |
 | `description` | phrase lisible, prête à afficher |
 | `result` | `SUCCESS` (vert), `ILLEGAL` (rouge), `FAILED` (orange : légale mais sans effet), `INFO` (jaune) |
 | `details` | contexte chiffré (coût, cible, ressources, motif de refus…) |
@@ -52,13 +52,19 @@ plus anciennes sont évincées, l'index continue de croître.
 ### 1.2 Exemples de lignes produites
 
 ```text
-#1  [INFO ] GAME_START      Nouvelle partie : Joueur Val commence (premier joueur tiré au sort)
-#2  [INFO ] SETUP           Mise en place de Joueur Val : 6 cartes en main, 3 Legends (premier joueur : 2 Legends déjà inclinées), 6 dés Gig
-#3  [OK   ] SPEND_LEGEND    Joueur Val incline Legend 3 → +1 Eddie (total 1 Eddies, Legends prêtes 0/3)
-#4  [OK   ] PLAY_CARD       Joueur Val joue 6th Street Recruits (coût: 4 Eddies, 2 RAM rouge)
+#1  [INFO ] GAME_START      Nouvelle partie : Joueur Val commence (premier joueur tiré au sort, malus 2 Legends spent)
+#2  [INFO ] SETUP           Mise en place de Joueur Val : 6 cartes en main, 3 Legends (premier joueur : 2 Legends déjà inclinées → 1 dispo), 6 dés Gig
+#3  [OK   ] SPEND_LEGEND    Joueur Val incline Legend face-down → +1 Eddie (total 1, Legends prêtes 0/3)
+#3b [OK   ] SPEND_EDDIES    Joueur Val incline Eddies card → +1 Eddie (total 2)
+#3c [OK   ] SELL_CARD       Joueur Val vend une carte révélée → EDDIES_AREA face cachée +1 Eddie persistant
+#4  [OK   ] PLAY_CARD       Joueur Val flip Legend (Call : coût 1 Eddie, une fois par tour) — 6th Street Recruits reste en Legends Area
 #5  [REFUSÉ] SELL_CARD      Joueur Val : vendre une carte → REFUSÉ (Une seule vente par tour)
-#6  [INFO ] VICTORY_CHECK   Vérification victoire : Joueur Johnny a 6/7 Gigs
-#7  [OK   ] VICTORY         VICTOIRE : Joueur Johnny atteint 7 Gigs ! (vérifié au début de son tour)
+#5b [REFUSÉ] PLAY_CARD      Joueur Val : flip Legend → REFUSÉ (Call une seule fois par tour)
+#5c [REFUSÉ] SPEND_LEGEND   Joueur Val : incliner Legend → REFUSÉ (déjà inclinée)
+#6  [INFO ] TURN_RESET      Début tour : 0 Eddies (reset), ready Legends+EDDIES+Field, mal d'invoc. cleared
+#6b [INFO ] VICTORY_CHECK   Vérification victoire : Joueur Johnny a 6/7 Gigs
+#7  [OK   ] VICTORY         VICTOIRE : Joueur Johnny atteint 7 Gigs ! (vérifié AU DÉBUT du tour, pas en continu)
+#7b [INFO ] EDDIES_LOST     Fin de tour : Eddies perdus s'ils ne sont pas dépensés
 ```
 
 ---
@@ -159,13 +165,13 @@ utile quand on ne connaît pas le `gameId`.
 | Symptôme | Marche à suivre |
 | --- | --- |
 | « Mon action ne fait rien » | Panneau Debug → chercher la ligne rouge (`REFUSÉ`). Le champ `details.reason` donne la règle violée ; `details.command` indique la commande concernée. |
-| « Je n'ai pas assez d'Eddies » | Ligne `SPEND_LEGEND` / `SELL_CARD` du tour : les Eddies disponibles n'apparaissent qu'après l'inclinaison d'une Legend ou une vente. `GET /api/debug/…/player/{id}` montre `eddies`, `legendsReady`, `legendsSpent`. |
-| « Je ne peux pas jouer une carte » | Vérifier `ramCeilings` (plafond = somme des RAM des Legends, par couleur) : une carte dont la RAM imprimée dépasse le plafond de sa couleur est refusée (`RAM rouge insuffisante`). |
+| « Je n'ai pas assez d'Eddies » | Ligne `SPEND_LEGEND` / `SPEND_EDDIES` / `SELL_CARD` du tour : les Eddies disponibles n'apparaissent qu'après l'inclinaison d'une Legend, d'une Eddies card, ou une vente (0 au début, perdus à la fin). `GET /api/debug/…/player/{id}` montre `eddies`, `legendsReady`, `eddiesAreaReady`. |
+| « Je ne peux pas jouer une carte » | Vérifier `eddies` (coût) — **la RAM n'est PLUS vérifiée en partie** (uniquement deckbuilder). Si une carte à 6 Eddies est refusée, la source est `Eddies insuffisants`. |
 | « Mon attaque ne vole pas de Gig » | Chercher `REACTION_WINDOW` puis la ligne `ATTACK` : un **BLOCKER** prêt intercepte (`Un BLOCKER rival doit intercepter cette attaque`) et interdit le vol direct. |
 | « Le combat n'a pas tué la bonne Unit » | Ligne `UNIT_DEFEATED` + la ligne `ATTACK` de combat (puissances comparées) : à égalité, **les deux** Units sont vaincues. |
 | « La partie ne se termine pas » | Ligne `VICTORY_CHECK` : la victoire se vérifie **au début du tour** du joueur (7 Gigs), pas pendant le tour où les Gigs sont acquis. |
 | « Je veux rejouer une situation précise » | `force-phase` pour se placer dans la phase voulue, puis lire `seed` pour connaître la graine des tirages. |
-| « Je veux voir ce que voit le serveur » | `GET /api/debug/game/{id}` : aucune information masquée, `gameLog` complet. |
+| « Je veux voir ce que voit le serveur » | `GET /api/debug/game/{id}` : aucune information masquée, `gameLog` complet (200 max, incl. TURN_RESET, EDDIES_LOST). |
 
 ---
 
@@ -182,7 +188,7 @@ utile quand on ne connaît pas le `gameId`.
 
 ## 6. Tests de référence
 
-- Backend : `GameIntegrationTest` (7 scénarios, journal compris),
+- Backend : `GameIntegrationTest` (51 scénarios R1→R13, journal compris),
   `GameServiceTest` (refus consignés, premier joueur tiré au sort),
   `LobbyGameFlowWebSocketIntegrationTest` (partie STOMP de bout en bout).
 - Frontend : `src/__tests__/debugPanel.spec.ts` (ouverture par bouton et F12,

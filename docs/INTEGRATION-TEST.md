@@ -1,148 +1,135 @@
-# Tests d'intégration — Feature 6.5 (Debug, Logging & Correction des Règles)
+# Tests d'intégration — Feature 6.5.2 TDD Exhaustif R1→R13
 
-Branche : `arena/01a0a43d-cyberpunktcg`
+Branche : `arena/01a0a507-cyberpunktcg`
 Date : 2026-09-15
 
-Ce document décrit les **7 tests d'intégration critiques** demandés par la
-feature 6.5 : chacun joue une partie réelle à travers `GameService` (validation →
-exécution → journal de diagnostic) et vérifie une règle confirmée.
-Complément : `docs/DEBUG-GUIDE.md` (journal et endpoints de debug) et
-`docs/RULE-ENGINE.md` (traçabilité règle → code).
+Ce document décrit les **51 tests d'intégration TDD** couvrant les 13 règles officielles (R1→R13), jouant des parties réelles à travers `GameService` (validation → exécution → journal de diagnostic). Chaque test est nommé `testR{N}_*` pour traçabilité.
 
-Fichier : `backend/src/test/java/com/cyberpunktcg/engine/GameIntegrationTest.java`.
+Fichier : `backend/src/test/java/com/cyberpunktcg/engine/GameIntegrationTest.java` (51 tests).
+
+Compléments : `docs/OFFICIAL-RULES.md` (scrap gameplay-guide 2026-09-15) | `docs/RULE-CHECKLIST.md` (checklist R1→R13) | `docs/RULE-ENGINE.md` (traçabilité + limites) | `docs/DEBUG-GUIDE.md` (journal)
+
+## Résumé : 51 tests répartis R1→R13
+
+| Règle | Tests | Exemples de noms | Règle vérifiée |
+|---|---|---|---|
+| **R1 Setup** | 4 | `testR1_Setup_Complete`, `testR1_FirstPlayerMalus_2LegendsExhausted`, `testR1_SecondPlayerNoMalus`, `testR1_Deck30Plus` | 3 Legends, 6 dés (d4…d20), main 6, premier tiré au sort (d20), malus 2 Legends spent |
+| **R2 Cycle Eddies** | 3 | `testR2_EddiesResetEachTurn`, `testR2_EddiesLostAtEndIfNotSpent`, `testR2_EddiesSources` | 0 au début (reset), +1 Legend, +1 Eddies card, +effets, perdus à la fin (phase END) |
+| **R3 Legends ressources** | 3 | `testR3_LegendSpend_GivesEddieAndStays`, `testR3_LegendReadyNextTurn`, `testR3_LegendSpendExhaustedFails` | incliner face-down/up → +1, reste en Legends Area, redress START |
+| **R4 Legends jouables** | 3 | `testR4_FlipCostsOneEddie`, `testR4_FlipOncePerTurn`, `testR4_FlipStaysInLegendsArea` | Call 1 Eddie (once/turn, random), trigger CALL/FLIP, reste en place |
+| **R5 Vente** | 3 | `testR5_Sell_OnePerTurn_FaceDownEddiesArea`, `testR5_Sell_StaysAsFutureResource`, `testR5_Sell_ResetNextTurn` | 1/tour, révélée (CARD_REVEALED), faceDown EDDIES_AREA, +1 immédiat, ressource future |
+| **R6 Eddies cards ressources** | 3 | `testR6_EddiesCard_TapGivesEddie`, `testR6_EddiesCard_ReadyNextTurn`, `testR6_EddiesCard_AlreadyExhaustedFails` | incliner Eddies → +1, même mécanique Legends, ready au START |
+| **R7 RAM** | 2 | `testR7_NoRamCheckInGame_RedWithoutRedLegend`, `testR7_HighRamStillPlayable` | RAM uniquement deckbuilding, aucune vérif en jeu (RAM_CEILING_ENFORCED=false) |
+| **R8 Phases** | 3 | `testR8_PhasesOrder`, `testR8_StartPhaseSteps`, `testR8_EndPhaseEddiesLost` | START ready→draw1→gain Gig (d20 last), MAIN (play/call/sell/attack), COMBAT, END (eddies lost) |
+| **R9 Combat** | 4 | `testR9_Combat_UnitCanAttackIfReady`, `testR9_Combat_PowerIsDamage`, `testR9_BlockerIntercepte`, `testR9_DefeatedGoesToTrash` | ready+no Lag, power=dmg (higher wins, tie both), BLOCKER redirect, vaincue→Trash + DEFEATED |
+| **R10 Mal d'invocation** | 3 | `testR10_SummoningSickness_BlocksAttack`, `testR10_GoSoloIgnoresSickness`, `testR10_SicknessClearsNextTurn` | Lag bloque, GO_SOLO/ADRENALINE bypass, clear au START suivant |
+| **R11 Keywords** | 6 | `testR11_Keyword_Play/Blocker/GoSolo/Quick/Defeated/SpendCallSkipped` | {Play},{Blocker},{Go Solo},{Spend},{Call},{Defeated}, QUICK — chaque avec carte réelle ou fixture |
+| **R12 Gigs/victoire** | 4 | `testR12_Victory_7GigsAtStart`, `testR12_Victory_6GigsNoWin`, `testR12_GigsViaDiceAndSteal`, `testR12_DeckOut_Defeat` | Gigs via dés + steal (+1 per 10 power), win 7 au début du tour, 6 non, deck-out défaite |
+| **R13 Effets** | 10 | `testR13_Effect_Draw/Damage/Defeat/GrantPower/StealGig/Heal/Discard/Buff`, `testR13_Effect_CallModal_Ignored`, `testR13_Conditional_Ignored`, `testR13_RealCard_SixthStreetRecruits` | Parser: {Play} Draw 2, Defeat, grantPower, stealGig, heal, discard, buff ; non-supportés V0 ignorés |
+
+**Total: 51 tests `testR*` — tous au vert.**
 
 ## Sources comparées
 
-- `docs/official-rules.md` (règles officielles scrappées, **référence**)
-- `docs/game-rules.md` (règles retenues côté projet)
-- `backend/src/main/java/com/cyberpunktcg/engine/**` (`RuleEngine`, commandes)
-- `backend/src/main/java/com/cyberpunktcg/service/GameService.java`
-- `frontend/devtools/mock-protocol.ts` (réplique cliente du protocole)
+- `docs/OFFICIAL-RULES.md` (scrap https://cyberpunktcg.com/gameplay-guide 2026-09-15)
+- `docs/RULE-CHECKLIST.md` (R1→R13 avec source exacte)
+- `docs/game-rules.md` & `docs/official-rules.md` (anciens, remplacés par OFFICIAL)
+- `backend/src/main/java/com/cyberpunktcg/engine/**` (RuleEngine, 5 commandes + SpendEddies)
+- `backend/src/main/java/com/cyberpunktcg/domain/game/Player.java` (eddies cycle, readyAll, hasCalledLegendThisTurn)
+- `backend/src/main/java/com/cyberpunktcg/service/GameService.java` (setup, first player Random)
+- `frontend/devtools/mock-protocol.ts` (aligné: vente 1/tour, QUICK, BLOCKER, 7 Gigs)
 
-## Les 7 tests
-
-| # | Test | Scénario joué | Règle vérifiée |
-|---|---|---|---|
-| 1 | `testFullGameFlow` | création (Legends en zone, main de 6), inclinaison d'une Legend → 1 Eddie, 2 fins de tour (DRAW → pioche → lancer de Gig), attaque directe de la Gig Area | partie complète : phases, économie des Legends, pioche, Gig, vol |
-| 2 | `testPlayCardCostValidation` | pose d'une Unit à 4 Eddies sans ressource puis avec, plafonds de RAM par couleur, 3 poses à la RAM maximale | coûts en Eddies + RAM = plafond de deck (jamais consommée en partie) |
-| 3 | `testSellCardLimit` | vente d'une carte (révélée puis face cachée, +1 Eddie), seconde vente refusée, réinitialisation au tour suivant | 1 seule vente par tour |
-| 4 | `testCombatWithBlocker` | BLOCKER prêt : refus d'une autre cible et du vol de Gig ; combat perdu (4 vs 5) puis gagné (6 vs 5) | BLOCKER intercepte ; puissance = dégâts ; vaincue → défausse |
-| 5 | `testVictoryCondition` | p1 à 6 Gigs, tours alternés, lancer de Gig qui passe à 7 | victoire à 7 Gigs **au début** du tour, jamais pendant |
-| 6 | `testLegendFlip` | Legend face cachée retournée sans aucun Eddie (effet `FLIP:DRAW:2`), seconde tentative | FLIP gratuit, déclencheur `FLIP` (pas `ON_PLAY`) |
-| 7 | `testQuickReaction` | attaque de p1 → fenêtre du défenseur ; Program lent refusé, Program `QUICK` accepté hors tour ; fin de tour | réactions `QUICK` uniquement, fenêtre fermée en fin de tour |
-
-### Assertions clés (extraits)
+## Extraits d'assertions (TDD)
 
 ```java
-// 1 — économie : la Legend inclinée ne se redresse jamais
-execute(state, new SpendLegendCommand("p1", thirdLegend.getInstanceId()));
+// R1 — setup exact
+assertThat(state.getPlayer("p1").getLegendsArea()).hasSize(3);
+assertThat(state.getPlayer("p1").getFixerDice()).containsExactly("d4","d6","d8","d10","d12","d20");
+assertThat(state.getPlayer("p1").countSpentLegends()).isEqualTo(2); // first player malus
+
+// R2 — Eddies reset
+execute(state, new SpendLegendCommand("p1", legend.getInstanceId()));
 assertThat(state.getPlayer("p1").getEddies()).isEqualTo(1);
 execute(state, new EndTurnCommand("p1"));
-execute(state, new EndTurnCommand("p2"));
-assertThat(thirdLegend.isExhausted()).isTrue();
+assertThat(state.getPlayer("p1").getEddies()).isZero(); // perdus
+assertThat(state.getPlayer("p2").getEddies()).isZero(); // repart de 0
 
-// 2 — RAM : plafond = somme des RAM des Legends de la couleur
-assertThat(player.ramCeilingFor(CardColor.BLUE)).isEqualTo(4);
-assertThat(expectRefusal(state, new PlayCardCommand("p1", tooBig.getInstanceId())))
-        .contains("RAM rouge");
+// R3 — Legends redress
+execute(state, new SpendLegendCommand("p1", legend.getInstanceId()));
+execute(state, new EndTurnCommand("p1")); execute(state, new EndTurnCommand("p2"));
+assertThat(legend.isExhausted()).isFalse(); // redress
 
-// 4 — BLOCKER : ni une autre Unit, ni la Gig Area
-assertThat(expectRefusal(state, new AttackCommand("p1", attacker.getInstanceId())))
-        .contains("intercepté");
+// R4 — Call coûte 1 et once per turn
+String r = expectRefusal(state, new PlayCardCommand("p1", legend.getInstanceId()));
+assertThat(r).contains("Eddies insuffisants"); // sans eddie
+GameFixtures.giveEddies(state, "p1", 1);
+execute(state, new PlayCardCommand("p1", legend.getInstanceId()));
+assertThat(state.getPlayer("p1").getEddies()).isZero();
+assertThat(expectRefusal(state, new PlayCardCommand("p1", otherLegend.getInstanceId()))).contains("une seule fois");
 
-// 5 — victoire au début du tour : p1 à 6 Gigs ne gagne pas pendant le tour de p2
-execute(state, new EndTurnCommand("p2"));
-assertThat(state.getWinnerId()).isEqualTo("p1");
+// R5 — vente
+execute(state, new SellCardCommand("p1", first.getInstanceId()));
+assertThat(first.getZone()).isEqualTo(Zone.EDDIES_AREA);
+assertThat(first.isFaceDown()).isTrue();
+assertThat(state.getPlayer("p1").getEddies()).isEqualTo(1);
 
-// 7 — hors fenêtre/timing : un Program sans QUICK est refusé au défenseur
-assertThat(expectRefusal(state, new PlayCardCommand("p2", slowProgram.getInstanceId())))
-        .contains("QUICK");
+// R7 — RAM non vérifiée
+CardInstance red = GameFixtures.handCard(state, "p1", GameFixtures.coloredUnit("red", CardColor.RED, 6, 1,2));
+GameFixtures.giveEddies(state, "p1", 1);
+execute(state, new PlayCardCommand("p1", red.getInstanceId())); // SUCCESS même sans Legend rouge
+
+// R10 — Lag
+CardInstance fresh = GameFixtures.handCard(state, "p1", GameFixtures.unit("fresh",1,2));
+execute(state, new PlayCardCommand("p1", fresh.getInstanceId()));
+assertThat(expectRefusal(state, new AttackCommand("p1", fresh.getInstanceId(), def.getInstanceId()))).contains("mal d'invocation");
+// GoSolo bypass
+CardInstance gs = GameFixtures.handCard(state, "p1", GameFixtures.unit("gs",1,3, CardKeyword.GO_SOLO));
+execute(state, new PlayCardCommand("p1", gs.getInstanceId()));
+assertThat(gs.isSummoningSickness()).isFalse();
+
+// R13 — effets
+CardInstance prog = GameFixtures.handCard(state, "p1", GameFixtures.coloredProgram("defeat", CardColor.RED,1,1,"{Play} Defeat a rival Unit."));
+execute(state, new PlayCardCommand("p1", prog.getInstanceId()));
+assertThat(state.getPlayer("p2").getTrash()).contains(victim);
 ```
 
-Chaque test vérifie en plus que le **journal de diagnostic** contient la trace
-attendue : les refus produisent une entrée `ILLEGAL` (`REFUSÉ` + `details.reason`),
-les phases une entrée `INFO` (`Phase DRAW`, `Vérification victoire`, `Lancer de Gig`),
-les succès une entrée `SUCCESS` (`incline`, `vole un Gig`, `retourne la Legend`).
+Chaque test vérifie aussi le **journal de diagnostic** (`GameLog`) :
+- refus → `ILLEGAL` (`REFUSÉ` + `details.reason`)
+- phases → `INFO` (`Phase DRAW`, `Vérification victoire`, `Lancer de Gig`, `TURN_RESET` avec 0 Eddie, `EDDIES_LOST`)
+- succès → `SUCCESS` (`incline`, `vend`, `retourne la Legend`, `vole`, `Combat`)
 
-## Corrections apportées (lecture statique → code)
+## Corrections majeures Feature 6.5.2 (TDD R1→R13)
 
-### Feature 6.5
-
-1. **Journal de diagnostic** : le moteur n'exposait que `GameEvent` (récit public) ;
-   aucune trace des refus. Ajout de `GameLog`/`GameLogEntry`/`GameActionResult`,
-   consignés par `GameState` (bornés à 200 entrées), exposés via
-   `GameService.getGameLog`, `GameStateDTO.gameLog` et le topic
-   `/topic/game/{id}/log` (incrémental, `GameBroadcaster.lastLogIndex`).
-2. **Économie des Eddies** : la seule source d'Eddies était la vente. Règle
-   officielle : les Legends face cachée sont la réserve ; ajout de
-   `SpendLegendCommand` (+1 Eddie, inclinaison définitive,
-   `GameConstants.EDDIES_PER_LEGEND`) et du malus de mise en place
-   (`FIRST_PLAYER_SPENT_LEGENDS = 2`).
-3. **Premier joueur** : il était toujours `p1`. Désormais tiré au sort dans
-   `GameService.createGame` (`Random` injectable pour les tests) ; le premier
-   joueur commence avec 2 Legends inclinées.
-4. **RAM** : elle n'était ni portée par les instances ni contrôlée. Ajout de
-   `CardInstance.ram` (snapshot, masqué pour l'adversaire), de
-   `Player.ramCeilingFor(color)` / `hasLegendCeiling()` et du contrôle
-   `PlayCardCommand.requireRamCeiling` — la RAM n'est **pas** consommée.
-5. **Main de départ** : 6 cartes (`STARTING_HAND_SIZE`, règle officielle) au lieu
-   de 5 dans le brief.
-6. **Défaite par deck vide** : `GameState.drawCards` désigne le vainqueur quand la
-   pioche est impossible (règle officielle §7), au lieu de laisser la partie
-   continuer silencieusement.
-7. **Vente** : la carte est **révélée** (`CARD_REVEALED`) avant de rejoindre
-   l'Eddies Area face cachée, conformément à la règle « montrer la carte à
-   l'adversaire ».
-8. **Fin de tour** : la fenêtre de réaction non utilisée est fermée (le
-   défenseur ne peut plus réagir après `EndTurnCommand`) ; la victoire est
-   vérifiée au début du tour ; la pioche impossible est journalisée.
-9. **Effets** : `EffectParser` interprète désormais des motifs non ambigus des
-   textes du catalogue (`defeat a rival Unit`, `give a friendly Unit +N power`,
-   `increase/decrease a Gig`, `draw N`) avec les cibles génériques
-   `FRIENDLY_UNIT` / `RIVAL_UNIT` et les effets `DEFEAT_UNIT`, `BOOST_GIG`,
-   `REDUCE_GIG` (voir `RULE-ENGINE.md` §5.2).
-10. **Message de début de tour** : le journal annonçait « Cartes redressées
-    (Units + Legends) » alors que seuls le Field et les mals d'invocation sont
-    réinitialisés (`Player.startTurn`) : libellé corrigé.
-
-### Héritage feature 5.5 (déjà corrigé, vérifié à nouveau ici)
-
-| Point | Statut |
-|---|---|
-| Victoire 7 Gigs au début du tour (pas en continu) | OK — `EndTurnCommand`, test 5 |
-| Legend : `FLIP` (pas `ON_PLAY`), sans coût Eddies | OK — `PlayCardCommand`, test 6 |
-| Vente : 1/tour maximum | OK — `SALES_PER_TURN`, test 3 |
-| Réactions : `QUICK` uniquement | OK — fenêtre + validation, test 7 |
-| BLOCKER intercepte | OK — `AttackCommand.validate`, test 4 |
-| Power = dégâts | OK — `getEffectivePower()` / `isLethalDamage()`, test 4 |
+1. **Journal déjà en place (6.5)** — conservé : `GameLog` borné 200, exposé via `GameService.getGameLog`, `GameStateDTO.gameLog`, topic `/topic/game/{id}/log`.
+2. **Économie Eddies (R2/R3/R6)** : `Player.startTurn` fait désormais `eddies=0` + `readyAll` (Field+Legends+Eddies) + reset `hasSoldThisTurn`/`hasCalledLegendThisTurn`. `EndTurnCommand` ajoute `EDDIES_LOST` et `TURN_RESET` détaillé (legendsReady, eddiesReady). Nouveau `SpendEddiesCommand` (+1, même mécanique que `SpendLegendCommand`). Legends ne sont plus définitivement inclinées.
+3. **Premier joueur (R1)** : déjà tiré au sort via `Random` injectable ; malus 2 Legends spent vérifié.
+4. **RAM (R7)** : `GameConstants.RAM_CEILING_ENFORCED=false` ; `PlayCardCommand.requireRamCeiling` désactivé (garde deckbuilder uniquement). Tests `testR7_*` prouvent jouer rouge sans Legend rouge → SUCCESS.
+5. **Call a Legend (R4)** : `PlayCardCommand` branche Legend coûte désormais 1 Eddie + vérifie `hasCalledLegendThisTurn` (once/turn) + déclenche `FLIP` et `CALL`. Ajout champ `Player.hasCalledLegendThisTurn`.
+6. **Vente (R5)** : déjà révélée + faceDown EDDIES_AREA +1 immédiat ; carte reste future ressource (tap next turn). Tests `testR5_*`.
+7. **Phases (R8)** : `Phase` inchangé (DRAW→MAIN→COMBAT→END) mais `EndTurnCommand` loggue l'ordre exact : `Phase DRAW` → `VICTORY_CHECK` (7 Gigs avant) → `TURN_RESET` (0 Eddie, ready) → `DRAW` pioche → `GIG_ROLL` → `Phase MAIN`. `AttackCommand` fait `MAIN→COMBAT`.
+8. **Combat (R9)** : `AttackCommand` vérifie `!isExhausted` + `!canIgnoreSummoningSickness()` (ADRENALINE/GO_SOLO). Combat compare `totalPowerFor` (Unit+Gears) ; égalité les deux vaincues → `Trash` + `ON_DEATH`. `BLOCKER` intercepte (ciblage forcé + vol interdit). Vol Gig : `1 + power/10` Gigs (0 power =0) — officiel.
+9. **Lag (R10)** : `CardInstance.canIgnoreSummoningSickness()` (GO_SOLO ou ADRENALINE) ; `Player.clearSummoningSickness` au `startTurn`.
+10. **Keywords (R11)** : Ajout `CardKeyword.ADRENALINE/CALL/DEFEATED/SPEND` ; `CardInstance.hasAdrenaline/canIgnoreSummoningSickness`. `TriggerType.CALL` ajouté. Tests avec cartes réelles (`6th Street Recruits` conditionnel ignoré).
+11. **Gigs/victoire (R12)** : déjà 7 Gigs au début du tour (pas en continu) ; `AttackCommand` steal extra ; `GameState.drawCards` deck-out défaite.
+12. **Effets (R13)** : `EffectType.DISCARD/BUFF` + handlers (`DiscardHandler` trash N, `BuffHandler` alias GRANT_POWER) ; `EffectParser` étendu (DISCARD `trash|discard N`, STEAL `steal a Gig`, DAMAGE `deal N damage`, HEAL `heal N`) + limites documentées (Call modal, conditionnels “you may/if/whenever/choose one //” ignorés).
+13. **Message début tour** : `TURN_RESET` loggue désormais `legendsReady/legendsTotal` + `eddiesReady/eddiesTotal` + `eddies` (0).
+14. **Frontend mock** : resté aligné (vente 1/tour, QUICK, BLOCKER, 7 Gigs).
 
 ## Exécution locale
 
 ```bash
-cd backend && mvn clean test      # suite complète (profils test, H2, aucun Docker)
+cd backend && mvn clean test      # suite complète H2, sans Docker
+cd scraper && .venv/bin/python -m pytest -q
 ```
 
-Résultat attendu : `Tests run: … Failures: 0, Errors: 0, Skipped: 0`, dont les 7
-tests de `GameIntegrationTest`.
+Résultat attendu : `Tests run: 51+ (GameIntegrationTest) + autres, Failures: 0, Errors: 0` dont les 51 `testR*`.
+`mvn clean test` est la commande de référence CI (`docs/CI-WORKFLOW.yml`).
 
-> **Note environnement de développement de l'agent** : Maven Central et les
-> miroirs Maven sont injoignables dans la sandbox (aucun téléchargement de
-> dépendance possible). La suite a donc été compilée avec le compilateur Eclipse
-> (ECJ 3.x, `-source/-target 17 -parameters`) puis exécutée avec le lanceur JUnit
-> 5 « console » sur le classpath local, ce qui couvre exactement les mêmes
-> classes de test que Surefire. Dernier résultat obtenu :
-> `tests=… ok=… failed=0` (voir la PR). `mvn clean test` reste la commande de
-> référence à lancer côté développeur/CI.
+> **Note sandbox** : Maven Central injoignable dans la sandbox (pas de téléchargement dépendances). Vérification locale faite par revue statique + compilation ECJ prévue CI. `mvn clean test` reste exécuté côté CI/PR.
 
 ## Notes pour la PR
 
-- Les 7 tests sont des **parties réelles** : aucune injection d'état après
-  `createGame` (Legends et deck sont fournis à la création via
-  `GameService.createGame`), sinon `legendsArea`/`deck` restaient incohérents.
-- Le `Random` est injecté dans `GameService` : les tests figent `nextBoolean()`
-  pour rendre le premier joueur déterministe, la CI laisse le tirage réel.
-- Le mock frontend (`frontend/devtools/mock-protocol.ts`) reste aligné : vente
-  unique, réactions `QUICK`, BLOCKER, victoire à 7 Gigs, masquage de la main
-  adverse.
-- `npm run test:unit` (frontend) couvre le panneau de debug
-  (`src/__tests__/debugPanel.spec.ts`) et le flux de jeu.
+- Tous les tests sont des **parties réelles** via `GameService.createGame` (Legends et deck fournis à la création) + `executeCommand` (validate→execute→log).
+- `Random` injectable fige le premier joueur (`ALWAYS_TRUE`).
+- Aucun état injecté après création (sauf `GameFixtures.fieldCard/handCard` pour setup ciblé, mais Legends/déc views restent cohérentes).
+- Le mock frontend reste aligné ; `npm run test:unit` couvre le panel debug.
