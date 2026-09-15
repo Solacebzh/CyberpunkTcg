@@ -185,8 +185,12 @@ class GameCommandTest {
         CardInstance first = state.getPlayer("p1").getHand().get(0);
 
         new SellCardCommand("p1", first.getInstanceId()).execute(state);
-        assertThat(state.getPlayer("p1").getEddies()).isEqualTo(1);
+        // Mini-Feature 3 : la vente CRÉE une ressource (Eddies Area, face cachée,
+        // prête à incliner) et ne rapporte aucun Eddie immédiatement.
+        assertThat(state.getPlayer("p1").getEddies()).isZero();
+        assertThat(first.getZone()).isEqualTo(Zone.EDDIES_AREA);
         assertThat(first.isFaceDown()).isTrue();
+        assertThat(first.isExhausted()).isFalse();
 
         assertThatThrownBy(() -> new SellCardCommand("p1", second.getInstanceId()).validate(state))
                 .isInstanceOf(GameRuleException.class)
@@ -196,8 +200,10 @@ class GameCommandTest {
         new EndTurnCommand("p2").execute(state);
         new SellCardCommand("p1", second.getInstanceId()).execute(state);
         // R2 : les Eddies ne se reportent pas — la réserve retombe à 0 en début de
-        // tour, cette vente rapporte donc 1 Eddie (et non 2 cumulés).
-        assertThat(state.getPlayer("p1").getEddies()).isEqualTo(1);
+        // tour ; cette seconde vente ne crédite rien non plus, elle ajoute seulement
+        // une carte-ressource à l'Eddies Area.
+        assertThat(state.getPlayer("p1").getEddies()).isZero();
+        assertThat(state.getPlayer("p1").getEddiesArea()).contains(first, second);
     }
 
     @Test
