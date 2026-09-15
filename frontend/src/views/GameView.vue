@@ -15,6 +15,7 @@ import PhaseIndicator from '@/components/game/PhaseIndicator.vue'
 import PlayerArea from '@/components/game/PlayerArea.vue'
 import TargetingOverlay from '@/components/TargetingOverlay.vue'
 import { useGameAnimations } from '@/composables/useGameAnimations'
+import playmatUrl from '@/assets/playmat/playmat.jpg'
 import { useConnectionStore } from '@/stores/connection'
 import { useDeckStore } from '@/stores/deck'
 import { useGameStore } from '@/stores/game'
@@ -195,7 +196,15 @@ function onConcede(): void {
     <button type="button" class="cyber-btn" @click="backToLobby">Retour au lobby</button>
   </div>
 
-  <div v-else ref="board" class="flex flex-col gap-3">
+  <div v-else ref="board" class="flex flex-col gap-3 relative bg-cover bg-center" :style="{ backgroundImage: 'url(' + playmatUrl + ')' }">
+    <!-- Overlay zones du playmat officiel -->
+    <div class="absolute inset-0 pointer-events-none z-0">
+      <div class="absolute top-[8%] left-[10%] w-[20%] h-[10%] flex items-center justify-center bg-black/30 rounded text-cyber-cyan text-[0.6rem] font-mono border border-cyber-cyan/50">Fixer Area</div>
+      <div class="absolute top-[35%] left-[60%] w-[25%] h-[12%] flex items-center justify-center bg-black/30 rounded text-cyber-cyan text-[0.6rem] font-mono border border-cyber-cyan/50">Gig Area</div>
+      <div class="absolute bottom-[12%] left-[12%] w-[18%] h-[10%] flex items-center justify-center bg-black/30 rounded text-cyber-cyan text-[0.6rem] font-mono border border-cyber-cyan/50">RAM</div>
+      <div class="absolute bottom-[12%] right-[12%] w-[18%] h-[10%] flex items-center justify-center bg-black/30 rounded text-cyber-cyan text-[0.6rem] font-mono border border-cyber-cyan/50">Street</div>
+    </div>
+
     <PhaseIndicator
       :phase="game.phase"
       :turn-number="game.turnNumber"
@@ -329,3 +338,7 @@ function onConcede(): void {
     />
   </div>
 </template>
+
+<style scoped>
+/* Alignement visuel fidèle au design officiel du playmat */
+</style>

@@ -30,6 +30,7 @@ spring:
           time_zone: UTC
 
   # --- Jackson : JSON lisible et tolérant pour les cartes data-driven ---
+  # Fichiers statiques servis depuis classpath:/static/ (images/cards/ etc.)
   jackson:
     default-property-inclusion: non_null
     serialization:

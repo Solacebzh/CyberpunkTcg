@@ -23,6 +23,9 @@ import java.util.UUID;
  * {@link #handlers} + une valeur à {@link EffectType}. Voir
  * {@code docs/RULE-ENGINE.md} pour le guide complet.</p>
  *
+ * <p>Note : la condition de victoire (7 Gigs au début du tour) est gérée uniquement
+ * dans {@link com.cyberpunktcg.engine.command.EndTurnCommand}, jamais en continu ici.</p>
+ *
  * <p>Les déclencheurs peuvent cascader (un {@code ON_DEATH} peut piocher, une
  * pioche sur deck vide termine la partie…) : la profondeur est bornée par
  * {@link GameConstants#MAX_TRIGGER_DEPTH}.</p>
@@ -184,7 +187,15 @@ public class RuleEngine {
     // Handlers (un par EffectType)
     // ------------------------------------------------------------------
 
+/**
+ * Gère l'effet DAMAGE : apply damage to target(s), reduces effective power
+ * (base + bonus - damage). If lethal (damage >= base + bonus), defeatUnit.
+ */
     private class DamageHandler implements EffectHandler {
+        /**
+         * Applique des dégâts à la cible. La puissance effective est réduite
+         * automatiquement via {@link CardInstance#getEffectivePower()}.
+         */
         @Override
         public void apply(GameState state, CardInstance source, GameEffect effect, CardInstance target) {
             List<CardInstance> targets = resolveUnitTargets(state, source, effect, target);
@@ -213,6 +224,7 @@ public class RuleEngine {
         }
     }
 
+    /** Gère l'effet HEAL : restaure la puissance effective. */
     private class HealHandler implements EffectHandler {
         @Override
         public void apply(GameState state, CardInstance source, GameEffect effect, CardInstance target) {
@@ -231,6 +243,7 @@ public class RuleEngine {
         }
     }
 
+    /** Gère l'effet DRAW : pioche, vérifie défaite si deck vide (fail fast). */
     private class DrawHandler implements EffectHandler {
         @Override
         public void apply(GameState state, CardInstance source, GameEffect effect, CardInstance target) {
@@ -249,6 +262,7 @@ public class RuleEngine {
         }
     }
 
+    /** Gère l'effet GRANT_POWER : augmente powerBonus (puissance effective). */
     private class GrantPowerHandler implements EffectHandler {
         @Override
         public void apply(GameState state, CardInstance source, GameEffect effect, CardInstance target) {
@@ -272,6 +286,7 @@ public class RuleEngine {
         }
     }
 
+    /** Gère l'effet STEAL_GIG : vole un Gig adverse (max 1 par effet selon valeur). */
     private class StealGigHandler implements EffectHandler {
         @Override
         public void apply(GameState state, CardInstance source, GameEffect effect, CardInstance target) {
@@ -301,6 +316,7 @@ public class RuleEngine {
         }
     }
 
+    /** Gère l'effet REDUCE_COST : augmente costDiscount (remise au début du tour réinitialisée). */
     private class ReduceCostHandler implements EffectHandler {
         @Override
         public void apply(GameState state, CardInstance source, GameEffect effect, CardInstance target) {

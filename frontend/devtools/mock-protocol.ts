@@ -1,5 +1,6 @@
 /**
  * Serveur STOMP **simulé** — outil de développement et de test du frontend.
+// Aligné sur les règles officielles corrigées (Feature 5.5) : victoire 7 Gigs au début du tour, vente 1/tour, QUICK uniquement, BLOCKER intercepte, FLIP pour Legends, pas de coût Eddies.
  *
  * ⚠️ Ce n'est PAS le moteur de règles : le serveur de référence est le backend
  * Spring (`backend/`, voir docs/RULE-ENGINE.md). Ce module reproduit uniquement
