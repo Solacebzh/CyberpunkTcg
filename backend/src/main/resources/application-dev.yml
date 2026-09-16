@@ -1,0 +1,19 @@
+# =============================================================================
+# Cyberpunk TCG Online — profil « dev »
+# Configuration PostgreSQL pour le développement local
+# =============================================================================
+spring:
+  config:
+    activate:
+      on-profile: dev
+
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/cyberpunk_tcg}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASS:postgres}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
