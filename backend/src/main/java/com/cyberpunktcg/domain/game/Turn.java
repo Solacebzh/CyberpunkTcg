@@ -4,8 +4,12 @@ package com.cyberpunktcg.domain.game;
  * Tour courant d'une partie : numéro, joueur actif, phase et — pendant la
  * phase {@link Phase#DRAW} — sous-étape interactive ({@link DrawStep}).
  *
- * <p>Le tour {@code 1} commence directement en {@link Phase#MAIN} (la main de
- * départ est distribuée à la création, sans pioche ni lancer de Gig).</p>
+ * <p>Le tour {@code 1} commence en phase {@link Phase#DRAW}, sous-étape
+ * {@link DrawStep#AWAITING_DRAW}, pour le premier joueur (Mini-Feature 5.1 :
+ * « Tour 1 du Premier Joueur »). Comme tous les tours, il doit cliquer pour
+ * piocher sa carte puis lancer son dé Gig avant d'entrer en {@link Phase#MAIN}.
+ * Son malus de mise en place (R1.4) persiste sur ce tour 1 (ses cartes ne sont
+ * pas redressées) ; il est levé au tour 2, quand la phase DRAW redresse tout.</p>
  */
 public class Turn {
 

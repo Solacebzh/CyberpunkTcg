@@ -748,11 +748,14 @@ export class MockGameServer {
     const gameId = `game-${this.games.size + 1}-${Math.floor(this.random() * 1e6).toString(16)}`
     const game: MockGame = {
       gameId,
-      phase: 'MAIN',
+      // Mini-Feature 5.1 : la partie démarre en phase DRAW (sous-étape AWAITING_DRAW)
+      // pour le premier joueur (host) — il doit piocher puis lancer son dé Gig avant
+      // d'entrer en phase MAIN, exactement comme tous les tours.
+      phase: 'DRAW',
       gameOver: false,
       winnerId: null,
       endReason: null,
-      turn: { number: 1, activePlayerId: host, drawStep: null },
+      turn: { number: 1, activePlayerId: host, drawStep: 'AWAITING_DRAW' },
       reactionWindow: null,
       players: [buildPlayer(host, deckHost, this), buildPlayer(guest, deckGuest, this)],
       log: [],
@@ -762,19 +765,40 @@ export class MockGameServer {
     this.games.set(gameId, game)
     this.sequences.set(gameId, 0)
     appendEvent(game, 'TURN_STARTED', host, `début de la partie (tour 1, ${host} commence)`)
+    // Mini-Feature 5.1 : le premier joueur ouvre son tour 1 en phase DRAW (AWAITING_DRAW).
+    // Contrairement à EndTurnCommand, on ne redresse PAS ses cartes : son malus de
+    // mise en place (R1.4, ses 2 Legends les plus à gauche inclinées) demeure.
+    game.phase = 'DRAW'
+    game.turn.drawStep = 'AWAITING_DRAW'
+    appendEvent(game, 'PHASE_CHANGED', host, 'phase Draw')
+    // Malus du premier joueur (R1.4) : ses 2 Legends les plus à gauche sont inclinées.
+    const hostPlayer = game.players[0] as MockPlayer
+    let exhausted = 0
+    for (const legend of hostPlayer.legendsArea) {
+      if (exhausted >= 2) break
+      legend.exhausted = true
+      exhausted += 1
+    }
     appendActionLog(game, {
       playerId: null,
       actionType: 'GAME_START',
-      description: `Nouvelle partie : Joueur ${host} commence (premier joueur tiré au sort)`,
+      description: `Nouvelle partie : Joueur ${host} commence en phase DRAW (premier joueur, sous-étape AWAITING_DRAW)`,
       result: 'INFO',
-      details: { starter: host, rival: guest },
+      details: { starter: host, rival: guest, firstPlayerMalus: true },
     })
     appendActionLog(game, {
       playerId: null,
       actionType: 'SETUP',
-      description: `Mise en place : 6 cartes en main et 3 Legends par joueur (${host}, ${guest})`,
+      description: `Mise en place : 6 cartes en main et 3 Legends par joueur (${host} : 2 Legends inclinées, ${guest} : 0)`,
       result: 'INFO',
-      details: { handSize: 6, legends: 3, firstPlayer: host },
+      details: { handSize: 6, legends: 3, firstPlayer: host, firstPlayerLegendsSpent: 2 },
+    })
+    appendActionLog(game, {
+      playerId: host,
+      actionType: 'DRAW_STEP',
+      description: `Phase DRAW : Joueur ${host} doit cliquer sur sa pioche (AWAITING_DRAW)`,
+      result: 'INFO',
+      details: { drawStep: 'AWAITING_DRAW' },
     })
     return game
   }

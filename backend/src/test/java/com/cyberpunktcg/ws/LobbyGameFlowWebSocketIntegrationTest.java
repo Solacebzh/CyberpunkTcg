@@ -319,7 +319,10 @@ class LobbyGameFlowWebSocketIntegrationTest {
         assertThat(host.path("gameId").asText()).isEqualTo(gameId);
         assertThat(host.path("yourPlayerId").asText()).isEqualTo(HOST);
         assertThat(guest.path("yourPlayerId").asText()).isEqualTo(GUEST);
-        assertThat(host.path("phase").asText()).isEqualTo("MAIN");
+        // Mini-Feature 5.1 : la partie démarre en phase DRAW (sous-étape AWAITING_DRAW)
+        // pour le premier joueur — il doit piocher puis lancer son dé avant le MAIN.
+        assertThat(host.path("phase").asText()).isEqualTo("DRAW");
+        assertThat(host.path("turn").path("drawStep").asText()).isEqualTo("AWAITING_DRAW");
         assertThat(host.path("gameOver").asBoolean()).isFalse();
         // Le premier joueur est tiré au sort : le tour 1 appartient à l'un des deux joueurs.
         assertThat(host.path("turn").path("activePlayerId").asText()).isIn(HOST, GUEST);

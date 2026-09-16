@@ -243,6 +243,22 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     // 6 dés Gig par camp dans la colonne Fixer.
     expect(wrapper.findAll('[data-zone="FIXER"] [data-fixer-die]')).toHaveLength(12)
 
+    // --- 3 bis. Mini-Feature 5.1 : le premier joueur (Alpha) ouvre son tour 1 en
+    // phase DRAW (sous-étape AWAITING_DRAW) — il doit piocher puis lancer son dé Gig
+    // avant d'entrer en phase MAIN, exactement comme tous les tours.
+    expect(game.phase).toBe('DRAW')
+    expect(game.drawStep).toBe('AWAITING_DRAW')
+    await waitFor(() => wrapper.find('[data-draw-guide]').exists(), 'bandeau de guidage (tour 1, premier joueur)')
+    // Clic sur la pioche → +1 carte.
+    await wrapper.get('[data-board="me"] [data-zone="DECK"] .card-pile').trigger('click')
+    await waitFor(() => (game.me?.hand.length ?? 0) === 7, 'ma carte piochée (tour 1)')
+    await waitFor(() => game.drawStep === 'AWAITING_DIE_SELECT', 'choix du dé attendu (tour 1)')
+    await wrapper.get('[data-draw-guide] [data-die-option="d4"]').trigger('click')
+    await waitFor(() => game.phase === 'MAIN', 'phase Main après pioche + lancer (tour 1)')
+    expect(game.me?.gigCount).toBe(1)
+    expect(game.drawStep).toBeNull()
+    expect(game.isMyTurn).toBe(true)
+
     // --- 4. Vente (Mini-Feature 3) : 1 carte de la main → ressource, 0 ¤ immédiat ---
     const sold = game.me?.hand[0] as CardInstance
     await wrapper.get(`[data-instance-id="${sold.instanceId}"]`).trigger('click')
@@ -261,7 +277,7 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     const sellCommand = actions().find((command) => command.action === 'SELL_CARD')
     expect(sellCommand).toMatchObject({ action: 'SELL_CARD', instanceId: sold.instanceId })
     expect(typeof sellCommand?.clientRequestId).toBe('string')
-    expect(game.me?.hand).toHaveLength(5)
+    expect(game.me?.hand).toHaveLength(6) // 7 après la pioche du tour 1, moins 1 vente
     expect(game.me?.hasSoldThisTurn).toBe(true)
 
     // --- 4 bis. R4 (Mini-Feature 4) : incliner la ressource → +1 Eddie -----
@@ -395,7 +411,7 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     expect(game.phase).toBe('DRAW')
     expect(game.awaitingMyDraw).toBe(true)
     expect(game.canEndTurn).toBe(false)
-    expect(game.me?.hand).toHaveLength(4) // 6 − vente − pose : rien n'a été pioché automatiquement
+    expect(game.me?.hand).toHaveLength(5) // 6 + pioche tour 1 − vente − pose (avant la pioche du tour 3)
     await waitFor(() => wrapper.find('[data-draw-guide]').exists(), 'bandeau de guidage de la phase DRAW')
     expect(wrapper.get('[data-draw-guide]').attributes('data-step')).toBe('AWAITING_DRAW')
     expect(wrapper.get('[data-draw-guide]').text()).toContain('PIOCHER VOTRE CARTE')
@@ -406,38 +422,38 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     const myDeck = wrapper.get('[data-board="me"] [data-zone="DECK"] .card-pile')
     expect(myDeck.attributes('data-clickable')).toBe('true')
     await myDeck.trigger('click')
-    await waitFor(() => (game.me?.hand.length ?? 0) === 5, 'ma carte piochée')
+    await waitFor(() => (game.me?.hand.length ?? 0) === 6, 'ma carte piochée')
     expect(actions().find((command) => command.action === 'DRAW_CARD')).toMatchObject({ action: 'DRAW_CARD' })
 
     // Étape AWAITING_DIE_SELECT : grille des dés, d20 grisé, les autres cliquables.
     await waitFor(() => game.drawStep === 'AWAITING_DIE_SELECT', 'choix du dé attendu')
-    expect(game.selectableDice).toEqual(['d4', 'd6', 'd8', 'd10', 'd12'])
+    expect(game.selectableDice).toEqual(['d6', 'd8', 'd10', 'd12'])
     expect(game.canSelectDie('d20')).toMatch(/d20/)
     expect(wrapper.find('[data-board="me"] [data-zone="DECK"] .card-pile').attributes('data-clickable')).toBeUndefined()
     await waitFor(() => wrapper.find('[data-draw-guide] [data-die-option]').exists(), 'grille des dés affichée')
     expect(wrapper.get('[data-draw-guide]').text()).toContain('CHOISIS UN DÉ')
-    expect(wrapper.findAll('[data-draw-guide] [data-die-option]')).toHaveLength(6)
+    expect(wrapper.findAll('[data-draw-guide] [data-die-option]')).toHaveLength(5)
     const d20Option = wrapper.get('[data-draw-guide] [data-die-option="d20"]')
     expect(d20Option.attributes('data-selectable')).toBe('false')
     expect((d20Option.element as HTMLButtonElement).disabled).toBe(true)
-    expect(wrapper.findAll('[data-board="me"] [data-fixer-die][data-selectable="true"]')).toHaveLength(5)
+    expect(wrapper.findAll('[data-board="me"] [data-fixer-die][data-selectable="true"]')).toHaveLength(4)
     expect(wrapper.get('[data-board="me"] [data-fixer-die="d20"]').attributes('data-locked')).toBe('true')
 
     // Clic sur le d8 → SELECT_DIE, le serveur lance et enchaîne sur la phase Main.
     await wrapper.get('[data-draw-guide] [data-die-option="d8"]').trigger('click')
-    await waitFor(() => (game.me?.gigCount ?? 0) === 1, 'mon Gig lancé')
+    await waitFor(() => (game.me?.gigCount ?? 0) === 2, 'mon Gig lancé')
     // `actions()` capture aussi les commandes brutes de Bravo : on cible la mienne (d8).
     const myDieCommand = actions().find((command) => command.action === 'SELECT_DIE' && (command.dice as string[])?.[0] === 'd8')
     expect(myDieCommand).toMatchObject({ action: 'SELECT_DIE', dice: ['d8'] })
     expect(typeof myDieCommand?.clientRequestId).toBe('string')
-    expect(game.me?.gigDice).toEqual(['d8'])
-    expect(game.me?.fixerDice).toEqual(['d4', 'd6', 'd10', 'd12', 'd20'])
+    expect(game.me?.gigDice).toEqual(['d4', 'd8'])
+    expect(game.me?.fixerDice).toEqual(['d6', 'd10', 'd12', 'd20'])
     await waitFor(() => game.phase === 'MAIN', 'ma phase Main')
     expect(game.drawStep).toBeNull()
     expect(game.canEndTurn).toBe(true)
     expect(wrapper.find('[data-draw-guide]').exists()).toBe(false)
-    expect(game.me?.hand).toHaveLength(5) // 6 − vente − pose + pioche
-    expect((game.me?.gigCount ?? 0) + (game.opponent?.gigCount ?? 0)).toBe(2)
+    expect(game.me?.hand).toHaveLength(6) // 6 + pioche tour 1 − vente − pose + pioche tour 3
+    expect((game.me?.gigCount ?? 0) + (game.opponent?.gigCount ?? 0)).toBe(3)
     expect(wrapper.get('[data-zone="GIGS"]').text()).toContain('d8')
 
     // --- 8. Attaque ciblée via l'overlay ----------------------------------
