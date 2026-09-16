@@ -30,6 +30,14 @@ public class GitHubAnnotationWatcher implements TestWatcher {
     /** Longueur maximale du message publié (les annotations restent lisibles). */
     private static final int MAX_MESSAGE = 600;
 
+    /**
+     * Compteur d'échecs : chaque annotation est numérotée, donc unique — GitHub
+     * déduplique les annotations identiques, ce qui masquerait sinon le nombre
+     * réel de tests en échec. Le dernier numéro publié donne le total.
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger FAILURES =
+            new java.util.concurrent.atomic.AtomicInteger();
+
     @Override
     public void testFailed(ExtensionContext context, Throwable cause) {
         publish("error", context, cause);
@@ -43,38 +51,41 @@ public class GitHubAnnotationWatcher implements TestWatcher {
     /** Émet une commande de workflow GitHub pour un test non passé. */
     private void publish(String level, ExtensionContext context, Throwable cause) {
         Class<?> testClass = context.getRequiredTestClass();
-        String title = testClass.getSimpleName() + " — " + context.getDisplayName();
-        String message = describe(cause);
+        String method = context.getTestMethod().map(java.lang.reflect.Method::getName).orElse("?");
+        int number = FAILURES.incrementAndGet();
+        String title = "#" + number + " " + testClass.getSimpleName() + "." + method;
 
-        StringBuilder command = new StringBuilder("::").append(level);
-        String location = locate(testClass, cause);
-        if (location != null) {
-            command.append(' ').append(location);
+        // Les propriétés d'une commande de workflow sont séparées par des VIRGULES
+        // (`file=…,line=…,title=…`) : un autre séparateur casse leur analyse.
+        StringBuilder properties = new StringBuilder("title=").append(escape(title));
+        int line = locateLine(testClass, cause);
+        if (line > 0) {
+            properties.append(",file=").append(escape(sourcePath(testClass.getName())))
+                    .append(",line=").append(line);
         }
-        command.append(" title=").append(escape(title)).append("::").append(escape(message));
-        System.out.println(command);
+        String message = "#" + number + " " + testClass.getSimpleName() + "#" + method
+                + (line > 0 ? " (ligne " + line + ")" : "") + " | " + describe(cause);
+
+        System.out.println("::" + level + " " + properties + "::" + escape(message));
         System.out.flush();
     }
 
     /**
-     * Retrouve la ligne du test dans son fichier source (chemin relatif à la
-     * racine du dépôt, seul format accepté par les annotations).
+     * Ligne du test dans son fichier source : première frame de la pile qui
+     * appartient à la classe de test (les frames AssertJ/JUnit ne correspondent
+     * à aucun fichier du dépôt).
      */
-    private String locate(Class<?> testClass, Throwable cause) {
+    private int locateLine(Class<?> testClass, Throwable cause) {
         if (cause == null) {
-            return null;
+            return -1;
         }
         String name = testClass.getName();
         for (StackTraceElement element : cause.getStackTrace()) {
             if (name.equals(element.getClassName()) && element.getLineNumber() > 0) {
-                return "file=" + sourcePath(name) + ",line=" + element.getLineNumber();
+                return element.getLineNumber();
             }
         }
-        StackTraceElement[] trace = cause.getStackTrace();
-        if (trace.length > 0 && trace[0].getLineNumber() > 0) {
-            return "file=" + sourcePath(trace[0].getClassName()) + ",line=" + trace[0].getLineNumber();
-        }
-        return null;
+        return -1;
     }
 
     /** {@code com.x.YTest} → {@code backend/src/test/java/com/x/YTest.java}. */
