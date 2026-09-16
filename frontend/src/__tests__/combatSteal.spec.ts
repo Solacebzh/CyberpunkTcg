@@ -88,8 +88,6 @@ const DECK_BRAVO = [...LEGENDS.map((item) => item.id), ...ZEROES.map((item) => i
 
 // --- Utilitaires ------------------------------------------------------------
 
-type RawState = Record<string, unknown> | null
-
 function seatOf(client: RawClient, playerId: string): PlayerState {
   const players = (client.lastState()?.players ?? []) as PlayerState[]
   const found = players.find((player) => player.playerId === playerId)

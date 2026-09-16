@@ -1,17 +1,9 @@
-﻿<script setup lang="ts">
-/**
- * Carte en jeu (main, Field, Legends Area…).
- *
- * Composant de présentation : il ne connaît aucune règle. Les états
- * (`selectable`, `selected`, `targetable`, `dimmed`, `tapped`) sont décidés par
- * l'écran de jeu à partir du store, qui reflète lui-même l'état serveur.
- *
- * L'attribut `data-instance-id` sert de point d'accroche aux animations GSAP
- * (`useGameAnimations`) — ne pas le retirer.
- */
-import { computed, ref } from 'vue'
+<script setup lang="ts">
+/** Carte officielle en jeu. Les règles restent entièrement gérées par son parent. */
+import { computed, ref, watch } from 'vue'
 
-import { CARD_TYPE_LABELS, type CardColor, type GameCard } from '@/types/card'
+import CardZoomModal from '@/components/CardZoomModal.vue'
+import type { GameCard } from '@/types/card'
 import { isHiddenCard, type CardInstance } from '@/types/game'
 
 type CardSize = 'xs' | 'sm' | 'md' | 'lg'
@@ -19,7 +11,6 @@ type CardSize = 'xs' | 'sm' | 'md' | 'lg'
 const props = withDefaults(
   defineProps<{
     card: CardInstance
-    /** Définition du catalogue (`GET /api/cards`) : illustration, texte complet. */
     definition?: GameCard | null
     side?: 'me' | 'opponent'
     size?: CardSize
@@ -43,65 +34,43 @@ const props = withDefaults(
   },
 )
 
-
-
-const imageFailed = ref(false)
-
-const FRAME: Record<CardColor, string> = {
-  red: 'border-cyber-magenta/80',
-  green: 'border-cyber-green/80',
-  blue: 'border-cyber-cyan/80',
-  yellow: 'border-cyber-yellow/80',
-}
-
-const ACCENT: Record<CardColor, string> = {
-  red: 'text-cyber-magenta',
-  green: 'text-cyber-green',
-  blue: 'text-cyber-cyan',
-  yellow: 'text-cyber-yellow',
-}
-
-const HALO: Record<CardColor, string> = {
-  red: 'shadow-[0_0_18px_rgba(255,42,109,0.45)]',
-  green: 'shadow-[0_0_18px_rgba(57,255,136,0.45)]',
-  blue: 'shadow-[0_0_18px_rgba(5,217,232,0.45)]',
-  yellow: 'shadow-[0_0_18px_rgba(252,238,10,0.45)]',
-}
-
-const GLYPH: Record<string, string> = {
-  unit: '⚔',
-  gear: '⚙',
-  program: '▤',
-  legend: '★',
-}
-
-const SIZE: Record<CardSize, { box: string; name: string; stat: string; art: string }> = {
-  xs: { box: 'w-[74px]', name: 'text-[0.5rem]', stat: 'text-[0.55rem]', art: 'h-10' },
-  sm: { box: 'w-[104px]', name: 'text-[0.6rem]', stat: 'text-[0.6rem]', art: 'h-14' },
-  md: { box: 'w-[136px]', name: 'text-[0.7rem]', stat: 'text-[0.7rem]', art: 'h-20' },
-  lg: { box: 'w-[176px]', name: 'text-[0.8rem]', stat: 'text-[0.75rem]', art: 'h-28' },
-}
-
-const hidden = computed(() => isHiddenCard(props.card) || props.card.faceDown)
-const tapped = computed(() => props.card.exhausted)
-const sick = computed(() => props.card.summoningSickness && props.card.type === 'unit')
-const size = computed(() => SIZE[props.size])
-const imageUrl = computed(() => (hidden.value ? null : props.definition?.imageUrl ?? null))
-const effectiveCost = computed(() => props.card.cost ?? props.card.baseCost ?? null)
-const buffed = computed(() => (props.card.powerBonus ?? 0) > 0)
-const damaged = computed(() => (props.card.damage ?? 0) > 0)
-
-
-
-// Correction de la Feature 5.5
 const emit = defineEmits<{
-  (e: 'click', card: CardInstance): void
+  (event: 'click', card: CardInstance): void
 }>()
 
-const attachmentCount = computed(() => props.card.attachments?.length || 0)
+const SIZE: Record<CardSize, string> = {
+  xs: 'w-[74px]',
+  sm: 'w-[104px]',
+  md: 'w-[136px]',
+  lg: 'w-[176px]',
+}
 
-function handleClick(): void {
-  emit('click', props.card)
+// Le serveur ne fournit pas d'URL pour une carte cachée. Ce SVG reste une image,
+// afin que le visuel de la carte ne contienne jamais de texte HTML superposé.
+const CARD_BACK = `data:image/svg+xml,${encodeURIComponent(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 900">
+  <defs><linearGradient id="b" x2="1" y2="1"><stop stop-color="#15152a"/><stop offset="1" stop-color="#080810"/></linearGradient></defs>
+  <rect width="600" height="900" rx="35" fill="url(#b)"/>
+  <rect x="24" y="24" width="552" height="852" rx="24" fill="none" stroke="#05d9e8" stroke-width="8"/>
+  <path d="M70 175h460M70 725h460M150 100v700M450 100v700" stroke="#ff2a6d" stroke-width="3" opacity=".45"/>
+  <path d="M300 250l145 200-145 200-145-200z" fill="none" stroke="#05d9e8" stroke-width="15"/>
+  <circle cx="300" cy="450" r="82" fill="#ff2a6d" opacity=".75"/>
+</svg>`)} `
+
+const imageFailed = ref(false)
+const zoomed = ref(false)
+const hidden = computed(() => isHiddenCard(props.card) || props.card.faceDown)
+const officialImage = computed(() => (hidden.value ? null : props.definition?.imageUrl ?? null))
+const displayedImage = computed(() => (!imageFailed.value && officialImage.value ? officialImage.value : CARD_BACK))
+const canInspect = computed(() => Boolean(officialImage.value && !imageFailed.value))
+
+watch(officialImage, () => {
+  imageFailed.value = false
+  zoomed.value = false
+})
+
+function inspect(): void {
+  if (canInspect.value) zoomed.value = true
 }
 </script>
 
@@ -110,146 +79,44 @@ function handleClick(): void {
     :data-instance-id="card.instanceId"
     :data-card-zone="card.zone"
     :data-card-side="side"
-    class="relative shrink-0 select-none rounded-xl overflow-hidden shadow-[inset_0_0_30px_rgba(255,215,0,0.15)] border-2 bg-gradient-to-b from-[#18182b] to-[#0d0d18] transition-[transform,box-shadow,opacity] duration-150"
+    class="group relative aspect-[2/3] shrink-0 select-none transition-[transform,box-shadow,opacity] duration-200"
     :class="[
-      size.box,
-      selected ? 'ring-2 ring-cyber-cyan shadow-[0_0_30px_rgba(5,217,232,0.5)]' : '',
-      selectable ? 'cursor-pointer hover:-translate-y-1 hover:brightness-110' : '',
-      targetable ? 'cursor-crosshair ring-2 ring-cyber-magenta animate-pulse-slow' : '',
-      dimmed ? 'opacity-40 grayscale' : '',
-      tapped ? '-rotate-6 opacity-70 saturate-50' : '',
+      SIZE[size],
+      selectable ? 'cursor-pointer rounded-xl shadow-[0_0_8px_2px_rgba(5,217,232,0.8),0_0_22px_rgba(255,42,109,0.55)] hover:-translate-y-1 hover:shadow-[0_0_12px_3px_rgba(5,217,232,0.95),0_0_30px_rgba(255,42,109,0.7)]' : '',
+      selected ? 'rounded-xl ring-2 ring-cyber-cyan shadow-[0_0_30px_rgba(5,217,232,0.8)]' : '',
+      targetable ? 'cursor-crosshair rounded-xl ring-2 ring-cyber-magenta shadow-[0_0_28px_rgba(255,42,109,0.8)] animate-pulse-slow' : '',
+      dimmed ? 'opacity-45' : '',
+      card.exhausted ? 'rotate-90' : '',
     ]"
-    :title="hidden ? 'Carte masquée' : card.name"
+    :title="hidden ? 'Carte masquée' : `${card.name} — clic droit pour inspecter`"
     :aria-label="hidden ? 'Carte masquée' : card.name"
-    @click="handleClick"
+    @click="emit('click', card)"
+    @contextmenu.prevent="inspect"
   >
-    <!-- DOS -->
-    <div
-      v-if="hidden"
-      class="cyber-cardback flex h-full w-full flex-col items-center justify-center gap-2"
+    <img
+      :src="displayedImage"
+      :alt="hidden ? 'Dos de carte' : card.name"
+      class="h-full w-full rounded-xl object-contain"
+      loading="lazy"
+      draggable="false"
+      @error="imageFailed = true"
+    />
+    <button
+      v-if="canInspect"
+      type="button"
+      class="absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-full border border-cyber-cyan/80 bg-black/80 text-sm text-white opacity-0 shadow-[0_0_10px_rgba(5,217,232,0.7)] transition-opacity hover:text-cyber-cyan focus:opacity-100 group-hover:opacity-100"
+      :aria-label="`Inspecter ${card.name}`"
+      title="Inspecter la carte"
+      @click.stop="inspect"
     >
-      <span class="font-mono text-xs uppercase tracking-[0.3em] text-cyber-cyan">CP</span>
-      <span class="text-2xl" :class="ACCENT[card.color]">{{ GLYPH[card.type] ?? '?' }}</span>
-      <span class="font-mono text-[0.6rem] uppercase tracking-widest text-slate-500">{{ CARD_TYPE_LABELS[card.type] }}</span>
-    </div>
-
-    <template v-else>
-      <!-- EN-TÊTE : Nom + Sous-titre + Cost + Type + RAM -->
-      <div class="relative z-10 flex items-start gap-2 px-2 pt-2 pb-1">
-        <!-- Coût (cercle rouge/orange style officiel) -->
-        <div
-          v-if="effectiveCost !== null"
-          class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 border-cyber-red bg-gradient-to-br from-cyber-red to-red-900 shadow-[0_0_8px_rgba(255,42,42,0.6)] font-mono text-sm font-extrabold text-white"
-          :title="`Coût : ${effectiveCost} Eddies`"
-        >
-          {{ effectiveCost }}
-        </div>
-        <div v-else class="h-7 w-7 shrink-0" />
-
-        <!-- Nom + Sous-titre -->
-        <div class="min-w-0 flex-1">
-          <h3 class="truncate text-sm font-black leading-tight tracking-tight text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]" :class="size.name">
-            {{ card.name }}
-          </h3>
-          <p v-if="definition?.subtitle" class="truncate text-[0.6rem] leading-none text-cyber-cyan/90 font-medium tracking-tight">
-            {{ definition?.subtitle }}
-          </p>
-        </div>
-
-        <!-- Type + RAM -->
-        <div class="flex flex-col items-end gap-0.5 text-[0.55rem] font-mono leading-none">
-          <span class="rounded border border-cyber-cyan/60 bg-cyber-cyan/10 px-1 text-cyber-cyan uppercase tracking-wide" title="Type">
-            {{ CARD_TYPE_LABELS[card.type] }}
-          </span>
-          <span v-if="definition?.ram != null" class="rounded border border-cyber-yellow/60 bg-cyber-yellow/10 px-1 text-cyber-yellow" title="RAM">
-            RAM {{ definition?.ram }}
-          </span>
-        </div>
-      </div>
-
-      <!-- ILLUSTRATION (centre, grande) -->
-      <div class="relative overflow-hidden" :class="[size.art]">
-        <img
-          v-if="imageUrl && !imageFailed"
-          :src="imageUrl ?? undefined"
-          :alt="card.name"
-          class="h-full w-full object-cover object-top"
-          loading="lazy"
-          @error="imageFailed = true"
-        />
-        <div
-          v-else
-          class="grid h-full w-full place-items-center bg-gradient-to-br from-[#1a1a2e] to-[#0f0f18]"
-        >
-          <span class="text-3xl drop-shadow-lg" :class="ACCENT[card.color]">{{ GLYPH[card.type] ?? '?' }}</span>
-        </div>
-        <!-- Dégradé de fond pour lisibilité du texte -->
-        <div class="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-[#0a0a14]/90 via-[#0a0a14]/40 to-transparent pointer-events-none" />
-      </div>
-
-      <!-- Nom + stats -->
-      <div class="flex flex-col gap-1 px-1.5 py-1">
-        <p class="truncate font-semibold leading-tight text-slate-100" :class="size.name">{{ card.name }}</p>
-
-        <div class="flex items-end justify-between gap-2 font-mono" :class="size.stat">
-          <span v-if="card.power !== undefined" class="flex items-center gap-1">
-            <span class="text-slate-400">PWR</span>
-            <span
-              class="font-bold"
-              :class="damaged ? 'text-cyber-red' : buffed ? 'text-cyber-green' : 'text-slate-100'"
-            >
-              {{ card.power }}
-            </span>
-          </span>
-          <span v-else class="text-slate-500">—</span>
-
-          <span v-if="card.streetCredThreshold != null" class="text-cyber-cyan" title="Seuil de Street Cred">
-            SC {{ card.streetCredThreshold }}
-          </span>
-          <span v-if="attachmentCount > 0" class="text-cyber-green" :title="`${attachmentCount} Gear(s) équipé(s)`">
-            ⚙{{ attachmentCount }}
-          </span>
-        </div>
-
-        <!-- Règles / Abilities -->
-        <p v-if="showAbilities && card.abilities.length" class="line-clamp-3 text-[0.6rem] font-medium leading-snug text-slate-200">
-          {{ card.abilities.join(' · ') }}
-        </p>
-        <p v-else-if="definition?.text" class="line-clamp-3 text-[0.6rem] leading-snug text-slate-200">
-          {{ definition?.text }}
-        </p>
-        <p v-else class="text-[0.6rem] italic text-slate-400">—</p>
-      </div>
-
-      <!-- BAS DE CARTE : Stats + Métadonnées -->
-      <div class="relative z-10 flex items-end justify-between px-2 pb-1.5 pt-0.5">
-        <!-- Gauche : Numéro + Set + Illustrateur -->
-        <div class="flex flex-col gap-0.5 text-[0.5rem] font-mono leading-none text-slate-400">
-          <div class="flex items-center gap-1.5">
-            <span v-if="definition?.collectorNumber" class="font-extrabold text-cyber-yellow/90">#{{ definition?.collectorNumber }}</span>
-            <span v-if="definition?.setCode" class="text-[0.45rem] text-slate-500">{{ definition?.setCode }}</span>
-          </div>
-        </div>
-
-        <!-- Droite : Power + Rareté -->
-        <div class="flex items-center gap-2 text-right">
-          <div v-if="card.power !== undefined" class="flex flex-col items-end leading-none">
-            <span class="text-[0.45rem] font-mono text-slate-500 uppercase tracking-widest">PWR</span>
-            <span class="text-sm font-black leading-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]" :class="damaged ? 'text-cyber-red' : buffed ? 'text-cyber-green' : 'text-white'">
-              {{ card.power }}
-            </span>
-          </div>
-          <div v-if="definition?.rarity" class="rounded-full border border-cyber-line bg-black/60 px-1.5 py-0.5 text-[0.5rem] font-mono font-bold uppercase tracking-wider text-cyber-yellow shadow-inner">
-            {{ definition?.rarity }}
-          </div>
-        </div>
-      </div>
-
-      <!-- Marqueurs d'état absolus -->
-      <span v-if="tapped" class="pointer-events-none absolute -right-1 top-1/2 z-50 -translate-y-1/2 rotate-90 rounded bg-cyber-magenta px-1 py-0.5 font-mono text-[0.45rem] font-bold uppercase tracking-widest text-white shadow-lg">ÉPUISÉE</span>
-      <span v-else-if="sick" class="pointer-events-none absolute right-1 bottom-1 z-50 rounded bg-black/80 px-1 py-0.5 font-mono text-[0.45rem] text-slate-300 shadow-md" title="Mal d'invocation">Zz</span>
-
-      <span v-if="selected" class="pointer-events-none absolute inset-0 rounded-xl border-2" :class="[FRAME[card.color], HALO[card.color]]" />
-    </template>
+      🔍
+    </button>
   </article>
+
+  <CardZoomModal
+    v-if="zoomed && officialImage"
+    :image-url="officialImage"
+    :alt="card.name"
+    @close="zoomed = false"
+  />
 </template>
