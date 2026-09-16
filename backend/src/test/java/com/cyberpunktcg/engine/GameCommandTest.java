@@ -133,9 +133,12 @@ class GameCommandTest {
 
     @Test
     void blocker_interceptionAuChoixDuDefenseur() {
-        CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("raider", 1, 4));
+        // Blocker plus fort que l'attaquant (4 > 1) : il survit, donc son
+        // inclinaison reste observable (`defeatUnit` → `clearCombatMarkers()`
+        // redresse une carte vaincue avant de la défausser).
+        CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("raider", 1, 1));
         CardInstance blocker = GameFixtures.fieldCard(state, "p2",
-                GameFixtures.unit("wall", 1, 1, CardKeyword.BLOCKER));
+                GameFixtures.unit("wall", 1, 4, CardKeyword.BLOCKER));
         CardInstance other = GameFixtures.fieldCard(state, "p2", GameFixtures.unit("bystander", 1, 1));
         other.setExhausted(true);
         GameFixtures.addGigs(state, "p2", 3);
@@ -152,9 +155,11 @@ class GameCommandTest {
 
         new BlockCommand("p2", blocker.getInstanceId()).execute(state);
 
-        assertThat(blocker.isExhausted()).isTrue();
-        assertThat(state.getPlayer("p2").getTrash()).contains(blocker); // 4 > 1
+        assertThat(blocker.isExhausted()).isTrue();                    // bloquer dépense
+        assertThat(state.getPlayer("p2").getField()).contains(blocker);  // 4 > 1 : il survit
+        assertThat(state.getPlayer("p1").getTrash()).contains(attacker); // attaquant vaincu
         assertThat(state.getPlayer("p2").getField()).contains(other);    // cible déclarée épargnée
+        assertThat(other.getDamage()).isZero();
         assertThat(state.getPlayer("p1").getGigCount()).isZero();        // aucun Gig volé
         assertThat(state.isCombatPending()).isFalse();
     }

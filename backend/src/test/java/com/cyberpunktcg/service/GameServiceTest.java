@@ -186,6 +186,11 @@ class GameServiceTest {
         stubCatalog(idsOne, idsTwo);
         GameState state = gameService.createGame("p1", "p2", idsOne, idsTwo);
         String active = state.getTurn().getActivePlayerId();
+        // Mini-Feature 5.1 : le tour 1 s'ouvre en phase DRAW — piocher puis lancer un
+        // dé Gig avant d'entrer en phase MAIN (seule phase où la vente est légale).
+        gameService.executeCommand(state.getGameId(), new DrawCardCommand(active));
+        gameService.executeCommand(state.getGameId(), new SelectDieCommand(active, "d4"));
+        assertThat(state.getPhase()).isEqualTo(Phase.MAIN);
         CardInstance toSell = state.getPlayer(active).getHand().get(0);
 
         List<GameEvent> events = gameService.executeCommand(state.getGameId(),

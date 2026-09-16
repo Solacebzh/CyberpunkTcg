@@ -877,12 +877,12 @@ class GameIntegrationTest {
         completeDraw(state);
         GameFixtures.fieldCard(state, "p2", GameFixtures.unit("b",1,3, CardKeyword.BLOCKER));
         CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("a",1,4));
-        GameFixtures.addGigs(state, "p2", 2);
+        GameFixtures.addGigs(state, "p2", 2);   // UN dé Gig actif, de valeur 2
         execute(state, new AttackCommand("p1", attacker.getInstanceId()));
         assertThat(state.isAwaitingBlock()).isTrue();
         execute(state, new DeclineBlockCommand("p2"));
         assertThat(state.isAwaitingStealChoice()).isTrue();
-        // power 4 → quota N = 1, et p2 a au moins 2 dés actifs → M = 1.
+        // power 4 → quota N = 1 ; p2 n'a qu'1 dé actif → plafond strict M = 1.
         assertThat(state.getPendingAttack().getQuota()).isEqualTo(1);
         assertThat(state.getPendingAttack().getStealable()).isEqualTo(1);
 
@@ -899,7 +899,8 @@ class GameIntegrationTest {
         assertThat(blocked.getPlayer("p2").getTrash()).contains(wall); // 4 > 3
         assertThat(blocked.getPlayer("p1").getField()).contains(raider);
         assertThat(blocked.getPlayer("p1").getGigCount()).isEqualTo(thiefGigs);
-        assertThat(blocked.getPlayer("p2").getGigCount()).isEqualTo(victimGigs + 2);
+        // `addGigs(blocked, "p2", 2)` ajoute UN dé (valeur 2) : aucun n'est volé.
+        assertThat(blocked.getPlayer("p2").getGigCount()).isEqualTo(victimGigs + 1);
     }
 
     @Test
@@ -1141,11 +1142,16 @@ class GameIntegrationTest {
         completeDraw(state);
         GameFixtures.addGigs(state, "p2", 5,6);
         GameFixtures.giveEddies(state, "p1", 5);
+        // Mini-Feature 5.1 : le tour 1 s'ouvre en phase DRAW — `completeDraw` a déjà
+        // fait gagner un Gig au joueur actif. On compare donc des écarts, pas des
+        // totaux absolus (indépendants du joueur tiré au sort).
+        int thiefBefore = state.getPlayer("p1").getGigCount();
+        int victimBefore = state.getPlayer("p2").getGigCount();
         CardInstance stealCard = GameFixtures.handCard(state, "p1",
                 GameFixtures.coloredProgram("steal", CardColor.RED,1,1,"ON_PLAY:STEAL_GIG:1"));
         execute(state, new PlayCardCommand("p1", stealCard.getInstanceId()));
-        assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(1);
-        assertThat(state.getPlayer("p2").getGigCount()).isEqualTo(1);
+        assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(thiefBefore + 1);
+        assertThat(state.getPlayer("p2").getGigCount()).isEqualTo(victimBefore - 1);
     }
 
     @Test

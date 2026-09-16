@@ -311,9 +311,12 @@ class CombatStealTest {
     @Test
     @DisplayName("R6 - BLOCKER : le défenseur redirige l'attaque sur son Blocker")
     void testR6_Blocker_RedirectsAttackToBlockerUnit() {
-        CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("raider", 1, 4));
+        // Le Blocker est plus fort que l'attaquant (5 > 2) : il survit à l'échange,
+        // ce qui rend son inclinaison observable — `defeatUnit` appelle
+        // `clearCombatMarkers()`, qui redresse la carte vaincue avant la Trash.
+        CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("raider", 1, 2));
         CardInstance blocker = GameFixtures.fieldCard(state, "p2",
-                GameFixtures.unit("wall", 1, 2, CardKeyword.BLOCKER));
+                GameFixtures.unit("wall", 1, 5, CardKeyword.BLOCKER));
         CardInstance guard = GameFixtures.fieldCard(state, "p2", GameFixtures.unit("guard", 1, 1));
         guard.setExhausted(true);
         GameFixtures.addGigs(state, "p2", 5);
@@ -329,13 +332,16 @@ class CombatStealTest {
 
         new BlockCommand("p2", Collections.singletonList(blocker.getInstanceId())).execute(state);
 
+        // Bloquer DÉPENSE le Blocker (règle officielle § REACT — « Spend a Unit
+        // with the BLOCKER keyword »).
         assertThat(blocker.isExhausted()).isTrue();
-        // 4 > 2 : le Blocker est vaincu, la cible déclarée n'a rien subi.
-        assertThat(state.getPlayer("p2").getTrash()).contains(blocker);
-        assertThat(blocker.getZone()).isEqualTo(Zone.TRASH);
-        assertThat(state.getPlayer("p2").getField()).contains(guard);
-        assertThat(attacker.isExhausted()).isTrue();
-        assertThat(state.getPlayer("p1").getField()).contains(attacker);
+        assertThat(state.getPlayer("p2").getField()).contains(blocker);
+        // L'attaque est REDIRIGÉE : c'est le Blocker qui a combattu l'attaquant
+        // (2 < 5 → l'attaquant est vaincu), la cible déclarée n'a rien subi.
+        assertThat(state.getPlayer("p1").getTrash()).contains(attacker);
+        assertThat(attacker.getZone()).isEqualTo(Zone.TRASH);
+        assertThat(guard.getZone()).isEqualTo(Zone.FIELD);
+        assertThat(guard.getDamage()).isZero();
         // Attaque redirigée = aucun Gig volé (règle officielle § ATTACKING).
         assertThat(state.getPlayer("p1").getGigCount()).isZero();
         assertThat(state.getPlayer("p2").getGigs()).containsExactly(5);
