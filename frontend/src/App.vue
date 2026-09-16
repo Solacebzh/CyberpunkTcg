@@ -1,7 +1,18 @@
 <script setup lang="ts">
-import { RouterLink, RouterView } from 'vue-router'
+import { RouterLink, RouterView, useRouter } from 'vue-router'
+import { storeToRefs } from 'pinia'
 import ConnectionBadge from '@/components/ConnectionBadge.vue'
 import CyberToast from '@/components/ui/CyberToast.vue'
+import { useAuthStore } from '@/stores/authStore'
+
+const auth = useAuthStore()
+const { isAuthenticated, username } = storeToRefs(auth)
+const router = useRouter()
+
+function logout(): void {
+  auth.logout()
+  void router.push('/login')
+}
 
 const year = new Date().getFullYear()
 </script>
@@ -22,7 +33,7 @@ const year = new Date().getFullYear()
           </span>
         </RouterLink>
 
-        <nav class="flex items-center gap-1 font-mono text-xs uppercase tracking-widest">
+        <nav v-if="isAuthenticated" class="flex items-center gap-1 font-mono text-xs uppercase tracking-widest">
           <RouterLink
             to="/"
             class="rounded px-3 py-1.5 text-slate-300 transition hover:bg-white/5 hover:text-cyber-cyan"
@@ -46,8 +57,16 @@ const year = new Date().getFullYear()
           </RouterLink>
         </nav>
 
-        <div class="ml-auto">
-          <ConnectionBadge />
+        <div class="ml-auto flex items-center gap-3">
+          <ConnectionBadge v-if="isAuthenticated" />
+          <template v-if="isAuthenticated">
+            <span class="hidden font-mono text-xs text-cyber-green sm:inline">{{ username }}</span>
+            <button type="button" class="cyber-btn px-3 py-1.5" @click="logout">Déconnexion</button>
+          </template>
+          <template v-else>
+            <RouterLink class="font-mono text-xs uppercase tracking-widest text-cyber-cyan" to="/login">Connexion</RouterLink>
+            <RouterLink class="cyber-btn px-3 py-1.5" to="/register">Inscription</RouterLink>
+          </template>
         </div>
       </div>
     </header>

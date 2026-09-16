@@ -9,6 +9,7 @@
 
 import type { CardColor, CardType, GameCard } from '@/types/card'
 import type { DebugGameState, DebugPhase, DebugPlayerState } from '@/types/debug'
+import { clearStoredAuth, getAuthToken } from '@/services/authToken'
 
 export interface HealthResponse {
   status: string
@@ -41,18 +42,24 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 8000): Promise<T> {
+export async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 8000): Promise<T> {
   const controller = new AbortController()
   const timer = window.setTimeout(() => controller.abort(), timeoutMs)
+  const token = getAuthToken()
+  const headers = new Headers(init.headers)
+  headers.set('Accept', 'application/json')
+  if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`)
 
   try {
     const response = await fetch(apiUrl(path), {
-      headers: { Accept: 'application/json', ...(init.headers ?? {}) },
-      signal: controller.signal,
       ...init,
+      headers,
+      signal: controller.signal,
     })
 
     if (!response.ok) {
+      // Un JWT expiré ne doit pas laisser l'interface dans un faux état connecté.
+      if (response.status === 401 && !path.startsWith('/api/auth/')) clearStoredAuth()
       throw new ApiError(`${init.method ?? 'GET'} ${path} → HTTP ${response.status}`, response.status)
     }
 
