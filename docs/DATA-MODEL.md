@@ -102,6 +102,20 @@ cards (id PK, name, subtitle, card_type, color, ram, cost, power,
 
 Le profil `test` utilise H2 en mode PostgreSQL et `ddl-auto=create-drop`. Le profil local utilise PostgreSQL.
 
+Depuis la **Mini-Feature 9C**, les comptes et leurs decks sont aussi créés par `ddl-auto` :
+
+```text
+users (id PK, username UNIQUE, password, created_at)
+decks (id PK, name, user_id, created_at, updated_at)
+  └── deck_cards (deck_id FK, position, card_id)   # ordre du deck + exemplaires (3 max)
+```
+
+`deck_cards.card_id` répète l'identifiant du catalogue **sans clé étrangère** vers `cards` :
+la cohérence est vérifiée par `DeckService` à la sauvegarde (carte inconnue → `400`), ce qui
+laisse un deck lisible même lorsque le catalogue évolue. `user_id` n'a pas non plus de
+contrainte FK : un deck n'est jamais lu sans le filtre `WHERE user_id = ?` du joueur courant.
+Ces deux tables devront être reprises telles quelles lors du passage à Flyway (feature 03).
+
 ## 5. API REST
 
 | Méthode | Route | Résultat |

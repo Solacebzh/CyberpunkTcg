@@ -5,11 +5,19 @@
  * - Validation en temps réel selon les règles officielles (3 Legends uniques,
  *   Main Deck 40-50, max 3 copies, plafonds RAM par couleur).
  * - Importation textuelle avec modale ([Quantité] [Nom de la carte], commentaires ignorés).
+ *
+ * Mini-Feature 9C — persistance :
+ * - Colonne « Mes Decks » à gauche : `GET /api/decks` (decks du compte connecté).
+ * - « Sauvegarder le Deck » : `POST /api/decks` (nouveau) ou `PUT /api/decks/{id}`
+ *   (deck chargé depuis la liste), `DELETE /api/decks/{id}` sur la croix.
+ * - Le serveur rejoue les règles officielles avant d'écrire : ses refus
+ *   (`400` + `errors`) sont affichés en rouge, tels quels, sous le bouton.
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import CardPreview from '@/components/CardPreview.vue'
+import type { SavedDeck } from '@/services/api'
 import {
   MAIN_DECK_MAX,
   MAIN_DECK_MIN,
@@ -32,6 +40,9 @@ const showImportModal = ref(false)
 const importText = ref('')
 const importWarnings = ref<string[]>([])
 
+// --- Sauvegarde sur le compte (Mini-Feature 9C) ---
+const deckName = ref('')
+
 const TYPES: Array<CardType | 'all'> = ['all', 'legend', 'unit', 'program', 'gear']
 const COLORS: Array<CardColor | 'all'> = ['all', 'red', 'green', 'blue', 'yellow']
 
@@ -39,9 +50,53 @@ const legendIds = computed(() => decks.deck.filter((id) => decks.byId.get(id)?.t
 const mainCards = computed(() => decks.groupedDeck.filter((item) => item.card?.type !== 'legend'))
 const previewCard = computed(() => (previewId.value ? decks.byId.get(previewId.value) ?? null : null))
 
+/** Rappel sous le bouton : création d'un deck ou mise à jour du deck chargé. */
+const saveHint = computed(() => {
+  if (decks.savingDeck) return 'Envoi au serveur…'
+  if (decks.currentDeckId === null) return 'Crée un nouveau deck sur ton compte.'
+  return decks.isDirty
+    ? `Met à jour « ${decks.currentDeckName} » (modifications non sauvegardées).`
+    : `« ${decks.currentDeckName} » est à jour.`
+})
+
 onMounted(() => {
   void decks.loadCatalog()
+  void decks.loadSavedDecks()
 })
+
+/** « Sauvegarder le Deck » : POST si nouveau, PUT si un deck est déjà chargé. */
+async function saveDeck(): Promise<void> {
+  const accepted = await decks.saveDeck(deckName.value)
+  if (accepted) {
+    deckName.value = decks.currentDeckName
+    ui.success(`Deck « ${decks.currentDeckName} » sauvegardé sur ton compte`)
+    return
+  }
+  // Le détail (une ligne par règle violée) est affiché en rouge sous le bouton.
+  ui.error('Sauvegarde refusée par le serveur')
+}
+
+function openSavedDeck(saved: SavedDeck): void {
+  decks.openSavedDeck(saved)
+  deckName.value = saved.name
+  ui.info(`Deck « ${saved.name} » chargé (${saved.cardIds.length} cartes)`)
+}
+
+async function removeSavedDeck(saved: SavedDeck): Promise<void> {
+  const removed = await decks.deleteSavedDeck(saved.id)
+  if (!removed) {
+    ui.error(`Suppression du deck « ${saved.name} » impossible`)
+    return
+  }
+  if (deckName.value === saved.name) deckName.value = ''
+  ui.info(`Deck « ${saved.name} » supprimé`)
+}
+
+function startNewDeck(): void {
+  decks.startNewDeck()
+  deckName.value = ''
+  ui.info('Nouveau deck : la sauvegarde créera un deck distinct')
+}
 
 function onDragStart(event: DragEvent, cardId: string): void {
   event.dataTransfer?.setData('text/plain', cardId)
@@ -157,7 +212,134 @@ function executeImport(): void {
       <button type="button" class="cyber-btn ml-3" @click="decks.loadCatalog(true)">Réessayer</button>
     </p>
 
-    <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
+    <div class="grid gap-4 lg:grid-cols-[16rem_minmax(0,1fr)_24rem]">
+      <!-- Mes Decks : decks sauvegardés sur le compte (Mini-Feature 9C) -->
+      <section class="cyber-panel flex min-w-0 flex-col gap-3 p-4" data-testid="my-decks">
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0">
+            <p class="font-mono text-[0.6rem] uppercase tracking-[0.25em] text-cyber-cyan">// mes decks</p>
+            <h2 class="cyber-title truncate text-sm text-slate-100">Mes Decks</h2>
+          </div>
+          <span
+            class="shrink-0 rounded bg-black/40 px-2 py-0.5 font-mono text-[0.65rem] text-slate-300"
+            data-testid="deck-count"
+          >
+            {{ decks.savedDecks.length }}
+          </span>
+        </div>
+
+        <p v-if="decks.savedDecksState === 'loading'" class="font-mono text-[0.65rem] text-slate-500">
+          Chargement des decks (/api/decks)…
+        </p>
+        <div v-else-if="decks.savedDecksState === 'error'" class="flex flex-col gap-2">
+          <p class="font-mono text-[0.65rem] text-cyber-magenta">
+            Mes Decks indisponibles : {{ decks.savedDecksError }}
+          </p>
+          <button type="button" class="cyber-btn w-full justify-center" @click="decks.loadSavedDecks()">
+            Réessayer
+          </button>
+        </div>
+
+        <ul
+          v-else
+          class="cyber-scroll flex max-h-[20rem] min-h-[4rem] flex-col gap-1 overflow-y-auto pr-1"
+          data-testid="deck-list"
+        >
+          <li
+            v-for="saved in decks.savedDecks"
+            :key="saved.id"
+            class="rounded border px-2 py-1.5 transition"
+            :class="
+              saved.id === decks.currentDeckId
+                ? 'border-cyber-cyan/70 bg-cyber-cyan/10'
+                : 'border-cyber-line bg-black/30 hover:border-cyber-cyan/40'
+            "
+            data-testid="deck-item"
+          >
+            <div class="flex items-start justify-between gap-2">
+              <button
+                type="button"
+                class="min-w-0 flex-1 text-left"
+                :title="`Charger « ${saved.name} » dans l'éditeur`"
+                @click="openSavedDeck(saved)"
+              >
+                <span class="block truncate text-xs font-bold text-slate-100">{{ saved.name }}</span>
+                <span class="block font-mono text-[0.6rem] text-slate-500">
+                  {{ decks.describeSavedDeck(saved) }}
+                </span>
+              </button>
+              <button
+                type="button"
+                class="font-mono text-xs text-cyber-magenta transition hover:text-slate-100"
+                :aria-label="`Supprimer le deck ${saved.name}`"
+                :data-testid="`deck-delete-${saved.id}`"
+                @click="removeSavedDeck(saved)"
+              >
+                ×
+              </button>
+            </div>
+          </li>
+          <li v-if="decks.savedDecks.length === 0" class="font-mono text-[0.65rem] text-slate-600">
+            Aucun deck sauvegardé sur ton compte.
+          </li>
+        </ul>
+
+        <!-- Sauvegarde du deck en cours d'édition -->
+        <div class="mt-auto flex flex-col gap-2 border-t border-cyber-line pt-3">
+          <label class="font-mono text-[0.6rem] uppercase tracking-widest text-cyber-cyan" for="deck-name">
+            Nom du deck
+          </label>
+          <input
+            id="deck-name"
+            v-model="deckName"
+            type="text"
+            maxlength="80"
+            placeholder="Ex. Netrunner rouge"
+            data-testid="deck-name"
+            class="w-full rounded border border-cyber-line bg-black/40 px-2 py-1.5 text-xs text-slate-100 outline-none transition focus:border-cyber-cyan"
+          />
+          <button
+            type="button"
+            class="cyber-btn cyber-btn--accent w-full justify-center"
+            data-testid="deck-save"
+            :disabled="decks.savingDeck || decks.deck.length === 0"
+            :title="
+              decks.deck.length === 0
+                ? 'Ajoute des cartes avant de sauvegarder'
+                : 'Le serveur vérifie les règles officielles avant d’enregistrer'
+            "
+            @click="saveDeck"
+          >
+            {{ decks.savingDeck ? 'Sauvegarde…' : 'Sauvegarder le Deck' }}
+          </button>
+          <p class="font-mono text-[0.6rem] text-slate-500">{{ saveHint }}</p>
+          <button type="button" class="cyber-btn w-full justify-center" data-testid="deck-new" @click="startNewDeck">
+            Nouveau deck
+          </button>
+        </div>
+
+        <!-- Refus du serveur : une ligne par règle violée, en rouge -->
+        <div
+          v-if="decks.serverErrors.length > 0"
+          class="rounded border border-red-500/60 bg-red-950/40 p-2"
+          role="alert"
+          data-testid="deck-server-errors"
+        >
+          <p class="font-mono text-[0.62rem] font-bold uppercase tracking-wide text-red-300">
+            Deck invalide — refusé par le serveur
+          </p>
+          <ul class="mt-1 flex flex-col gap-0.5">
+            <li
+              v-for="message in decks.serverErrors"
+              :key="message"
+              class="font-mono text-[0.65rem] text-red-300"
+            >
+              • {{ message }}
+            </li>
+          </ul>
+        </div>
+      </section>
+
       <!-- Catalogue -->
       <section class="cyber-panel flex min-w-0 flex-col p-4">
         <div class="flex flex-wrap items-center gap-2">
