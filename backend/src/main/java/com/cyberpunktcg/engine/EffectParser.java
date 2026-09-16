@@ -275,6 +275,10 @@ public final class EffectParser {
                 return TriggerType.ON_PLAY.name();
             case "attack":
                 return TriggerType.ON_ATTACK.name();
+            case "block":
+                // Mini-Feature 6 : « {Block} … » = capacité résolue quand l'Unit
+                // intercepte une attaque (le rappel de mot-clé « {Blocker} » reste ignoré).
+                return TriggerType.ON_BLOCK.name();
             case "flip":
                 return TriggerType.FLIP.name();
             case "quick":

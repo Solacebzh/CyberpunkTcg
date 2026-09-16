@@ -96,6 +96,26 @@ class LobbyGameFlowWebSocketIntegrationTest {
             BlockingQueue<JsonNode> starterErrors = HOST.equals(starter) ? hostErrors : guestErrors;
             BlockingQueue<JsonNode> otherErrors = HOST.equals(starter) ? guestErrors : hostErrors;
 
+            // --- Mini-Feature 5.1 : le tour 1 du premier joueur s'ouvre en phase DRAW ---
+            // Comme à chaque tour, il doit piocher sa carte puis lancer un dé Gig avant
+            // de pouvoir terminer son tour (END_TURN est refusé pendant la phase DRAW).
+            starterClient.send("/app/game/" + gameId + "/action",
+                    new GameCommandDTO("DRAW_CARD", null, null, null, null, null, null, null, "req-t1-draw"));
+            JsonNode starterTurnOneDraw = starterClient.await(starterStates,
+                    node -> isState(node) && "req-t1-draw".equals(node.path("clientRequestId").asText()), 10);
+            assertThat(starterTurnOneDraw).as("état après la pioche du tour 1 attendu").isNotNull();
+            assertThat(starterTurnOneDraw.path("state").path("phase").asText()).isEqualTo("DRAW");
+            assertThat(starterTurnOneDraw.path("state").path("turn").path("drawStep").asText())
+                    .isEqualTo("AWAITING_DIE_SELECT");
+
+            starterClient.send("/app/game/" + gameId + "/action",
+                    new GameCommandDTO("SELECT_DIE", null, null, null, null, null, null, List.of("d4"), "req-t1-die"));
+            JsonNode starterTurnOneDie = starterClient.await(starterStates,
+                    node -> isState(node) && "req-t1-die".equals(node.path("clientRequestId").asText()), 10);
+            assertThat(starterTurnOneDie).as("état après le lancer du tour 1 attendu").isNotNull();
+            assertThat(starterTurnOneDie.path("state").path("phase").asText()).isEqualTo("MAIN");
+            assertThat(player(starterTurnOneDie.path("state"), starter).path("gigs")).hasSize(1);
+
             // --- Le premier joueur termine son tour : les deux reçoivent le nouvel état ---
             starterClient.send("/app/game/" + gameId + "/action",
                     new GameCommandDTO("END_TURN", null, null, null, null, null, null, null, "req-end-1"));
@@ -117,8 +137,12 @@ class LobbyGameFlowWebSocketIntegrationTest {
             assertThat(player(otherAfter.path("state"), otherPseudo).path("gigs")).isEmpty();
 
             // --- Le journal de diagnostic est diffusé en temps réel aux deux joueurs ---
-            JsonNode hostLog = host.await(hostLogs, this::isLog, 10);
-            JsonNode guestLog = guest.await(guestLogs, this::isLog, 10);
+            // Le tour 1 a déjà publié des lignes de journal (pioche, lancer) : on attend
+            // précisément le message de fin de tour (il porte TURN_RESET).
+            JsonNode hostLog = host.await(hostLogs,
+                    node -> isLog(node) && fieldOf(node.path("entries"), "actionType").contains("TURN_RESET"), 10);
+            JsonNode guestLog = guest.await(guestLogs,
+                    node -> isLog(node) && fieldOf(node.path("entries"), "actionType").contains("TURN_RESET"), 10);
             assertThat(hostLog).as("journal poussé à l'hôte attendu").isNotNull();
             assertThat(guestLog).as("journal poussé à l'invité attendu").isNotNull();
             assertThat(hostLog.path("gameId").asText()).isEqualTo(gameId);

@@ -82,7 +82,7 @@
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["go_solo", "blocker", "quick", "flip", "play", "attack"]
+        "enum": ["go_solo", "blocker", "quick", "flip", "play", "attack", "haste"]
       },
       "uniqueItems": true
     },

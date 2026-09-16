@@ -7,6 +7,7 @@ import com.cyberpunktcg.domain.game.GameEvent;
 import com.cyberpunktcg.domain.game.GameEventType;
 import com.cyberpunktcg.domain.game.GameLogEntry;
 import com.cyberpunktcg.domain.game.GameState;
+import com.cyberpunktcg.domain.game.GigDie;
 import com.cyberpunktcg.domain.game.Phase;
 import com.cyberpunktcg.domain.game.Player;
 import com.cyberpunktcg.engine.command.AttackCommand;
@@ -16,6 +17,7 @@ import com.cyberpunktcg.engine.command.PlayCardCommand;
 import com.cyberpunktcg.engine.command.SelectDieCommand;
 import com.cyberpunktcg.engine.command.SellCardCommand;
 import com.cyberpunktcg.engine.command.SpendResourceCommand;
+import com.cyberpunktcg.engine.command.StealGigCommand;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -346,7 +348,21 @@ class DrawPhaseTest {
         CardInstance thief = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("thief", 1, 2));
         new AttackCommand("p1", thief.getInstanceId()).execute(state);
 
-        // Le plus gros Gig de p2 est volé (celui du d12 si sa valeur ≥ 1, ce qui est toujours vrai).
+        // Mini-Feature 6 : power 2 → quota N = 1, plafond strict M = min(1, dés actifs) = 1.
+        // L'attaquant choisit le dé volé (ici le d12) via StealGigCommand.
+        assertThat(state.isAwaitingStealChoice()).isTrue();
+        assertThat(state.getPendingAttack().getQuota()).isEqualTo(1);
+        assertThat(state.getPendingAttack().getStealable()).isEqualTo(1);
+        String d12Id = null;
+        for (GigDie die : state.getPlayer("p2").activeGigs()) {
+            if ("d12".equals(die.die())) {
+                d12Id = die.id();
+            }
+        }
+        assertThat(d12Id).isNotNull();
+        new StealGigCommand("p1", java.util.Collections.singletonList(d12Id)).execute(state);
+
+        // Le dé choisi est volé : type et valeur suivent le Gig (Mini-Feature 5/6).
         assertThat(state.getPlayer("p1").getGigs()).hasSize(2);
         assertThat(state.getPlayer("p1").getGigDice().get(0)).isEqualTo("d4");
         assertThat(state.getPlayer("p1").getGigs().get(1)).isEqualTo(rolled);

@@ -232,7 +232,11 @@ defineExpose({ toggle, loadFullState, forcePhase })
       <div v-if="rawState" class="rounded border border-cyber-line/50 bg-black/40 p-2">
         <p class="mb-1 text-slate-400">
           État complet — tour {{ rawState.turnNumber }}, phase {{ rawState.phase
-          }}<span v-if="rawState.drawStep" class="text-cyber-cyan"> / {{ rawState.drawStep }}</span>, actif
+          }}<span v-if="rawState.drawStep" class="text-cyber-cyan"> / {{ rawState.drawStep }}</span
+          ><span v-if="rawState.pendingAttack" class="text-cyber-magenta" data-debug-combat>
+            / combat {{ rawState.pendingAttack.step }} (quota {{ rawState.pendingAttack.quota }}, M =
+            {{ rawState.pendingAttack.stealableCount }})
+          </span>, actif
           {{ who(rawState.activePlayerId) }}
           <span v-if="rawState.gameOver" class="text-cyber-yellow">
             — partie terminée (vainqueur {{ rawState.winnerId ?? '—' }})

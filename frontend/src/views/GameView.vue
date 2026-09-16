@@ -9,8 +9,10 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import BlockerPrompt from '@/components/game/BlockerPrompt.vue'
 import GameOverOverlay from '@/components/game/GameOverOverlay.vue'
 import DebugPanel from '@/components/game/DebugPanel.vue'
+import StealDiceModal from '@/components/game/StealDiceModal.vue'
 import GameLogPanel from '@/components/game/GameLogPanel.vue'
 import GigsBar from '@/components/game/GigsBar.vue'
 import PhaseIndicator from '@/components/game/PhaseIndicator.vue'
@@ -23,7 +25,14 @@ import { useDeckStore } from '@/stores/deck'
 import { useGameStore } from '@/stores/game'
 import { useLobbyStore } from '@/stores/lobby'
 import { useUiStore } from '@/stores/ui'
-import { DRAW_STEP_HINTS, DRAW_STEP_LABELS, type CardInstance } from '@/types/game'
+import {
+  COMBAT_STEP_HINTS,
+  COMBAT_STEP_LABELS,
+  DRAW_STEP_HINTS,
+  DRAW_STEP_LABELS,
+  effectivePower,
+  type CardInstance,
+} from '@/types/game'
 import { DIE_FACES, FIXER_DICE_ORDER } from '@/types/playmat'
 
 const route = useRoute()
@@ -108,6 +117,27 @@ const selectedIsFieldUnit = computed(
 const selectedAttackReason = computed(() => (selected.value ? game.canAttackWith(selected.value) : null))
 const targetingCandidates = computed(() => game.targeting?.candidates ?? [])
 const disconnection = computed(() => game.disconnection)
+
+// --- Combat en cours (Mini-Feature 6 : blocage + vol de dés plafonné) ---
+const pendingAttack = computed(() => game.pendingAttack)
+const pendingAttacker = computed(() => game.pendingAttacker)
+const pendingIsDirect = computed(() => !pendingAttack.value?.targetInstanceId)
+const pendingTarget = computed<CardInstance | null>(() => {
+  const id = pendingAttack.value?.targetInstanceId
+  return id ? game.findInstance(id) : null
+})
+/** Rappel du quota/plafond pour la modale de vol (le serveur fait foi). */
+const pendingPower = computed(() => effectivePower(pendingAttacker.value))
+/** Bandeau d'étape : affiché à l'acteur qui n'a rien à décider, ou hors fenêtre. */
+const combatBanner = computed(() => {
+  const pending = pendingAttack.value
+  if (!pending) return null
+  return {
+    label: COMBAT_STEP_LABELS[pending.step],
+    hint: COMBAT_STEP_HINTS[pending.step],
+    mine: pending.step === 'AWAITING_BLOCK' ? game.iMustBlock : game.iMustChooseStolenDice,
+  }
+})
 
 function isMine(instanceId: string): boolean {
   return !!me.value?.field.some((card) => card.instanceId === instanceId)
@@ -194,7 +224,19 @@ const primaryHint = computed(() => {
   const card = selected.value
   if (!card) return 'Clique une carte de ta main, une Legend ou une ressource Eddies'
   if (selectedIsEddieCard.value) return selectedSpendReason.value
-  return selectedIsFieldUnit.value ? selectedAttackReason.value : selectedReason.value
+  if (selectedIsFieldUnit.value) {
+    if (selectedAttackReason.value) return selectedAttackReason.value
+    // Mini-Feature 6 : quota et plafond affichés côté client (le serveur fait foi).
+    const forecast = game.stealForecast(card)
+    if (forecast.quota === 0) {
+      return 'Attaque possible · Power 0 : aucun Gig volable (attaque directe sans vol)'
+    }
+    return (
+      `Attaque possible · cible : Unit rivale dépensée ou Gig Area ` +
+      `(quota N = ${forecast.quota}, plafond strict M = ${forecast.stealable})`
+    )
+  }
+  return selectedReason.value
 })
 
 // --- Animations pilotées par les différences d'état ---
@@ -460,6 +502,23 @@ function onConcede(): void {
           </div>
         </section>
 
+        <!-- Étape de combat en cours (Mini-Feature 6) -->
+        <section
+          v-if="combatBanner"
+          class="cyber-panel border-cyber-blue/70 px-3 py-2 shadow-[0_0_22px_rgba(0,229,255,0.22)]"
+          data-combat-step
+          :data-combat-step-value="pendingAttack?.step"
+        >
+          <p class="font-mono text-[0.62rem] uppercase tracking-[0.25em] text-cyber-blue">// combat</p>
+          <p class="text-xs font-semibold text-slate-100">
+            {{ combatBanner.label }}
+            <span class="font-normal text-slate-400">
+              — {{ combatBanner.mine ? 'à toi de décider' : 'en attente de l’adversaire' }}
+            </span>
+          </p>
+          <p class="font-mono text-[0.62rem] text-slate-400">{{ combatBanner.hint }}</p>
+        </section>
+
         <!-- Fenêtre de réaction -->
         <section
           v-if="game.iAmReacting"
@@ -499,6 +558,35 @@ function onConcede(): void {
       :allow-direct="game.targeting.allowDirect"
       @cancel="game.cancelTargeting()"
       @direct="game.stealGig()"
+    />
+
+    <!-- Mini-Feature 6 : le défenseur choisit s'il intercepte avec ses Blockers prêts. -->
+    <BlockerPrompt
+      v-if="game.iMustBlock"
+      :attacker-name="pendingAttacker?.name ?? 'Une Unit adverse'"
+      :attacker-power="pendingPower"
+      :direct="pendingIsDirect"
+      :target-name="pendingTarget?.name ?? null"
+      :blockers="game.myReadyBlockers"
+      :selected="game.blockerSelection"
+      :busy="game.waitingForServer"
+      @toggle="game.toggleBlocker"
+      @confirm="game.blockWithSelection()"
+      @decline="game.declineBlock()"
+    />
+
+    <!-- Mini-Feature 6 : l'attaquant choisit les M dés Gigs actifs à voler (plafond strict). -->
+    <StealDiceModal
+      v-if="game.iMustChooseStolenDice"
+      :quota="game.stealQuotaNow"
+      :stealable-count="game.stealCountNow"
+      :power="pendingPower"
+      :dice="game.stealableDice"
+      :selected="game.stolenSelection"
+      :defender-name="opponent?.name ?? 'l’adversaire'"
+      :busy="game.waitingForServer"
+      @toggle="game.toggleStolenDie"
+      @confirm="game.confirmSteal()"
     />
 
     <GameOverOverlay

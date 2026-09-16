@@ -8,13 +8,17 @@ import com.cyberpunktcg.domain.game.GameState;
 import com.cyberpunktcg.domain.game.Phase;
 import com.cyberpunktcg.domain.game.Zone;
 import com.cyberpunktcg.engine.command.AttackCommand;
+import com.cyberpunktcg.engine.command.BlockCommand;
 import com.cyberpunktcg.engine.command.DrawCardCommand;
 import com.cyberpunktcg.engine.command.EndTurnCommand;
 import com.cyberpunktcg.engine.command.PlayCardCommand;
 import com.cyberpunktcg.engine.command.SelectDieCommand;
 import com.cyberpunktcg.engine.command.SellCardCommand;
+import com.cyberpunktcg.engine.command.StealGigCommand;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+
+import java.util.Collections;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -101,6 +105,8 @@ class GameCommandTest {
     void attaquer_puissanceSuperieure_vaincLeDefenseur() {
         CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("brute", 1, 5));
         CardInstance defender = GameFixtures.fieldCard(state, "p2", GameFixtures.unit("mite", 1, 3));
+        // Règle officielle : « Ready Units can't be attacked » (Mini-Feature 6).
+        defender.setExhausted(true);
 
         new AttackCommand("p1", attacker.getInstanceId(), defender.getInstanceId()).execute(state);
 
@@ -117,6 +123,7 @@ class GameCommandTest {
     void attaquer_egalite_vaincLesDeux() {
         CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("twin-a", 1, 4));
         CardInstance defender = GameFixtures.fieldCard(state, "p2", GameFixtures.unit("twin-b", 1, 4));
+        defender.setExhausted(true);
 
         new AttackCommand("p1", attacker.getInstanceId(), defender.getInstanceId()).execute(state);
 
@@ -125,41 +132,65 @@ class GameCommandTest {
     }
 
     @Test
-    void blocker_doitEtreCible_etInterditLeVolDirect() {
-        CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("raider", 1, 4));
+    void blocker_interceptionAuChoixDuDefenseur() {
+        // Blocker plus fort que l'attaquant (4 > 1) : il survit, donc son
+        // inclinaison reste observable (`defeatUnit` → `clearCombatMarkers()`
+        // redresse une carte vaincue avant de la défausser).
+        CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("raider", 1, 1));
         CardInstance blocker = GameFixtures.fieldCard(state, "p2",
-                GameFixtures.unit("wall", 1, 1, CardKeyword.BLOCKER));
+                GameFixtures.unit("wall", 1, 4, CardKeyword.BLOCKER));
         CardInstance other = GameFixtures.fieldCard(state, "p2", GameFixtures.unit("bystander", 1, 1));
+        other.setExhausted(true);
         GameFixtures.addGigs(state, "p2", 3);
 
-        assertThatThrownBy(() -> new AttackCommand("p1", attacker.getInstanceId(), other.getInstanceId())
+        // Mini-Feature 6 : le blocage n'est plus imposé à l'attaquant — l'attaque
+        // est déclarée, puis le défenseur décide d'intercepter (fenêtre Blocker).
+        new AttackCommand("p1", attacker.getInstanceId(), other.getInstanceId()).execute(state);
+        assertThat(state.isAwaitingBlock()).isTrue();
+        // Une Unit PRÊTE (le Blocker) ne peut pas être attaquée directement.
+        assertThatThrownBy(() -> new AttackCommand("p1", attacker.getInstanceId(), blocker.getInstanceId())
                 .validate(state))
                 .isInstanceOf(GameRuleException.class)
-                .hasMessageContaining("BLOCKER");
-        assertThatThrownBy(() -> new AttackCommand("p1", attacker.getInstanceId()).validate(state))
-                .isInstanceOf(GameRuleException.class)
-                .hasMessageContaining("BLOCKER");
+                .hasMessageContaining("en cours");
 
-        new AttackCommand("p1", attacker.getInstanceId(), blocker.getInstanceId()).execute(state);
-        assertThat(state.getPlayer("p2").getTrash()).contains(blocker);
+        new BlockCommand("p2", blocker.getInstanceId()).execute(state);
+
+        assertThat(blocker.isExhausted()).isTrue();                    // bloquer dépense
+        assertThat(state.getPlayer("p2").getField()).contains(blocker);  // 4 > 1 : il survit
+        assertThat(state.getPlayer("p1").getTrash()).contains(attacker); // attaquant vaincu
+        assertThat(state.getPlayer("p2").getField()).contains(other);    // cible déclarée épargnée
+        assertThat(other.getDamage()).isZero();
+        assertThat(state.getPlayer("p1").getGigCount()).isZero();        // aucun Gig volé
+        assertThat(state.isCombatPending()).isFalse();
     }
 
     @Test
-    void volDeGig_prendLePlusGrosDeSansBlocker() {
+    void volDeGig_lAttaquantChoisitLeDeAuPlafondStrict() {
         CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("ghost", 1, 2));
         GameFixtures.addGigs(state, "p2", 1, 5);
 
         new AttackCommand("p1", attacker.getInstanceId()).execute(state);
 
+        // power 2 → quota N = 1 ; 2 dés actifs chez le défenseur → plafond M = 1.
+        assertThat(state.isAwaitingStealChoice()).isTrue();
+        assertThat(state.getPendingAttack().getQuota()).isEqualTo(1);
+        assertThat(state.getPendingAttack().getStealable()).isEqualTo(1);
+
+        // L'attaquant désigne le dé qu'il veut (ici celui qui affiche 5).
+        String chosen = state.getPlayer("p2").getGigDieIds().get(1);
+        new StealGigCommand("p1", Collections.singletonList(chosen)).execute(state);
+
         assertThat(state.getPlayer("p1").getGigs()).containsExactly(5);
         assertThat(state.getPlayer("p2").getGigs()).containsExactly(1);
         assertThat(state.isGameOver()).isFalse();
+        assertThat(state.isCombatPending()).isFalse();
     }
 
     @Test
     void quick_enReactionSeulesLesCartesQuickDuDefenseur() {
         CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("invader", 1, 3));
         CardInstance defender = GameFixtures.fieldCard(state, "p2", GameFixtures.unit("holder", 1, 3));
+        defender.setExhausted(true);
         GameFixtures.giveEddies(state, "p2", 5);
         CardInstance plain = GameFixtures.handCard(state, "p2", GameFixtures.unit("slow", 1, 1));
         CardInstance quick = GameFixtures.handCard(state, "p2",
@@ -293,6 +324,7 @@ class GameCommandTest {
         CardInstance solo = GameFixtures.handCard(state, "p1",
                 GameFixtures.unit("lone-wolf", 2, 3, CardKeyword.GO_SOLO));
         CardInstance defender = GameFixtures.fieldCard(state, "p2", GameFixtures.unit("guard", 1, 1));
+        defender.setExhausted(true);
 
         new PlayCardCommand("p1", solo.getInstanceId()).execute(state);
         assertThat(solo.isSummoningSickness()).isFalse();

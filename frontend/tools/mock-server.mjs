@@ -21,6 +21,19 @@
  * `DRAW_CARD` (pioche 1 carte) → `AWAITING_DIE_SELECT`, puis `SELECT_DIE`
  * (`dice: ['d6']`, d20 refusé tant qu'il reste d'autres dés) → lancer → `MAIN`.
  *
+ * Mini-Feature 6 : le combat est simulé **pas à pas**, comme le moteur Java —
+ * `ATTACK` incline l'attaquant et ne cible qu'une Unit rivale **dépensée** (ou la
+ * Gig Area adverse). Si le défenseur a un `{Blocker}` prêt, l'état publié porte
+ * `pendingAttack.step = AWAITING_BLOCK` : `USE_BLOCKER` (`cardIds`, ordre
+ * significatif — le DERNIER Blocker encaisse les dégâts) ou `DECLINE_BLOCK`.
+ * Une attaque directe non bloquée passe en `AWAITING_STEAL_CHOICE` avec le quota
+ * `N = (power / 10) + 1` (0 si power ≤ 0) et le **plafond strict**
+ * `M = min(N, dés Gigs actifs du défenseur)` : `STEAL_GIG` (`dice: [ids]`) exige
+ * exactement M identifiants parmi `PlayerState.gigDieIds`, chaque dé conservant
+ * son type et sa valeur. Les dés non lancés de la Fixer Area ne sont jamais
+ * volés, M = 0 ne vole rien (l'attaque réussit quand même), et `END_TURN` résout
+ * un combat en suspens (blocage refusé, puis vol des M dés de plus haute valeur).
+ *
  * ⚠️ Les règles appliquées ici sont un sous-ensemble de démonstration ; le
  * serveur de référence reste le backend Spring (docs/RULE-ENGINE.md).
  */

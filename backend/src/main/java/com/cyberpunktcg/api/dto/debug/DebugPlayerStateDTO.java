@@ -18,6 +18,7 @@ import java.util.Map;
  * @param eddies              Eddies disponibles
  * @param gigs                valeurs des Gigs contrôlés
  * @param gigDice             type de dé de chaque Gig (aligné sur {@code gigs})
+ * @param gigDieIds           identifiant stable de chaque dé Gig actif (Mini-Feature 6 : vol choisi)
  * @param gigCount            nombre de Gigs
  * @param streetCred          Street Cred (somme des Gigs)
  * @param fixerDice           dés Gig restants dans la Fixer Area
@@ -42,6 +43,7 @@ public record DebugPlayerStateDTO(
         boolean hasSoldThisTurn,
         List<Integer> gigs,
         List<String> gigDice,
+        List<String> gigDieIds,
         int gigCount,
         int streetCred,
         List<String> fixerDice,
@@ -71,6 +73,7 @@ public record DebugPlayerStateDTO(
                 player.hasSoldThisTurn(),
                 List.copyOf(player.getGigs()),
                 List.copyOf(player.getGigDice()),
+                List.copyOf(player.getGigDieIds()),
                 player.getGigCount(),
                 player.getStreetCred(),
                 List.copyOf(player.getFixerDice()),

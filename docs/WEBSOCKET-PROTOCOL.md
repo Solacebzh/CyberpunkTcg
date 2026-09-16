@@ -288,8 +288,8 @@ omis ou `null`) :
   "targetPlayerId": null,        // réservé (attaques joueurs futures)
   "chosen": null,                // option choisie dans une fenêtre de réaction
   "revealedLegendIds": null,     // réservé (effets de reveal avancés)
-  "cardIds": null,               // réservé (ventes/pioches groupées futures)
-  "dice": null,                  // SELECT_DIE : dé Gig choisi en première position, ex. ["d6"]
+  "cardIds": null,               // USE_BLOCKER : Blockers dépensés, ordre significatif (le dernier encaisse)
+  "dice": null,                  // SELECT_DIE : dé Gig choisi (["d6"]) ; STEAL_GIG : identifiants des M dés volés
   "clientRequestId": "doc-req"   // optionnel, renvoyé tel quel dans le STATE / l'ERROR
 }
 ```
@@ -299,7 +299,11 @@ omis ou `null`) :
 | `action` | `instanceId` | `targetInstanceId` | Équivalent moteur |
 | --- | --- | --- | --- |
 | `PLAY_CARD` | carte à jouer (main, ou Legend de la legends area pour la retourner) | obligatoire pour un **Gear** (l'Unit alliée équipée) ; optionnel pour les autres cartes qui ciblent | `PlayCardCommand` |
-| `ATTACK` | l'Unit attaquante | UUID d'une **Unit rivale** pour la combattre ; **absent/null** pour une attaque directe de vol de Gig | `AttackCommand` |
+| `ATTACK` | l'Unit attaquante | UUID d'une **Unit rivale dépensée** (inclinée) pour la combattre — « *Ready Units can't be attacked* » ; **absent/null** pour une attaque directe de la Gig Area (vol de dés). L'attaque est **suspendue** tant que le défenseur n'a pas répondu à la fenêtre Blocker ou que l'attaquant n'a pas choisi ses dés (Mini-Feature 6) | `AttackCommand` |
+| `USE_BLOCKER` | — (Blockers dans `cardIds`, **ordre significatif** : le dernier encaisse les dégâts ; repli `instanceId` pour un blocage simple) | — | **Mini-Feature 6** : le **défenseur** intercepte pendant `pendingAttack.step = "AWAITING_BLOCK"`. Tous les `{Blocker}` désignés (prêts, sur son Field) sont inclinés, leurs compétences résolues (`ON_BLOCK`), puis l'attaque est redirigée vers le **dernier** — aucun Gig n'est volé. `BlockCommand` |
+| `BLOCK` | alias de `USE_BLOCKER` (même commande, même `actionType` de journal) | — | `BlockCommand` |
+| `DECLINE_BLOCK` | — | — | **Mini-Feature 6** : le **défenseur** renonce à intercepter pendant `AWAITING_BLOCK` → l'attaque suit son cours (combat contre la cible déclarée, ou `AWAITING_STEAL_CHOICE` pour une attaque directe). `DeclineBlockCommand` |
+| `STEAL_GIG` | — (identifiants des dés dans `dice`, repli `cardIds` ou `chosen` séparé par des virgules) | — | **Mini-Feature 6** : l'**attaquant** choisit **exactement `M`** dés Gigs actifs du défenseur pendant `pendingAttack.step = "AWAITING_STEAL_CHOICE"` (`M = pendingAttack.stealableCount`, plafond strict). Chaque dé conserve son identifiant, son type et sa valeur. `StealGigCommand` |
 | `SELL_CARD` | carte de sa main à vendre (1 vente/tour, phase Main ; **aucun Eddie immédiat** — la carte est révélée puis posée face cachée et prête en Eddies Area) | — | `SellCardCommand` |
 | `SPEND_RESOURCE` | **Mini-Feature 4 (R4)** : ressource à incliner pour +1 Eddie — soit une Legend non inclinée de sa Legends Area, soit une carte vendue non inclinée de son Eddies Area (ID unique, les deux zones acceptées) | — | `SpendResourceCommand` |
 | `SPEND_LEGEND` | alias historique de `SPEND_RESOURCE` (action de journal distincte) : Legend non inclinée de sa Legends Area à incliner (+1 Eddie) | — | `SpendLegendCommand` (hérite de `SpendResourceCommand`) |
@@ -310,8 +314,12 @@ omis ou `null`) :
 | `CONCEDE` | — | — | abandon (victoire immédiate de l'adversaire) |
 
 Règles appliquées par le serveur (rappel) : on joue en phase `MAIN`/`COMBAT` ;
-une Unit attaquante doit être prête, sans mal d'invocation (sauf `go_solo`) ;
-un `BLOCKER` rival prêt doit être attaqué avant de pouvoir voler un Gig ;
+une Unit attaquante doit être prête, sans mal d'invocation (sauf `go_solo`,
+`adrenaline` ou `haste`) ; on n'attaque qu'une Unit rivale **dépensée** ou la Gig
+Area adverse ; un `{Blocker}` rival prêt n'interdit plus rien à l'attaquant — il
+ouvre la fenêtre « Utiliser Blocker ? » et c'est le **défenseur** qui décide
+(`USE_BLOCKER` / `DECLINE_BLOCK`, Mini-Feature 6) ; une seule attaque à la fois
+(tant que `pendingAttack` est présent, toute nouvelle déclaration est refusée) ;
 pendant une fenêtre de réaction, le défenseur ne peut jouer que des cartes
 `quick` hors de son tour. La vente ne rapporte **aucun** Eddie : elle crée une
 ressource (carte révélée, posée `faceDown` et prête en Eddies Area). L'Eddie est
@@ -339,6 +347,31 @@ qu'un `SELECT_DIE` avant la pioche, un second `DRAW_CARD`, un dé inconnu, un d�
 déjà lancé ou le `d20` tant qu'il reste d'autres dés (« *Le d20 se lance toujours
 en dernier* »). Un refus ne change pas l'état : le joueur rechoisit.
 
+**Combat interactif (Mini-Feature 6).** Une attaque n'est plus résolue d'un seul
+bloc : le `STATE` publié porte `pendingAttack` tant qu'une décision de joueur est
+attendue (§7.1). Séquence complète d'une attaque directe :
+
+1. `ATTACK` (sans `targetInstanceId`) → `STATE` avec `phase = "COMBAT"`,
+   `newEvents = [PHASE_CHANGED, ATTACK_DECLARED, REACTION_WINDOW_OPENED]` et :
+   - `pendingAttack.step = "AWAITING_BLOCK"` si le défenseur contrôle au moins un
+     `{Blocker}` prêt (le journal ajoute une ligne `BLOCKER_PROMPT`) ;
+   - sinon `pendingAttack.step = "AWAITING_STEAL_CHOICE"` avec `quota` (N) et
+     `stealableCount` (M ≥ 1) — ou **aucun** `pendingAttack` si `M = 0` (attaque
+     réussie, rien à voler : journal `GIG_STOLEN` en `FAILED`).
+2. Le **défenseur** répond : `USE_BLOCKER` avec `cardIds` (1 à n Blockers prêts,
+   ordre = ordre de résolution, le **dernier** encaisse les dégâts ;
+   `newEvents = [ATTACK_BLOCKED, …]`, aucun vol) ou `DECLINE_BLOCK`.
+3. L'**attaquant** envoie `STEAL_GIG` avec exactement `M` identifiants choisis
+   parmi `players[defenseur].gigDieIds` → `newEvents = [GIG_STOLEN × M]`,
+   `pendingAttack` disparaît, les dés passent dans sa Gig Area avec leur type et
+   leur valeur.
+
+`END_TURN` pendant un combat en suspens le résout automatiquement (blocage refusé
+implicitement, puis vol des `M` dés de plus haute valeur — journal
+`GIG_STEAL_AUTO`) : un joueur silencieux ne bloque jamais la partie. Un vol ne
+fait jamais gagner immédiatement : les ≥ 7 Gigs sont vérifiés au tout début de la
+phase `DRAW` du joueur entrant.
+
 Exemples de commandes :
 
 ```json
@@ -350,13 +383,27 @@ Exemples de commandes :
   "instanceId": "11111111-2222-3333-4444-555555555555",
   "targetInstanceId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" }
 
-// Attaquer une Unit rivale
+// Attaquer une Unit rivale **dépensée** (inclinée) — une Unit prête est refusée
 { "action": "ATTACK",
   "instanceId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
   "targetInstanceId": "99999999-8888-7777-6666-555555555555" }
 
-// Vol direct de Gig (pas de cible ; interdit si un BLOCKER rival est prêt)
+// Attaque directe de la Gig Area (pas de cible) : vol de dés plafonné, ou fenêtre
+// « Utiliser Blocker ? » si le défenseur a un {Blocker} prêt
 { "action": "ATTACK", "instanceId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" }
+
+// Mini-Feature 6 — défenseur : bloquer avec DEUX Blockers (le dernier encaisse)
+{ "action": "USE_BLOCKER",
+  "cardIds": ["11111111-2222-3333-4444-555555555555",
+              "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"] }
+
+// Mini-Feature 6 — défenseur : renoncer à bloquer
+{ "action": "DECLINE_BLOCK" }
+
+// Mini-Feature 6 — attaquant : voler exactement M dés (identifiants `gigDieIds`)
+{ "action": "STEAL_GIG",
+  "dice": ["3f2b1c9e-6a4d-4f21-9c07-1e5d8b2a7c40",
+           "9a7c4e21-0d5b-4a63-8f12-7c6b5a493827"] }
 
 // Vendre une carte
 { "action": "SELL_CARD", "instanceId": "02bdbfcf-dd69-4a72-ba10-ec21f98f4684" }
@@ -475,6 +522,7 @@ Enveloppe sur `/topic/game/{gameId}/{pseudo}` :
   "turn": { "number": 1, "activePlayerId": "DocHost" },   // + "drawStep" pendant la phase DRAW
   "players": [ /* PlayerStateDTO hôte puis invité, §7.2 */ ],
   "reactionWindow": null,
+  "pendingAttack": null,          // Mini-Feature 6 : attaque en cours de résolution
   "log": [
     {
       "index": 0,
@@ -518,6 +566,34 @@ Enveloppe sur `/topic/game/{gameId}/{pseudo}` :
 { "kind": "ATTACK", "defendingPlayerId": "DocGuest", "attackerInstanceId": "uuid" }
 ```
 
+- `pendingAttack` (Mini-Feature 6) : **absent/`null`** quand aucune attaque
+  n'attend de décision ; sinon l'étape courante et les nombres qui pilotent l'UI :
+
+```json
+{
+  "attackerPlayerId": "DocHost",
+  "defendingPlayerId": "DocGuest",
+  "attackerInstanceId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  "step": "AWAITING_STEAL_CHOICE",
+  "quota": 3,
+  "stealableCount": 2,
+  "blockerInstanceIds": []
+}
+```
+
+| Champ | Sens |
+| --- | --- |
+| `step` | `AWAITING_BLOCK` (le **défenseur** doit envoyer `USE_BLOCKER` ou `DECLINE_BLOCK`) ou `AWAITING_STEAL_CHOICE` (l'**attaquant** doit envoyer `STEAL_GIG`) |
+| `targetInstanceId` | cible déclarée ; **omise** (JSON `non_null`) pour une attaque directe de la Gig Area |
+| `quota` | quota théorique `N = (power / 10) + 1` (0 si power ≤ 0) — affichage pédagogique, le serveur fait foi |
+| `stealableCount` | **plafond strict** `M = min(N, dés Gigs actifs du défenseur)` : le nombre exact de dés à envoyer dans `STEAL_GIG` |
+| `blockerInstanceIds` | Blockers déjà dépensés pour cette attaque (blocage multiple) |
+
+Ces deux valeurs sont recalculées au moment de la résolution (une réaction `quick`
+peut changer la puissance de l'attaquant ou les dés du défenseur) : un client ne
+doit jamais pré-calculer `M` pour décider d'envoyer un `STEAL_GIG` valide — il lit
+`stealableCount` dans le dernier `STATE`.
+
 ### 7.2 `PlayerStateDTO`
 
 ```json
@@ -533,6 +609,7 @@ Enveloppe sur `/topic/game/{gameId}/{pseudo}` :
   "legendsArea": [ /* 3 legends : visibles pour soi, masquées chez l'adversaire */ ],
   "gigs": [ ],
   "gigDice": [ ],
+  "gigDieIds": [ ],
   "fixerDice": [ "d4", "d6", "d8", "d10", "d12", "d20" ],
   "gigCount": 0,
   "streetCred": 0,
@@ -550,7 +627,8 @@ Enveloppe sur `/topic/game/{gameId}/{pseudo}` :
 | `hand` / `field` / `trash` / `eddiesArea` / `legendsArea` | les 5 zones de cartes (le deck n'a pas de zone exposée, juste `deckCount`) |
 | `gigs` | valeurs des dés Gig possédés (ex. `[2, 6]`), `gigCount` = `gigs.length` |
 | `gigDice` | type du dé de chaque Gig, aligné sur `gigs` (ex. `["d4", "d8"]` → « d4 → 2, d8 → 6 ») ; `"?"` pour un Gig obtenu hors lancer (Mini-Feature 5) |
-| `fixerDice` | dés pas encore lancés (un dé en moins par tour joué). Pendant `AWAITING_DIE_SELECT`, les dés proposables sont tous ceux de la liste **sauf `d20`**, ou `d20` seul s'il est le dernier |
+| `gigDieIds` | **Mini-Feature 6** : identifiant stable (UUID texte) de chaque dé Gig **actif**, aligné index par index sur `gigs`/`gigDice`. C'est l'identifiant à renvoyer dans `STEAL_GIG` pour choisir les dés volés ; il suit le dé quand il change de Gig Area (type et valeur conservés) |
+| `fixerDice` | dés pas encore lancés (un dé en moins par tour joué) — **jamais volables** (plafond strict). Pendant `AWAITING_DIE_SELECT`, les dés proposables sont tous ceux de la liste **sauf `d20`**, ou `d20` seul s'il est le dernier |
 | `eddies` / `availableEddies` | Eddies possédés / immédiatement dépensables |
 | `costDiscount` | réduction de coût courante (effets de cartes) |
 | `hasSoldThisTurn` | garde-fou UI (le serveur applique de toute façon la limite 1/tour) |
@@ -655,10 +733,11 @@ Valeurs possibles de `type` (enum `GameEventType`) :
 | `CARD_PLAYED` | Unit posée / Program résolue / Gear équipé / Legend retournée |
 | `CARD_SOLD` | vente (carte révélée → Eddies Area face cachée, prête ; aucun Eddie immédiat) |
 | `LEGEND_FLIPPED` | retournement d'une Legend |
-| `ATTACK_DECLARED` | attaque déclarée (cible ou vol direct) |
+| `ATTACK_DECLARED` | attaque déclarée (Unit rivale dépensée, ou attaque directe de la Gig Area) — aussi publié pour une attaque « sans effet » (participant disparu, `M = 0`) |
+| `ATTACK_BLOCKED` | **Mini-Feature 6** : un `{Blocker}` dépensé redirige l'attaque vers lui (un événement par Blocker en cas de blocage multiple) |
 | `REACTION_WINDOW_OPENED` / `REACTION_WINDOW_CLOSED` | fenêtre QUICK du défenseur |
 | `UNIT_DEFEATED` | Unit vaincue au combat |
-| `GIG_STOLEN` | vol de Gig réussi |
+| `GIG_STOLEN` | vol de Gig réussi (un événement **par dé** volé, `STEAL_GIG`) |
 | `GIG_ROLLED` | dé Gig choisi par le joueur (`SELECT_DIE`) et lancé par le serveur pendant la phase DRAW |
 | `EFFECT_RESOLVED` | résolution d'un effet de carte |
 | `GAME_WON` | fin de partie |
@@ -699,7 +778,7 @@ Diffusé sur `/topic/game/{gameId}/log` à chaque action journalisée :
 | `type` | toujours `LOG` (permet de distinguer ce flux d'un `STATE`) |
 | `entries` | entrées **nouvelles uniquement** (`index` strictement croissant) |
 | `result` | `SUCCESS` (vert), `ILLEGAL` (rouge), `FAILED` (orange), `INFO` (jaune) |
-| `actionType` | `PLAY_CARD`, `ATTACK`, `SELL_CARD`, `SPEND_RESOURCE`, `SPEND_LEGEND`, `SPEND_EDDIES`, `END_TURN`, `DRAW_CARD`, `SELECT_DIE`, `DRAW_STEP`, `TURN_RESET`, `DRAW`, `GIG_ROLL`, `VICTORY_CHECK`, `VICTORY`, `REACTION_WINDOW`, `UNIT_DEFEATED`, `GIG_STOLEN`, `EFFECT`, `SETUP`, `GAME_START`, `DEBUG_FORCE_PHASE`, `CONCEDE`… |
+| `actionType` | `PLAY_CARD`, `ATTACK`, `SELL_CARD`, `SPEND_RESOURCE`, `SPEND_LEGEND`, `SPEND_EDDIES`, `END_TURN`, `DRAW_CARD`, `SELECT_DIE`, `DRAW_STEP`, `TURN_RESET`, `DRAW`, `GIG_ROLL`, `VICTORY_CHECK`, `VICTORY`, `REACTION_WINDOW`, `UNIT_DEFEATED`, `GIG_STOLEN`, `EFFECT`, `SETUP`, `GAME_START`, `DEBUG_FORCE_PHASE`, `CONCEDE`, et (Mini-Feature 6) `BLOCKER_PROMPT`, `USE_BLOCKER`, `DECLINE_BLOCK`, `GIG_STEAL_CHOICE`, `GIG_STEAL_AUTO`, `FIGHT`… |
 
 Différence avec `log` (journal public `GameEvent`) : le journal de diagnostic
 consigne **aussi les refus** et les vérifications internes, avec leur motif
@@ -826,6 +905,16 @@ doit corréler via `clientRequestId`.
     S    → /user/queue/errors ERROR ILLEGAL_ACTION "Ce n'est pas le tour de …"
     (Val ne reçoit rien)
 
+21a. Johnny SEND action { "action": "ATTACK", "instanceId": "<son Unit prête>" }
+     S    → STATE aux deux (phase COMBAT, newEvents=[PHASE_CHANGED, ATTACK_DECLARED,
+            REACTION_WINDOW_OPENED], pendingAttack.step=AWAITING_STEAL_CHOICE,
+            quota=1, stealableCount=1 — Val n'a pas de {Blocker} prêt)
+21b. Val  SEND action { "action": "STEAL_GIG" }  → rien : ce n'est pas son choix
+     S    → /user/queue/errors ERROR ILLEGAL_ACTION "Seul l'attaquant (…) choisit"
+21c. Johnny SEND action { "action": "STEAL_GIG", "dice": ["<gigDieIds[0] de Val>"] }
+     S    → STATE aux deux (newEvents=[GIG_STOLEN], pendingAttack absent,
+            gigs de Johnny +1 avec le même type/valeur de dé, Val −1)
+
 22. Coupure réseau de Johnny
 23. S    → /topic/game/{gameId}   PLAYER_DISCONNECTED(Johnny, 120)
 24. S    → STATE : Johnny connected=false
@@ -860,3 +949,13 @@ doit corréler via `clientRequestId`.
    (`components/game/DebugPanel.vue`, touche <kbd>F12</kbd>) s'en sert, ainsi que
    de `state.gameLog` après un `resync`. Les routes REST `/api/debug/**`
    n'existent que sous les profils Spring `test`/`dev`.
+10. **Combat interactif (Mini-Feature 6)** : piloter l'UI avec `state.pendingAttack`
+    — `AWAITING_BLOCK` n'attend une réponse **que du défenseur** (`USE_BLOCKER`
+    avec les `{Blocker}` prêts cochés, ou `DECLINE_BLOCK`), `AWAITING_STEAL_CHOICE`
+    **que de l'attaquant** (`STEAL_GIG` avec exactement `stealableCount`
+    identifiants pris dans `gigDieIds` du défenseur). Tant que `pendingAttack` est
+    présent, aucune autre attaque n'est déclarable. Le quota `N` (`quota`) et le
+    plafond `M` (`stealableCount`) peuvent être affichés côté client (pédagogie)
+    mais **le serveur fait foi** : un `STEAL_GIG` dont la longueur ne vaut pas `M`
+    est refusé sans mutation (`ERROR ILLEGAL_ACTION`, message
+    « Tu dois choisir exactement M dé(s) Gig… »).

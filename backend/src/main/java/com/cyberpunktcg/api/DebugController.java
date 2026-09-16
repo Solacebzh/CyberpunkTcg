@@ -167,6 +167,7 @@ public class DebugController {
                 state.getSeed(),
                 state.getCreatedAt(),
                 DebugReactionWindowDTO.from(state.getReactionWindow()),
+                com.cyberpunktcg.api.dto.ws.PendingAttackDTO.from(state.getPendingAttack()),
                 state.getPlayers().stream().map(DebugPlayerStateDTO::from).toList(),
                 List.copyOf(events),
                 List.copyOf(logs));

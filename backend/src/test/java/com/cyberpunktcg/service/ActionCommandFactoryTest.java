@@ -3,12 +3,15 @@ package com.cyberpunktcg.service;
 import com.cyberpunktcg.api.dto.ws.GameCommandDTO;
 import com.cyberpunktcg.engine.GameRuleException;
 import com.cyberpunktcg.engine.command.AttackCommand;
+import com.cyberpunktcg.engine.command.BlockCommand;
+import com.cyberpunktcg.engine.command.DeclineBlockCommand;
 import com.cyberpunktcg.engine.command.DrawCardCommand;
 import com.cyberpunktcg.engine.command.EndTurnCommand;
 import com.cyberpunktcg.engine.command.PlayCardCommand;
 import com.cyberpunktcg.engine.command.SelectDieCommand;
 import com.cyberpunktcg.engine.command.SellCardCommand;
 import com.cyberpunktcg.engine.command.SpendResourceCommand;
+import com.cyberpunktcg.engine.command.StealGigCommand;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -132,6 +135,56 @@ class ActionCommandFactoryTest {
                 " ", null, null, List.of(), null), "V"))
                 .isInstanceOf(GameRuleException.class)
                 .hasMessageContaining("dice");
+    }
+
+    @Test
+    void combat_miniFeature6_volDeDes_blocage_et_renonciation() {
+        UUID dieOne = UUID.randomUUID();
+        UUID dieTwo = UUID.randomUUID();
+
+        // STEAL_GIG : identifiants des dés Gigs choisis, transmis dans 'dice'.
+        StealGigCommand steal = (StealGigCommand) factory.build(new GameCommandDTO("STEAL_GIG", null, null, null,
+                null, null, null, List.of(dieOne.toString(), dieTwo.toString()), null), "V");
+        assertThat(steal.getPlayerId()).isEqualTo("V");
+        assertThat(steal.actionType()).isEqualTo("STEAL_GIG");
+        assertThat(steal.getChosenDieIds()).containsExactly(dieOne.toString(), dieTwo.toString());
+
+        // Repli 1 : 'chosen' (liste séparée par des virgules / espaces).
+        StealGigCommand fromChosen = (StealGigCommand) factory.build(new GameCommandDTO("steal_gig", null, null, null,
+                dieOne + ", " + dieTwo, null, null, null, null), "V");
+        assertThat(fromChosen.getChosenDieIds()).containsExactly(dieOne.toString(), dieTwo.toString());
+
+        // Repli 2 : 'cardIds' (UUID).
+        StealGigCommand fromCardIds = (StealGigCommand) factory.build(new GameCommandDTO("STEAL_GIG", null, null, null,
+                null, null, List.of(dieOne), null, null), "V");
+        assertThat(fromCardIds.getChosenDieIds()).containsExactly(dieOne.toString());
+
+        // USE_BLOCKER : plusieurs Blockers dans 'cardIds' (ordre significatif —
+        // seul le DERNIER encaisse les dégâts).
+        UUID first = UUID.randomUUID();
+        UUID last = UUID.randomUUID();
+        BlockCommand block = (BlockCommand) factory.build(new GameCommandDTO("USE_BLOCKER", null, null, null,
+                null, null, List.of(first, last), null, null), "V");
+        assertThat(block.getPlayerId()).isEqualTo("V");
+        assertThat(block.actionType()).isEqualTo("USE_BLOCKER");
+        assertThat(block.getBlockerInstanceIds()).containsExactly(first, last);
+
+        // Alias BLOCK et blocage simple via 'instanceId'.
+        BlockCommand single = (BlockCommand) factory.build(new GameCommandDTO("BLOCK", first, null, null,
+                null, null, null, null, null), "V");
+        assertThat(single.getBlockerInstanceIds()).containsExactly(first);
+
+        // Aucun Blocker désigné → refus explicite.
+        assertThatThrownBy(() -> factory.build(new GameCommandDTO("USE_BLOCKER", null, null, null,
+                null, null, null, null, null), "V"))
+                .isInstanceOf(GameRuleException.class)
+                .hasMessageContaining("Blocker");
+
+        // DECLINE_BLOCK : aucune cible requise.
+        DeclineBlockCommand decline = (DeclineBlockCommand) factory.build(new GameCommandDTO("DECLINE_BLOCK",
+                null, null, null, null, null, null, null, null), "V");
+        assertThat(decline.getPlayerId()).isEqualTo("V");
+        assertThat(decline.actionType()).isEqualTo("DECLINE_BLOCK");
     }
 
     @Test

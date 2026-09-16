@@ -74,7 +74,11 @@ class DebugControllerTest {
         mockMvc.perform(get("/api/debug/game/{gameId}", gameId).queryParam("logs", "50"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.gameId").value(gameId))
-                .andExpect(jsonPath("$.phase").value("MAIN"))
+                // Mini-Feature 5.1 : une partie neuve s'ouvre en phase DRAW (sous-étape
+                // AWAITING_DRAW) — le premier joueur doit piocher puis lancer son dé Gig
+                // avant d'entrer en phase MAIN.
+                .andExpect(jsonPath("$.phase").value("DRAW"))
+                .andExpect(jsonPath("$.drawStep").value("AWAITING_DRAW"))
                 .andExpect(jsonPath("$.turnNumber").value(1))
                 .andExpect(jsonPath("$.activePlayerId").value(org.hamcrest.Matchers.anyOf(is(HOST), is(GUEST))))
                 .andExpect(jsonPath("$.gameOver").value(false))
@@ -84,11 +88,14 @@ class DebugControllerTest {
                 .andExpect(jsonPath("$.players[*].hand[*].cardId", everyItem(not(is("hidden")))))
                 .andExpect(jsonPath("$.players[*].hand[*].name", everyItem(not(is("Carte masquée")))))
                 .andExpect(jsonPath("$.players[*].ramCeilings").exists())
-                // Journal de diagnostic : mise en place + premier joueur tiré au sort.
+                // Mini-Feature 6 : aucun combat en suspens sur une partie neuve
+                // (`pendingAttack` absent — le JSON omet les champs nuls).
+                .andExpect(jsonPath("$.pendingAttack").doesNotExist())
+                // Journal de diagnostic : mise en place + premier joueur désigné.
                 .andExpect(jsonPath("$.gameLog[*].actionType", hasItem("GAME_START")))
                 .andExpect(jsonPath("$.gameLog[*].actionType", hasItem("SETUP")))
                 .andExpect(jsonPath("$.gameLog[*].description", hasItem(
-                        org.hamcrest.Matchers.containsString("premier joueur tiré au sort"))));
+                        org.hamcrest.Matchers.containsString("premier joueur"))));
     }
 
     @Test

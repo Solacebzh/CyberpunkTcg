@@ -2,6 +2,7 @@ package com.cyberpunktcg.engine;
 
 import com.cyberpunktcg.domain.card.CardColor;
 import com.cyberpunktcg.domain.game.CardInstance;
+import com.cyberpunktcg.domain.game.GameActionResult;
 import com.cyberpunktcg.domain.game.GameEventType;
 import com.cyberpunktcg.domain.game.GameLogEntry;
 import com.cyberpunktcg.domain.game.GameState;
@@ -158,6 +159,84 @@ public class RuleEngine {
                 "Unit vaincue : " + actual.getName() + " (propriétaire " + owner.get().getId() + ")",
                 detail("cardId", actual.getCardId(), "gears", followers.size()));
         resolveEffects(state, actual, TriggerType.ON_DEATH, null);
+    }
+
+    // ------------------------------------------------------------------
+    // Mini-Feature 6 — Combat & vol de dés (quota + plafond strict)
+    // ------------------------------------------------------------------
+
+    /**
+     * Quota théorique de Gigs volés par une attaque directe (règle officielle
+     * § ATTACKING — « Units steal an extra Gig for every 10 power (and 0 Gigs at
+     * power 0) ») :
+     *
+     * <ul>
+     *   <li>puissance ≤ 0 → <strong>0</strong> Gig ;</li>
+     *   <li>puissance ≥ 1 → {@code N = (power / 10) + 1} : 1 à 9 → 1 Gig,
+     *   10 à 19 → 2 Gigs, 20 à 29 → 3 Gigs, 30 à 39 → 4 Gigs, <em>etc.</em></li>
+     * </ul>
+     *
+     * @param unitPower puissance totale de l'attaquant (Unit + Gears attachés)
+     * @return le quota théorique {@code N}, jamais négatif
+     */
+    public int calculateQuota(int unitPower) {
+        if (unitPower <= 0) {
+            return 0;
+        }
+        return (unitPower / GameConstants.POWER_PER_EXTRA_GIG) + 1;
+    }
+
+    /**
+     * Nombre de dés Gigs <strong>réellement volables</strong> — règle du plafond
+     * strict (Mini-Feature 6) : on ne vole que les dés déjà lancés (actifs) de la
+     * Gig Area du défenseur, jamais un dé de sa Fixer Area, et on ne crée jamais
+     * de dé. {@code M = min(N, dés actifs du défenseur)}.
+     *
+     * @param unitPower      puissance totale de l'attaquant
+     * @param activeGigsCount nombre de dés Gigs actifs du défenseur
+     * @return {@code M}, le nombre de dés à choisir (0 si aucun dé actif)
+     */
+    public int calculateActualStealable(int unitPower, int activeGigsCount) {
+        int quota = calculateQuota(unitPower);
+        return Math.min(quota, Math.max(0, activeGigsCount));
+    }
+
+    /**
+     * Combat Unité contre Unité (règle officielle § ATTACKING — « FIGHT! Compare
+     * both Units' power ») : l'attaquant inflige des dégâts égaux à sa puissance
+     * totale (Unit + Gears attachés) ; la cible est vaincue dès que ces dégâts
+     * atteignent ou dépassent sa puissance, et à égalité les deux Units se
+     * vainquent. Les Units vaincues partent en {@code TRASH} avec leurs Gears
+     * (voir {@link #defeatUnit}).
+     *
+     * @return le libellé du verdict, journalisé par ailleurs
+     */
+    public String fight(GameState state, CardInstance attacker, CardInstance defender) {
+        if (state.isGameOver() || attacker == null || defender == null) {
+            return null;
+        }
+        int attackPower = state.totalPowerFor(attacker);
+        int defensePower = state.totalPowerFor(defender);
+        String outcome;
+        if (attackPower > defensePower) {
+            outcome = attacker.getName() + " l'emporte (" + attackPower + " > " + defensePower + ")";
+            defeatUnit(state, defender);
+        } else if (attackPower < defensePower) {
+            outcome = defender.getName() + " résiste (" + defensePower + " > " + attackPower + ")";
+            defeatUnit(state, attacker);
+        } else {
+            outcome = "égalité à " + attackPower + " : les deux Units sont vaincues";
+            defeatUnit(state, defender);
+            defeatUnit(state, attacker);
+        }
+        state.log(attacker.getOwnerId(), "FIGHT",
+                "Combat : " + attacker.getName() + " (" + attackPower + ") vs " + defender.getName()
+                        + " (" + defensePower + ") → " + outcome,
+                GameActionResult.SUCCESS,
+                detail("attacker", attacker.getName(), "attackerPower", attackPower,
+                        "defender", defender.getName(), "defenderPower", defensePower,
+                        "outcome", outcome));
+        return outcome;
     }
 
     /**

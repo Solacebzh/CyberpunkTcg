@@ -92,16 +92,20 @@ Légende : `- [x]` = à faire, `- [x]` = test écrit + impl + vert + documenté.
 ## R9 — Combat
 
 - [x] **R9.1** Une Unit peut attaquer si elle n'est pas exhausted et pas en Lag (mal d'invocation) — *Source: § LAG “Units can't attack the turn they're played.” + § READY “Only ready Units can attack”*
-- [x] **R9.2** Power = dégâts infligés (compare total power Unit + Gear) — *Source: § ATTACKING Fight “Compare both Units' power. Higher defeats other. Tie both defeated.” + § POWER*
-- [x] **R9.3** BLOCKER : le défenseur peut dépenser son BLOCKER pour rediriger l'attaque sur son Blocker (spend to redirect) — *Source: § KEYWORDS BLOCKER + § REACT “Spend a Unit with BLOCKER”*
+- [x] **R9.2** Power = dégâts infligés (compare total power Unit + Gear) — *Source: § ATTACKING Fight “Compare both Units' power. Higher defeats other. Tie both defeated.” + § POWER* — *Impl (Mini-Feature 6) : `RuleEngine.fight`, journal `FIGHT`*
+- [x] **R9.3** BLOCKER : le défenseur peut dépenser son BLOCKER pour rediriger l'attaque sur son Blocker (spend to redirect) — *Source: § KEYWORDS BLOCKER + § REACT “Spend a Unit with BLOCKER”* — **Mini-Feature 6** : le choix appartient au **défenseur** (fenêtre « Utiliser Blocker ? », `AWAITING_BLOCK`) ; l'attaquant ne subit plus de ciblage forcé et l'attaque directe n'est plus interdite — *Tests: `testR6_Blocker_RedirectsAttackToBlockerUnit`, `testR6_Blocker_DirectAttack_StealsNothing`, `testR6_DeclineBlock_ThenAttackResolves`, `testR6_Block_ValidationGuards`, `testR9_BlockerIntercepte`, `testR11_Keyword_Blocker`*
 - [x] **R9.4** Unit vaincue → défausse (Trash) + trigger {Defeated} — *Source: § ATTACKING “Move defeated Units to the trash and resolve any DEFEATED effects”*
-- [x] **R9.5** Test : attaque → dégâts, BLOCKER → interception, vaincue en Trash — *Impl: `AttackCommand` + `RuleEngine.defeatUnit`*
+- [x] **R9.5** Test : attaque → dégâts, BLOCKER → interception, vaincue en Trash — *Impl: `AttackCommand` + `CombatResolver` + `RuleEngine.fight`/`defeatUnit`*
+- [x] **R9.6** (Mini-Feature 6) Cibles légales : une Unit rivale **dépensée** ou la Gig Area adverse — « *Ready Units can't be attacked* » ; déclarer une attaque **épuise** l'attaquant — *Source: § ATTACKING “Choose a rival Unit (Ready Units can't be attacked) or attack your rival directly” + § ATTACKING “Spend the attacking Unit”* — *Tests: `testR6_AttackTargets_OnlySpentRivalUnits`, `testR6_UnitVsUnit_DefeatsUnitIfDamageGreaterOrEqualPower`*
+- [x] **R9.7** (Mini-Feature 6) Une Unit attaque individuellement et **termine toutes ses étapes** avant qu'une autre Unit n'attaque : `AWAITING_BLOCK` → `AWAITING_STEAL_CHOICE` → résolution, une seule attaque en cours à la fois — *Source: § ATTACKING “Each Unit attacks individually, and completes all the attacking steps before another Unit can attack.”* — *Impl: `PendingAttack`, `CombatStep`, `GameState.isCombatPending()`* — *Test: `testR6_OneAttackAtATime`*
+- [x] **R9.8** (Mini-Feature 6) Blocage **multiple** : le défenseur peut bloquer avec tous ses Blockers prêts ; chacun est dépensé et résout ses compétences (`ON_BLOCK`), **seul le dernier Blocker déclaré** encaisse les dégâts ; une attaque redirigée ne vole aucun Gig — *Source: § KEYWORDS BLOCKER + § ATTACKING (redirection) + arbitrage utilisateur 2026-09-16* — *Impl: `BlockCommand` (`USE_BLOCKER`, `cardIds` ordonnés), `CombatResolver.resolveBlock`, événement `ATTACK_BLOCKED`, `TriggerType.ON_BLOCK`* — *Tests: `testR6_MultiBlock_OnlyLastBlockerTakesDamage`, `testR6_MultiBlock_LastBlockerMayDie`*
+- [x] **R9.9** (Mini-Feature 6) Un combat en suspens à la fin du tour est résolu automatiquement (blocage refusé implicitement, puis vol des M dés les plus forts) — un joueur silencieux ne gèle pas la partie — *Impl: `EndTurnCommand` → `CombatResolver.autoResolve`, journal `GIG_STEAL_AUTO`* — *Test: `testR6_EndTurn_AutoResolvesPendingAttack`*
 
 ---
 
 ## R10 — Mal d'invocation (Lag)
 
-- [x] **R10.1** Une Unit jouée ce tour ne peut pas attaquer (sauf ADRENALINE/GO_SOLO) — *Source: § MAIN PHASE “Units can't attack on the turn they're played.” + § LAG + § KEYWORDS ADRENALINE*
+- [x] **R10.1** Une Unit jouée ce tour ne peut pas attaquer (sauf ADRENALINE/GO_SOLO/**HASTE**, alias « jeu rapide » accepté depuis la Mini-Feature 6) — *Source: § MAIN PHASE “Units can't attack on the turn they're played.” + § LAG + § KEYWORDS ADRENALINE* — *Impl: `CardInstance.canIgnoreSummoningSickness()` (`GO_SOLO` | `ADRENALINE` | `HASTE`), `CardKeyword.HASTE`, enum `haste` du schéma `card-schema.json`* — *Test: `testR6_Haste_IgnoresSummoningSickness`*
 - [x] **R10.2** Redressée / Lag dissipé au début du tour suivant (startTurn clear Lag) — *Source: § LAG “lasts until the end of the turn.” + § START PHASE Ready*
 - [x] **R10.3** Test : jouer Unit → attaquer → REFUSÉ (Lag), tour suivant → OK ; avec ADRENALINE/GO_SOLO → OK immédiatement — *Impl: `CardInstance.summoningSickness` + `hasGoSolo` + `isAdrenaline`*
 
@@ -110,7 +114,7 @@ Légende : `- [x]` = à faire, `- [x]` = test écrit + impl + vert + documenté.
 ## R11 — Keywords des cartes
 
 - [x] **R11.1** {Play} : effet à la pose (Trigger ON_PLAY) — *Source: § TIMING TRIGGERS PLAY*
-- [x] **R11.2** {Blocker} : interception d'attaque (mot-clé + spend to redirect) — *Source: § KEYWORDS BLOCKER*
+- [x] **R11.2** {Blocker} : interception d'attaque (mot-clé + spend to redirect) — *Source: § KEYWORDS BLOCKER* — **Mini-Feature 6** : interception sur **décision du défenseur** (fenêtre `AWAITING_BLOCK`, actions `USE_BLOCKER`/`DECLINE_BLOCK`), déclencheur `ON_BLOCK` (mini-langage `ON_BLOCK:DRAW:1`, marqueur naturel `{Block}`) — *Tests: `testR11_Keyword_Blocker`, `testR6_MultiBlock_OnlyLastBlockerTakesDamage`*
 - [x] **R11.3** {Go Solo} / ADRENALINE : Legend jouée comme Unit prête (ou Unit avec Adrenaline) peut attaquer le tour de pose — *Source: § KEYWORDS GO SOLO + ADRENALINE*
 - [x] **R11.4** {Spend} : capacité activée en inclinant (Spend) — *Source: § GLOSSARY SPEND*
 - [x] **R11.5** {Call} : choix parmi plusieurs effets / flip Legend — *Source: § TIMING CALL + § CALL A LEGEND*
@@ -127,6 +131,9 @@ Légende : `- [x]` = à faire, `- [x]` = test écrit + impl + vert + documenté.
 - [x] **R12.3** OVERTIME : après le 7e tour du dernier joueur, majorité instantanée (hors scope V0, documenté) — *Source: § WIN CONDITION OVERTIME*
 - [x] **R12.4** Deck-out (pioche impossible) = défaite — *Source: Task R12 “Deck-out (pioche impossible) = défaite” + extrapolation règle (drawCards defeat)* — depuis la Mini-Feature 5, la défaite tombe **au clic sur la pioche** (`DRAW_CARD` sur deck vide : journal `DRAW` `FAILED` + `VICTORY`), pas à la fin du tour précédent — *Tests: `testR12_DeckOut_Defeat`, `DrawPhaseTest.testR5_EmptyDeck_IsLoss`*
 - [x] **R12.5** Test : 7 Gigs → victoire au début tour suivant, 6 Gigs → pas de victoire, deck vide → défaite
+- [x] **R12.6** (Mini-Feature 6) Quota de vol d'une attaque directe : power 0 → **0** Gig ; power ≥ 1 → `N = (power / 10) + 1` (1-9 → 1, 10-19 → 2, 20-29 → 3, …) — *Source: § ATTACKING STEAL “Units steal an extra Gig for every 10 power (and 0 Gigs at power 0)”* — *Impl: `RuleEngine.calculateQuota`, `GameConstants.POWER_PER_EXTRA_GIG = 10`* — *Tests: `testR6_Power0_StealsZeroGigs`, `testR6_Power1To9_StealsOneGig`, `testR6_Power10To19_StealsTwoGigs`, `testR6_Quota_Formula_AndStrictCeiling`*
+- [x] **R12.7** (Mini-Feature 6) **Plafond strict des dés actifs** : `M = min(N, dés Gigs ACTIFS du défenseur)` — on ne vole jamais un dé de la Fixer Area (non lancé), on ne crée jamais de dé ; `M = 0` (power 0 **ou** défenseur sans dé actif) = attaque réussie **sans vol** — *Source: § STEAL “Choose a rival Gig die and move it to your friendly Gig area” (un dé existant, déjà lancé) + § PLAYMAT FIXER/GIG AREAS* — *Impl: `RuleEngine.calculateActualStealable`, `Player.activeGigs()`/`getActiveGigCount()`, `CombatResolver.resolveAttack`* — *Tests: `testR6_Power25_TargetHasOnly2Gigs_StealsOnly2Gigs`, `testR6_TargetHas0Gigs_Steals0Gigs_AttackSucceeds`, `testR6_OnlyActiveDiceAreStealable`*
+- [x] **R12.8** (Mini-Feature 6) L'**attaquant choisit quels** dés voler (`STEAL_GIG`, exactement M identifiants `gigDieIds`) ; chaque dé conserve son identifiant, son type et sa valeur (« un d8 affichant 5 reste un d8 affichant 5 ») ; un vol ne fait jamais gagner immédiatement — *Source: § STEAL “Choose a rival Gig die” + § WIN CONDITION* — *Impl: `StealGigCommand`, `GigDie`, `GameState.stealGig(from, to, dieId)`, `Player.addGigDie`/`removeGigById`* — *Tests: `testR6_StolenDie_KeepsExactDieAndValue`, `testR6_StealChoice_ValidationGuards`, `testR6_Steal_NeverWinsImmediately`, `testR6_VictoryCondition_7Gigs_AtStartOfDrawPhase`, `DrawPhaseTest.testR5_StolenGigKeepsItsDieType`*
 
 ---
 
@@ -164,9 +171,11 @@ Suivre ici le cochage règle par règle (Phase 2 A→E) — tous verts le 2026-0
 - R7 : ✅ 2 tests testR7_* vert (no RAM check)
 - R8 : ✅ 3 tests testR8_* vert (START ready-draw-gig interactif, MAIN, COMBAT, END eddies lost)
 - Mini-Feature 5 : ✅ 7 tests `DrawPhaseTest` (séquence DRAW interactive, choix du dé / d20 en dernier, deck vide = défaite, victoire à 7 avant pioche, vues masquées, dé du Gig volé, ressources refusées en DRAW)
+- Mini-Feature 6 (2026-09-16) : ✅ 23 tests `CombatStealTest` (`testR6_*` — quota N, plafond strict M, défenseur à 0 dé, choix des dés volés, blocage au choix du défenseur, blocage multiple « dernier Blocker », renoncement, combat Unité vs Unité, cibles dépensées, `HASTE`, une attaque à la fois, résolution auto en fin de tour, victoire à 7 au début de la DRAW) + R9/R11/R12 réécrits dans `GameIntegrationTest`, `GameCommandTest`, `DrawPhaseTest`, `ActionCommandFactoryTest`
+  > ⚠️ Numérotation : les `testR6_*` de la Mini-Feature 6 suivent le brief « Combat, Vol de Dés & Plafond des Dés Actifs » (règle R6 **du brief**) et ne correspondent pas au R6 de cette checklist (cartes de l'Eddies Area comme ressources, `SpendEddiesCommandTest`) — d'où des tests `testR6_*` dans deux classes différentes, sans collision de noms. Les règles de checklist concernées sont R9 (combat), R10 (Lag/`HASTE`), R11 (`{Blocker}`) et R12 (Gigs, quota, plafond, victoire).
 - R9 : ✅ 4 tests testR9_* vert (ready+no Lag, power=dmg, Blocker, trash)
 - R10: ✅ 3 tests testR10_* vert (Lag blocks, GoSolo/Adrenaline bypass, clear next turn)
 - R11: ✅ 6 tests testR11_* vert (Play, Blocker, GoSolo, Quick, Defeated, Spend/Call skip)
 - R12: ✅ 4 tests testR12_* vert (7 win at start, 6 no win, gig via dice/steal, deck-out)
 - R13: ✅ 10 tests testR13_* vert (DRAW, DAMAGE, DEFEAT, GRANT_POWER, STEAL_GIG, HEAL, DISCARD, BUFF, Call modal ignored, conditional ignored, real card)
-- **Total: 54 tests testR* — tous au vert (même run, pas de régression)**
+- **Total: 54 tests testR* (R1→R13) + 23 tests `CombatStealTest` (Mini-Feature 6) — tous au vert (même run, pas de régression)**

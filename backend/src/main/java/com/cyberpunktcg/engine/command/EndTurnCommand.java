@@ -8,6 +8,7 @@ import com.cyberpunktcg.domain.game.GameLog;
 import com.cyberpunktcg.domain.game.GameState;
 import com.cyberpunktcg.domain.game.Phase;
 import com.cyberpunktcg.domain.game.Player;
+import com.cyberpunktcg.engine.CombatResolver;
 import com.cyberpunktcg.engine.DrawPhaseHandler;
 import com.cyberpunktcg.engine.GameConstants;
 import com.cyberpunktcg.engine.GameRuleException;
@@ -34,6 +35,10 @@ import java.util.List;
  *
  * <p>Refusée pendant la phase {@code DRAW} : le joueur doit d'abord piocher et
  * choisir son dé.</p>
+ *
+ * <p>Mini-Feature 6 : une attaque encore en cours de résolution (fenêtre
+ * « Utiliser Blocker ? » ou choix des dés Gigs à voler) est résolue
+ * automatiquement avant la fermeture du tour — voir {@link CombatResolver}.</p>
  */
 public class EndTurnCommand implements GameCommand {
 
@@ -78,6 +83,17 @@ public class EndTurnCommand implements GameCommand {
         int mark = state.getEventLog().size();
         Player outgoing = state.getPlayer(playerId);
         RuleEngine engine = new RuleEngine();
+
+        if (state.isCombatPending()) {
+            // Mini-Feature 6 : aucune attaque ne survit à la fin du tour — une
+            // attaque encore en attente (fenêtre Blocker ou choix des dés volés)
+            // est résolue automatiquement, pour qu'un joueur silencieux ne puisse
+            // pas geler la partie.
+            CombatResolver.autoResolve(state, "Fin de tour");
+            if (state.isGameOver()) {
+                return GameCommand.eventsSince(state, mark);
+            }
+        }
 
         state.setPhase(Phase.END);
         state.appendEvent(GameEventType.PHASE_CHANGED, playerId, "phase End");

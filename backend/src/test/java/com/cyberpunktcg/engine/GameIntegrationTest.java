@@ -10,10 +10,13 @@ import com.cyberpunktcg.domain.game.DrawStep;
 import com.cyberpunktcg.domain.game.GameActionResult;
 import com.cyberpunktcg.domain.game.GameLogEntry;
 import com.cyberpunktcg.domain.game.GameState;
+import com.cyberpunktcg.domain.game.GigDie;
 import com.cyberpunktcg.domain.game.Phase;
 import com.cyberpunktcg.domain.game.Player;
 import com.cyberpunktcg.domain.game.Zone;
 import com.cyberpunktcg.engine.command.AttackCommand;
+import com.cyberpunktcg.engine.command.BlockCommand;
+import com.cyberpunktcg.engine.command.DeclineBlockCommand;
 import com.cyberpunktcg.engine.command.DrawCardCommand;
 import com.cyberpunktcg.engine.command.EndTurnCommand;
 import com.cyberpunktcg.engine.command.SelectDieCommand;
@@ -21,6 +24,7 @@ import com.cyberpunktcg.engine.command.PlayCardCommand;
 import com.cyberpunktcg.engine.command.SellCardCommand;
 import com.cyberpunktcg.engine.command.SpendEddiesCommand;
 import com.cyberpunktcg.engine.command.SpendLegendCommand;
+import com.cyberpunktcg.engine.command.StealGigCommand;
 import com.cyberpunktcg.repository.CardRepository;
 import com.cyberpunktcg.service.GameService;
 import org.junit.jupiter.api.BeforeEach;
@@ -752,7 +756,7 @@ class GameIntegrationTest {
     }
 
     @Test
-    @DisplayName("R9 - BLOCKER intercepte attaque et vol de Gig")
+    @DisplayName("R9 - BLOCKER : interception au CHOIX du défenseur (Mini-Feature 6)")
     void testR9_BlockerIntercepte() {
         GameState state = newGame();
         completeDraw(state);
@@ -762,15 +766,20 @@ class GameIntegrationTest {
         bystander.setExhausted(true);
         blocker.setExhausted(false);
         GameFixtures.addGigs(state, "p2", 3);
-        // Attaque bystander refusée car BLOCKER prêt
-        String r = expectRefusal(state, new AttackCommand("p1", attacker.getInstanceId(), bystander.getInstanceId()));
-        assertThat(r).contains("BLOCKER");
-        // Vol Gig refusé aussi
-        String r2 = expectRefusal(state, new AttackCommand("p1", attacker.getInstanceId()));
-        assertThat(r2).contains("BLOCKER");
-        // Attaque blocker OK
-        execute(state, new AttackCommand("p1", attacker.getInstanceId(), blocker.getInstanceId()));
-        assertThat(state.getPlayer("p1").getTrash()).contains(attacker); // 4 vs 5 attacker meurt
+        // Mini-Feature 6 : un Blocker prêt n'interdit plus l'attaque (ni le vol direct) :
+        // l'attaque est déclarée, puis le défenseur choisit d'intercepter ou non.
+        execute(state, new AttackCommand("p1", attacker.getInstanceId(), bystander.getInstanceId()));
+        assertThat(state.isAwaitingBlock()).isTrue();
+        assertThat(state.getPlayer("p2").getField()).contains(bystander, blocker);
+        // Une seule attaque à la fois : rien d'autre tant que le combat n'est pas résolu.
+        assertThat(expectRefusal(state, new AttackCommand("p1", attacker.getInstanceId())))
+                .contains("en cours");
+        // Le défenseur bloque : 4 vs 5 → l'attaquant meurt, la cible déclarée survit.
+        execute(state, new BlockCommand("p2", blocker.getInstanceId()));
+        assertThat(state.getPlayer("p1").getTrash()).contains(attacker);
+        assertThat(blocker.isExhausted()).isTrue();
+        assertThat(state.getPlayer("p2").getField()).contains(bystander);
+        assertThat(state.isCombatPending()).isFalse();
     }
 
     @Test
@@ -861,18 +870,37 @@ class GameIntegrationTest {
     }
 
     @Test
-    @DisplayName("R11 - Keyword {Blocker} : interception")
+    @DisplayName("R11 - Keyword {Blocker} : interception au choix du défenseur (Mini-Feature 6)")
     void testR11_Keyword_Blocker() {
+        // Cas 1 : le défenseur renonce → le vol de Gig suit son cours (plafond strict).
         GameState state = newGame();
         completeDraw(state);
-        CardInstance blocker = GameFixtures.fieldCard(state, "p2", GameFixtures.unit("b",1,3, CardKeyword.BLOCKER));
+        GameFixtures.fieldCard(state, "p2", GameFixtures.unit("b",1,3, CardKeyword.BLOCKER));
         CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("a",1,4));
-        GameFixtures.addGigs(state, "p2", 2);
-        // Blocker must intercept
-        assertThat(expectRefusal(state, new AttackCommand("p1", attacker.getInstanceId()))).contains("BLOCKER");
-        // Attack blocker works
-        execute(state, new AttackCommand("p1", attacker.getInstanceId(), blocker.getInstanceId()));
-        assertThat(state.getPlayer("p2").getTrash()).contains(blocker);
+        GameFixtures.addGigs(state, "p2", 2);   // UN dé Gig actif, de valeur 2
+        execute(state, new AttackCommand("p1", attacker.getInstanceId()));
+        assertThat(state.isAwaitingBlock()).isTrue();
+        execute(state, new DeclineBlockCommand("p2"));
+        assertThat(state.isAwaitingStealChoice()).isTrue();
+        // power 4 → quota N = 1 ; p2 n'a qu'1 dé actif → plafond strict M = 1.
+        assertThat(state.getPendingAttack().getQuota()).isEqualTo(1);
+        assertThat(state.getPendingAttack().getStealable()).isEqualTo(1);
+
+        // Cas 2 : le défenseur bloque → l'attaque est redirigée, AUCUN Gig volé.
+        GameState blocked = newGame();
+        completeDraw(blocked);
+        CardInstance wall = GameFixtures.fieldCard(blocked, "p2", GameFixtures.unit("b2",1,3, CardKeyword.BLOCKER));
+        CardInstance raider = GameFixtures.fieldCard(blocked, "p1", GameFixtures.unit("a2",1,4));
+        int thiefGigs = blocked.getPlayer("p1").getGigCount();
+        int victimGigs = blocked.getPlayer("p2").getGigCount();
+        GameFixtures.addGigs(blocked, "p2", 2);
+        execute(blocked, new AttackCommand("p1", raider.getInstanceId()));
+        execute(blocked, new BlockCommand("p2", wall.getInstanceId()));
+        assertThat(blocked.getPlayer("p2").getTrash()).contains(wall); // 4 > 3
+        assertThat(blocked.getPlayer("p1").getField()).contains(raider);
+        assertThat(blocked.getPlayer("p1").getGigCount()).isEqualTo(thiefGigs);
+        // `addGigs(blocked, "p2", 2)` ajoute UN dé (valeur 2) : aucun n'est volé.
+        assertThat(blocked.getPlayer("p2").getGigCount()).isEqualTo(victimGigs + 1);
     }
 
     @Test
@@ -1000,12 +1028,26 @@ class GameIntegrationTest {
         assertThat(state.getPlayer("p2").getGigCount()).isEqualTo(1);
         // Vol — p2 a déjà gagné 1 Gig en ouvrant son propre tour, on en ajoute un 2e
         GameFixtures.addGigs(state, "p2", 3);
+        int p1GigsBefore = state.getPlayer("p1").getGigCount();
         int p2GigsBefore = state.getPlayer("p2").getGigCount();
         assertThat(p2GigsBefore).isEqualTo(2);
         CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("stealer",1,2));
         execute(state, new AttackCommand("p1", attacker.getInstanceId()));
-        // p1 vole le Gig le plus fort de p2 : il en gagne un (et p2 en perd un).
-        assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(p2GigsBefore + 1);
+        // Mini-Feature 6 : power 2 → quota N = 1, plafond M = min(1, dés actifs) = 1 ;
+        // l'attaquant CHOISIT le dé volé (ici celui qui affiche 3).
+        assertThat(state.isAwaitingStealChoice()).isTrue();
+        assertThat(state.getPendingAttack().getStealable()).isEqualTo(1);
+        String chosen = null;
+        for (GigDie die : state.getPlayer("p2").activeGigs()) {
+            if (die.value() == 3) {
+                chosen = die.id();
+            }
+        }
+        assertThat(chosen).isNotNull();
+        execute(state, new StealGigCommand("p1", List.of(chosen)));
+        // p1 vole le Gig choisi : il en gagne un (et p2 en perd un).
+        assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(p1GigsBefore + 1);
+        assertThat(state.getPlayer("p1").getGigs()).contains(3);
         assertThat(state.getPlayer("p2").getGigCount()).isEqualTo(p2GigsBefore - 1);
     }
 
@@ -1100,11 +1142,16 @@ class GameIntegrationTest {
         completeDraw(state);
         GameFixtures.addGigs(state, "p2", 5,6);
         GameFixtures.giveEddies(state, "p1", 5);
+        // Mini-Feature 5.1 : le tour 1 s'ouvre en phase DRAW — `completeDraw` a déjà
+        // fait gagner un Gig au joueur actif. On compare donc des écarts, pas des
+        // totaux absolus (indépendants du joueur tiré au sort).
+        int thiefBefore = state.getPlayer("p1").getGigCount();
+        int victimBefore = state.getPlayer("p2").getGigCount();
         CardInstance stealCard = GameFixtures.handCard(state, "p1",
                 GameFixtures.coloredProgram("steal", CardColor.RED,1,1,"ON_PLAY:STEAL_GIG:1"));
         execute(state, new PlayCardCommand("p1", stealCard.getInstanceId()));
-        assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(1);
-        assertThat(state.getPlayer("p2").getGigCount()).isEqualTo(1);
+        assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(thiefBefore + 1);
+        assertThat(state.getPlayer("p2").getGigCount()).isEqualTo(victimBefore - 1);
     }
 
     @Test

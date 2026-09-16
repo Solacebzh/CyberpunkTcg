@@ -3,6 +3,8 @@ package com.cyberpunktcg.service;
 import com.cyberpunktcg.api.dto.ws.GameCommandDTO;
 import com.cyberpunktcg.engine.GameRuleException;
 import com.cyberpunktcg.engine.command.AttackCommand;
+import com.cyberpunktcg.engine.command.BlockCommand;
+import com.cyberpunktcg.engine.command.DeclineBlockCommand;
 import com.cyberpunktcg.engine.command.DrawCardCommand;
 import com.cyberpunktcg.engine.command.EndTurnCommand;
 import com.cyberpunktcg.engine.command.GameCommand;
@@ -12,7 +14,12 @@ import com.cyberpunktcg.engine.command.SellCardCommand;
 import com.cyberpunktcg.engine.command.SpendEddiesCommand;
 import com.cyberpunktcg.engine.command.SpendLegendCommand;
 import com.cyberpunktcg.engine.command.SpendResourceCommand;
+import com.cyberpunktcg.engine.command.StealGigCommand;
 import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
 
 /**
  * Traduit le DTO STOMP en commande du moteur. Le {@code playerId} est toujours
@@ -26,7 +33,11 @@ import org.springframework.stereotype.Component;
  * {@code SPEND_RESOURCE} : mêmes règles, action de journal distincte),
  * {@code END_TURN}, {@code DRAW_CARD} et {@code SELECT_DIE} (Mini-Feature 5 —
  * phase DRAW interactive : pioche du tour puis choix du dé Gig, transmis dans
- * {@code dice[0]} ou {@code chosen}). {@code CONCEDE} est traité par le
+ * {@code dice[0]} ou {@code chosen}), {@code STEAL_GIG}, {@code USE_BLOCKER}
+ * (alias {@code BLOCK}) et {@code DECLINE_BLOCK} (Mini-Feature 6 — combat
+ * interactif : interception par un/des Blocker(s) au choix du défenseur, puis
+ * choix par l'attaquant des {@code M} dés Gigs à voler, identifiants transmis
+ * dans {@code dice} ou {@code cardIds}). {@code CONCEDE} est traité par le
  * contrôleur (pas une commande du moteur).</p>
  */
 @Component
@@ -43,6 +54,14 @@ public class ActionCommandFactory {
     public static final String DRAW_CARD = "DRAW_CARD";
     /** Mini-Feature 5 : choix du dé Gig (phase DRAW, étape AWAITING_DIE_SELECT). */
     public static final String SELECT_DIE = "SELECT_DIE";
+    /** Mini-Feature 6 : choix des dés Gigs à voler (attaque directe, plafond strict M). */
+    public static final String STEAL_GIG = "STEAL_GIG";
+    /** Mini-Feature 6 : le défenseur intercepte avec un ou plusieurs {Blocker} prêts. */
+    public static final String USE_BLOCKER = "USE_BLOCKER";
+    /** Alias de {@link #USE_BLOCKER}. */
+    public static final String BLOCK = "BLOCK";
+    /** Mini-Feature 6 : le défenseur renonce à intercepter. */
+    public static final String DECLINE_BLOCK = "DECLINE_BLOCK";
     public static final String CONCEDE = "CONCEDE";
 
     /**
@@ -65,6 +84,9 @@ public class ActionCommandFactory {
             case END_TURN -> new EndTurnCommand(playerId);
             case DRAW_CARD -> new DrawCardCommand(playerId);
             case SELECT_DIE -> buildSelectDie(dto, playerId);
+            case STEAL_GIG -> buildStealGig(dto, playerId);
+            case USE_BLOCKER, BLOCK -> buildBlock(dto, playerId);
+            case DECLINE_BLOCK -> new DeclineBlockCommand(playerId);
             case CONCEDE -> throw new GameRuleException("CONCEDE ne passe pas par le moteur");
             default -> throw new GameRuleException("Action inconnue : " + dto.action());
         };
@@ -122,6 +144,63 @@ public class ActionCommandFactory {
             throw new GameRuleException("SELECT_DIE exige le dé à lancer dans 'dice' (ex. [\"d6\"])");
         }
         return new SelectDieCommand(playerId, die);
+    }
+
+    /**
+     * Mini-Feature 6 (règle C) : les dés Gigs choisis par l'attaquant arrivent
+     * dans {@code dice} (identifiants texte), à défaut dans {@code cardIds}
+     * (UUID) ou dans {@code chosen} (liste séparée par des virgules / espaces).
+     * Une liste vide est transmise telle quelle : {@code StealGigCommand} la
+     * refuse avec le nombre attendu (plafond strict M).
+     */
+    private GameCommand buildStealGig(GameCommandDTO dto, String playerId) {
+        List<String> dieIds = new ArrayList<String>();
+        if (dto.dice() != null) {
+            for (String die : dto.dice()) {
+                if (die != null && !die.isBlank()) {
+                    dieIds.add(die.trim());
+                }
+            }
+        }
+        if (dieIds.isEmpty() && dto.cardIds() != null) {
+            for (UUID id : dto.cardIds()) {
+                if (id != null) {
+                    dieIds.add(id.toString());
+                }
+            }
+        }
+        if (dieIds.isEmpty() && dto.chosen() != null && !dto.chosen().isBlank()) {
+            for (String id : dto.chosen().split("[,\\s]+")) {
+                if (!id.isBlank()) {
+                    dieIds.add(id.trim());
+                }
+            }
+        }
+        return new StealGigCommand(playerId, dieIds);
+    }
+
+    /**
+     * Mini-Feature 6 (règle B) : Blockers à dépenser, dans l'ordre de
+     * déclaration (le DERNIER encaisse les dégâts). Source : {@code cardIds}
+     * (blocage multiple) ou {@code instanceId} (blocage simple).
+     */
+    private GameCommand buildBlock(GameCommandDTO dto, String playerId) {
+        List<UUID> blockers = new ArrayList<UUID>();
+        if (dto.cardIds() != null) {
+            for (UUID id : dto.cardIds()) {
+                if (id != null) {
+                    blockers.add(id);
+                }
+            }
+        }
+        if (blockers.isEmpty() && dto.instanceId() != null) {
+            blockers.add(dto.instanceId());
+        }
+        if (blockers.isEmpty()) {
+            throw new GameRuleException("USE_BLOCKER exige au moins un Blocker dans 'cardIds' "
+                    + "(ou 'instanceId' pour un blocage simple)");
+        }
+        return new BlockCommand(playerId, blockers);
     }
 
     private GameCommand buildSellCard(GameCommandDTO dto, String playerId) {

@@ -8,6 +8,7 @@ import com.cyberpunktcg.domain.game.GameState;
 import com.cyberpunktcg.domain.game.Phase;
 import com.cyberpunktcg.domain.game.Player;
 import com.cyberpunktcg.domain.game.Zone;
+import com.cyberpunktcg.engine.CombatResolver;
 import com.cyberpunktcg.engine.GameRuleException;
 import com.cyberpunktcg.engine.RuleEngine;
 import com.cyberpunktcg.engine.TriggerType;
@@ -17,23 +18,40 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Déclare une attaque avec une Unit prête, vers une Unit rivale ou (sans cible)
- * directement vers la Gig Area adverse pour voler un Gig.
+ * Déclare une attaque avec une Unit prête, vers une Unit rivale <strong>dépensée</strong>
+ * ou (sans cible) directement vers la Gig Area adverse.
  *
- * <p>Règles appliquées :</p>
+ * <p>Règles appliquées (Mini-Feature 6 — {@code docs/OFFICIAL-RULES.md} § ATTACKING) :</p>
  * <ul>
  *   <li>l'attaquant est une Unit alliée du Field, prête et sans mal d'invocation
- *   (sauf {@code GO_SOLO}) ; attaquer l'épuise ;</li>
+ *   (sauf {@code HASTE}, {@code ADRENALINE} ou {@code GO_SOLO}) ; déclarer
+ *   l'attaque l'incline ({@code exhausted = true}) ;</li>
  *   <li>la première attaque fait passer la phase {@code MAIN → COMBAT} ;</li>
  *   <li>chaque attaque ouvre une fenêtre de réaction pour le défenseur
- *   (<strong>QUICK uniquement</strong> ; seules les cartes avec le mot-clé quick peuvent être jouées en réaction) ;</li>
+ *   (<strong>QUICK uniquement</strong> pour les cartes) ;</li>
  *   <li>les déclencheurs {@code ON_ATTACK} se résolvent avant le combat ;</li>
- *   <li><strong>BLOCKER intercepte</strong> : si un BLOCKER rival prêt existe, l'attaquant doit le cibler (interception) et le vol direct de Gig est interdit ;</li>
- *   <li>le combat compare les puissances totales (Unit + Gears) : à égalité,
- *   les deux Units sont vaincues ;</li>
- *   <li>un {@code BLOCKER} rival prêt doit être ciblé (interception) et interdit
- *   le vol direct de Gig.</li>
+ *   <li>cibles valides : le joueur rival (Gig Area) ou une Unit rivale du Field
+ *   <em>déjà inclinée</em> (« Ready Units can't be attacked ») ;</li>
+ *   <li><strong>BLOCKER au choix du défenseur</strong> : si le défenseur contrôle
+ *   un Blocker prêt, l'attaque est suspendue sur la fenêtre « Utiliser Blocker ? »
+ *   ({@link com.cyberpunktcg.domain.game.CombatStep#AWAITING_BLOCK}) — il peut
+ *   bloquer avec un ou plusieurs Blockers ({@link BlockCommand}) ou renoncer
+ *   ({@link DeclineBlockCommand}). Le blocage n'est donc plus imposé à
+ *   l'attaquant (comportement antérieur à la Mini-Feature 6) ;</li>
+ *   <li><strong>STEAL!</strong> attaque directe non bloquée : quota
+ *   {@code N = (power / 10) + 1} (0 si power ≤ 0) <em>plafonné</em> aux dés Gigs
+ *   actifs du défenseur ({@code M = min(N, dés actifs)}), puis l'attaquant choisit
+ *   les {@code M} dés à voler ({@link StealGigCommand}). Aucun dé n'est créé, la
+ *   Fixer Area n'est jamais ponctionnée, et {@code M = 0} n'est pas une erreur :
+ *   l'attaque réussit sans rien voler ;</li>
+ *   <li><strong>FIGHT!</strong> combat Unité contre Unité : comparaison des
+ *   puissances totales (Unit + Gears), à égalité les deux Units sont vaincues
+ *   ({@link RuleEngine#fight}). Une attaque redirigée par un Blocker ne vole
+ *   jamais de Gig.</li>
  * </ul>
+ *
+ * <p>Une seule attaque à la fois : tant qu'une attaque est en cours de résolution
+ * ({@link GameState#isCombatPending()}), aucune autre ne peut être déclarée.</p>
  */
 public class AttackCommand implements GameCommand {
 
@@ -41,12 +59,12 @@ public class AttackCommand implements GameCommand {
     private final UUID attackerInstanceId;
     private final UUID targetInstanceId;
 
-    /** Attaque directe vers la Gig Area (vol de Gig). */
+    /** Attaque directe vers la Gig Area (vol de dés Gigs). */
     public AttackCommand(String playerId, UUID attackerInstanceId) {
         this(playerId, attackerInstanceId, null);
     }
 
-    /** Attaque vers une Unit rivale. */
+    /** Attaque vers une Unit rivale dépensée. */
     public AttackCommand(String playerId, UUID attackerInstanceId, UUID targetInstanceId) {
         if (playerId == null) {
             throw new IllegalArgumentException("Le joueur est obligatoire");
@@ -96,7 +114,7 @@ public class AttackCommand implements GameCommand {
         return targetInstanceId;
     }
 
-    /** {@code true} pour un vol de Gig direct (aucune cible désignée). */
+    /** {@code true} pour une attaque directe vers la Gig Area (vol de dés). */
     public boolean isGigSteal() {
         return targetInstanceId == null;
     }
@@ -108,6 +126,14 @@ public class AttackCommand implements GameCommand {
         Phase phase = state.getPhase();
         if (phase != Phase.MAIN && phase != Phase.COMBAT) {
             throw new GameRuleException("On n'attaque qu'en phase Main ou Combat");
+        }
+        if (state.isCombatPending()) {
+            // Règle officielle : « Each Unit attacks individually, and completes all
+            // the attacking steps before another Unit can attack. »
+            throw new GameRuleException("Une attaque est déjà en cours de résolution "
+                    + (state.isAwaitingBlock()
+                    ? "(le défenseur doit répondre à la fenêtre Blocker)"
+                    : "(choisis d'abord les dés Gigs à voler)"));
         }
 
         CardInstance attacker = player.findIn(Zone.FIELD, attackerInstanceId)
@@ -122,17 +148,14 @@ public class AttackCommand implements GameCommand {
             throw new GameRuleException("Cette Unit vient d'être jouée (mal d'invocation)");
         }
 
-        Player rival = state.getOpponent(playerId);
         if (isGigSteal()) {
-            if (rival.controlsReadyBlocker()) {
-                throw new GameRuleException("Vol de Gig intercepté : un BLOCKER rival doit être attaqué d'abord");
-            }
-            if (rival.getGigCount() == 0) {
-                throw new GameRuleException("Le rival ne contrôle aucun Gig à voler");
-            }
+            // Mini-Feature 6 : un Blocker prêt n'interdit plus l'attaque directe —
+            // c'est au défenseur de choisir s'il bloque. Un défenseur sans dé Gig
+            // actif non plus : l'attaque réussit et ne vole rien (plafond strict M = 0).
             return;
         }
 
+        Player rival = state.getOpponent(playerId);
         Optional<CardInstance> lookup = state.findInstance(targetInstanceId);
         if (!lookup.isPresent()) {
             throw new GameRuleException("Cible introuvable");
@@ -144,8 +167,10 @@ public class AttackCommand implements GameCommand {
         if (!target.getOwnerId().equals(rival.getId())) {
             throw new GameRuleException("On n'attaque pas ses propres Units");
         }
-        if (rival.controlsReadyBlocker() && !target.isBlocker()) {
-            throw new GameRuleException("Un BLOCKER rival doit intercepter cette attaque");
+        if (!target.isExhausted()) {
+            // Règle officielle : « Ready Units can't be attacked. »
+            throw new GameRuleException("Cette Unit rivale est prête : on n'attaque qu'une Unit déjà "
+                    + "inclinée (dépensée) — un Blocker prêt intercepte via la fenêtre de réaction");
         }
     }
 
@@ -165,10 +190,16 @@ public class AttackCommand implements GameCommand {
 
         attacker.setExhausted(true);
         int attackerPower = state.totalPowerFor(attacker);
+        CardInstance declaredTarget = null;
         String targetName = null;
         if (!isGigSteal()) {
             Optional<CardInstance> declared = state.findInstance(targetInstanceId);
-            targetName = declared.map(CardInstance::getName).orElse("cible disparue");
+            if (declared.isPresent()) {
+                declaredTarget = declared.get();
+                targetName = declaredTarget.getName();
+            } else {
+                targetName = "cible disparue";
+            }
         }
         if (isGigSteal()) {
             state.appendEvent(GameEventType.ATTACK_DECLARED, playerId,
@@ -183,93 +214,32 @@ public class AttackCommand implements GameCommand {
                         + (isGigSteal() ? "Gig Area du rival" : targetName),
                 GameLog.details("attacker", attacker.getName(), "attackerId", attacker.getCardId(),
                         "power", attackerPower,
+                        "quota", engine.calculateQuota(attackerPower),
                         "target", isGigSteal() ? "GIG_AREA" : targetName,
                         "targetInstanceId", targetInstanceId == null ? null : targetInstanceId.toString(),
-                        "defender", rival.getId()));
+                        "defender", rival.getId(),
+                        "readyBlockers", rival.readyBlockers().size()));
 
         state.openReactionWindow(rival.getId(), attacker.getInstanceId().toString());
         state.appendEvent(GameEventType.REACTION_WINDOW_OPENED, rival.getId(),
                 "fenêtre de réaction ouverte (QUICK uniquement)");
         state.logInfo(rival.getId(), "REACTION_WINDOW",
                 "Fenêtre de réaction ouverte pour " + rival.getId()
-                        + " (cartes QUICK uniquement ; " + rival.getHand().size() + " carte(s) en main)",
-                GameLog.details("attacker", attacker.getName(), "rule", "QUICK_ONLY"));
+                        + " (cartes QUICK uniquement ; " + rival.getHand().size() + " carte(s) en main"
+                        + (rival.controlsReadyBlocker() ? " ; Blocker(s) prêt(s) : "
+                        + rival.readyBlockers().size() + " — fenêtre « Utiliser Blocker ? »" : "")
+                        + ")",
+                GameLog.details("attacker", attacker.getName(), "rule", "QUICK_ONLY",
+                        "readyBlockers", rival.readyBlockers().size()));
 
-        CardInstance target = null;
-        if (!isGigSteal()) {
-            target = state.findInstance(targetInstanceId).get();
-        }
-        engine.resolveEffects(state, attacker, TriggerType.ON_ATTACK, target);
+        engine.resolveEffects(state, attacker, TriggerType.ON_ATTACK, declaredTarget);
         if (state.isGameOver()) {
             return GameCommand.eventsSince(state, mark);
         }
 
-        if (isGigSteal()) {
-            // R12 officiel : extra Gig par tranche de 10 power (0 power = 0 Gig)
-            int attackerPowerForSteal = state.totalPowerFor(attacker);
-            int gigsToSteal;
-            if (attackerPowerForSteal <= 0) {
-                gigsToSteal = 0;
-            } else {
-                gigsToSteal = 1 + (attackerPowerForSteal / 10);
-            }
-            // Mais on ne peut pas voler plus que le rival n'en possède
-            gigsToSteal = Math.min(gigsToSteal, rival.getGigCount());
-            if (gigsToSteal == 0) {
-                state.appendEvent(GameEventType.ATTACK_DECLARED, playerId,
-                        "vol de Gig sans effet (power 0 ou plus aucun Gig adverse)");
-                state.logInfo(playerId, "GIG_STOLEN",
-                        "Attaque Gig Area sans vol (power " + attackerPowerForSteal + ")",
-                        GameLog.details("power", attackerPowerForSteal, "gigsTotal", player.getGigCount()));
-                return GameCommand.eventsSince(state, mark);
-            }
-            StringBuilder stolenValues = new StringBuilder();
-            for (int i = 0; i < gigsToSteal; i++) {
-                Optional<Integer> stolen = state.stealGig(rival.getId(), playerId);
-                if (stolen.isPresent()) {
-                    if (stolenValues.length() > 0) stolenValues.append(", ");
-                    stolenValues.append(stolen.get());
-                    state.appendEvent(GameEventType.GIG_STOLEN, playerId,
-                            "vol d'un Gig de valeur " + stolen.get()
-                                    + " (total " + player.getGigCount() + ")");
-                }
-            }
-            state.logSuccess(playerId, "GIG_STOLEN",
-                    "Joueur " + playerId + " vole " + gigsToSteal + " Gig(s) (valeurs " + stolenValues
-                            + ", total " + player.getGigCount() + " Gigs, power " + attackerPowerForSteal + ")",
-                    GameLog.details("count", gigsToSteal, "values", stolenValues.toString(),
-                            "power", attackerPowerForSteal, "gigsTotal", player.getGigCount(),
-                            "rivalGigs", rival.getGigCount()));
-            return GameCommand.eventsSince(state, mark);
-        }
-
-        Optional<CardInstance> stillThere = rival.findIn(Zone.FIELD, target.getInstanceId());
-        if (!stillThere.isPresent()) {
-            state.appendEvent(GameEventType.ATTACK_DECLARED, playerId,
-                    "attaque sans effet (la cible a quitté le Field)");
-            return GameCommand.eventsSince(state, mark);
-        }
-        CardInstance defender = stillThere.get();
-        int attackPower = state.totalPowerFor(attacker);
-        int defensePower = state.totalPowerFor(defender);
-        String outcome;
-        if (attackPower > defensePower) {
-            outcome = attacker.getName() + " l'emporte (" + attackPower + " > " + defensePower + ")";
-            engine.defeatUnit(state, defender);
-        } else if (attackPower < defensePower) {
-            outcome = defender.getName() + " résiste (" + defensePower + " > " + attackPower + ")";
-            engine.defeatUnit(state, attacker);
-        } else {
-            outcome = "égalité à " + attackPower + " : les deux Units sont vaincues";
-            engine.defeatUnit(state, defender);
-            engine.defeatUnit(state, attacker);
-        }
-        state.log(outcome.startsWith("égalité") ? playerId : playerId, actionType(),
-                "Combat : " + attacker.getName() + " (" + attackPower + ") vs " + defender.getName()
-                        + " (" + defensePower + ") → " + outcome,
-                com.cyberpunktcg.domain.game.GameActionResult.SUCCESS,
-                GameLog.details("attackerPower", attackPower, "defenderPower", defensePower,
-                        "outcome", outcome));
+        // Mini-Feature 6 : la résolution est interactive — blocage éventuel du
+        // défenseur, puis combat ou choix des dés Gigs à voler (plafond strict).
+        CombatResolver.openAttack(state, attacker, declaredTarget);
         return GameCommand.eventsSince(state, mark);
     }
 }
