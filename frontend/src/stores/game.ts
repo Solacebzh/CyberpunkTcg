@@ -15,7 +15,11 @@ import { useUiStore } from '@/stores/ui'
 import type { CardKeyword } from '@/types/card'
 import {
   GIGS_TO_WIN,
+  activeGigsOf,
+  effectivePower,
   selectableFixerDice,
+  stealQuota,
+  stealableDiceCount,
   type CardInstance,
   type DrawStep,
   type GameActionLogEntry,
@@ -24,6 +28,7 @@ import {
   type GameNotice,
   type GameState,
   type GameStateMessage,
+  type GigDieView,
   type PlayerState,
   type WsError,
 } from '@/types/game'
@@ -79,6 +84,14 @@ function hasKeyword(card: CardInstance, keyword: CardKeyword): boolean {
   return card.keywords.includes(keyword)
 }
 
+/**
+ * Mal d'invocation ignoré (miroir de `CardInstance.canIgnoreSummoningSickness()`) :
+ * `{Go Solo}`, `{Adrenaline}` côté moteur, et `haste` (Mini-Feature 6).
+ */
+function canIgnoreSummoningSickness(card: CardInstance): boolean {
+  return hasKeyword(card, 'go_solo') || hasKeyword(card, 'haste')
+}
+
 export const useGameStore = defineStore('game', () => {
   const socket = useGameSocket()
   const ui = useUiStore()
@@ -94,6 +107,10 @@ export const useGameStore = defineStore('game', () => {
   const pendingRequestIds = ref<string[]>([])
   const selectedInstanceId = ref<string | null>(null)
   const targeting = ref<TargetingRequest | null>(null)
+  /** Mini-Feature 6 : Blockers cochés par le défenseur (ordre = ordre de résolution). */
+  const blockerSelection = ref<string[]>([])
+  /** Mini-Feature 6 : dés Gigs cochés par l'attaquant pour le vol (M dés au maximum). */
+  const stolenSelection = ref<string[]>([])
   const notice = ref<GameNotice | null>(null)
   const disconnection = ref<{ playerId: string; secondsLeft: number } | null>(null)
   const loading = ref(false)
@@ -132,6 +149,43 @@ export const useGameStore = defineStore('game', () => {
   const opponentBlockerReady = computed(
     () => opponent.value?.field.some((card) => card.type === 'unit' && hasKeyword(card, 'blocker') && !card.exhausted) ?? false,
   )
+
+  // --- Combat interactif (Mini-Feature 6 : blocage + vol de dés plafonné) ---
+  /** Attaque en cours de résolution (`null` = combat résolu). */
+  const pendingAttack = computed(() => state.value?.pendingAttack ?? null)
+  /** Fenêtre « Utiliser Blocker ? » ouverte pour moi (je suis le défenseur). */
+  const iMustBlock = computed(
+    () =>
+      !isGameOver.value &&
+      pendingAttack.value?.step === 'AWAITING_BLOCK' &&
+      pendingAttack.value.defendingPlayerId === myPlayerId.value,
+  )
+  /** Modale « Choisissez M dé(s) Gig à voler » ouverte pour moi (je suis l'attaquant). */
+  const iMustChooseStolenDice = computed(
+    () =>
+      !isGameOver.value &&
+      pendingAttack.value?.step === 'AWAITING_STEAL_CHOICE' &&
+      pendingAttack.value.attackerPlayerId === myPlayerId.value,
+  )
+  /** Mes Blockers prêts : les seuls capables d'intercepter. */
+  const myReadyBlockers = computed<CardInstance[]>(() =>
+    (me.value?.field ?? []).filter(
+      (card) => card.type === 'unit' && !card.attachedTo && hasKeyword(card, 'blocker') && !card.exhausted,
+    ),
+  )
+  /** Dés Gigs actifs du défenseur : les seuls volables (plafond strict). */
+  const stealableDice = computed<GigDieView[]>(() =>
+    iMustChooseStolenDice.value ? activeGigsOf(opponent.value) : [],
+  )
+  /** Quota théorique N (affichage ; le serveur fait foi). */
+  const stealQuotaNow = computed(() => pendingAttack.value?.quota ?? 0)
+  /** Plafond strict M = min(N, dés actifs du défenseur) — nombre de dés à choisir. */
+  const stealCountNow = computed(() => pendingAttack.value?.stealableCount ?? 0)
+  /** Puissance de l'attaquant concerné (pour l'affichage du quota). */
+  const pendingAttacker = computed<CardInstance | null>(() => {
+    const id = pendingAttack.value?.attackerInstanceId
+    return id ? findInstance(id) : null
+  })
 
   const myFieldUnits = computed(() => me.value?.field.filter((card) => card.type === 'unit' && !card.attachedTo) ?? [])
   const opponentFieldUnits = computed(
@@ -251,28 +305,42 @@ export const useGameStore = defineStore('game', () => {
   function canAttackWith(card: CardInstance): Affordance {
     if (!state.value) return 'État de partie indisponible'
     if (isGameOver.value) return 'Partie terminée'
+    if (pendingAttack.value) return 'Une attaque est déjà en cours de résolution'
     if (!isMyTurn.value) return 'Ce n’est pas ton tour'
     if (!isActionPhase.value) return 'On n’attaque qu’en phase Principale ou Combat'
     if (card.type !== 'unit') return 'Seule une Unit peut attaquer'
     if (card.exhausted) return 'Cette Unit est déjà épuisée'
-    if (card.summoningSickness && !hasKeyword(card, 'go_solo')) return 'Mal d’invocation : attente du prochain tour'
+    if (card.summoningSickness && !canIgnoreSummoningSickness(card)) {
+      return 'Mal d’invocation : attente du prochain tour'
+    }
     return null
   }
 
-  /** Cibles légales d'une attaque : interception BLOCKER comprise. */
+  /**
+   * Cibles légales d'une attaque (Mini-Feature 6) : uniquement les Units rivales
+   * **dépensées** (inclinées) — « Ready Units can't be attacked ». Un Blocker prêt
+   * n'est donc jamais une cible : il intercepte via la fenêtre de réaction.
+   */
   function validAttackTargets(attacker: CardInstance): string[] {
     if (canAttackWith(attacker) !== null) return []
-    const rivals = opponentFieldUnits.value
-    if (opponentBlockerReady.value) {
-      return rivals.filter((card) => hasKeyword(card, 'blocker') && !card.exhausted).map((card) => card.instanceId)
-    }
-    return rivals.map((card) => card.instanceId)
+    return opponentFieldUnits.value.filter((card) => card.exhausted).map((card) => card.instanceId)
   }
 
+  /**
+   * Attaque directe de la Gig Area autorisée dès que l'Unit peut attaquer
+   * (Mini-Feature 6) : un Blocker prêt ne l'interdit plus — c'est au défenseur de
+   * choisir s'il bloque, et un défenseur sans dé actif encaisse l'attaque sans
+   * rien perdre (plafond strict M = 0).
+   */
   function canStealGig(attacker: CardInstance): boolean {
-    if (canAttackWith(attacker) !== null) return false
-    if (opponentBlockerReady.value) return false
-    return (opponent.value?.gigCount ?? 0) > 0
+    return canAttackWith(attacker) === null
+  }
+
+  /** Nombre de dés que je volerais en attaquant maintenant (affichage du quota). */
+  function stealForecast(attacker: CardInstance): { quota: number; stealable: number } {
+    const power = effectivePower(attacker)
+    const active = activeGigsOf(opponent.value).length
+    return { quota: stealQuota(power), stealable: stealableDiceCount(power, active) }
   }
 
   function canEquipGear(gear: CardInstance): boolean {
@@ -374,6 +442,7 @@ export const useGameStore = defineStore('game', () => {
       pendingRequestIds.value = pendingRequestIds.value.filter((id) => id !== message.clientRequestId)
     }
     pruneSelection()
+    pruneCombatSelections(next)
     if (targeting.value && !targetingCandidatesStillValid(targeting.value)) targeting.value = null
     if (next.gameOver) stopCountdown()
     if (missed && gameId.value) socket.requestResync(gameId.value)
@@ -396,6 +465,37 @@ export const useGameStore = defineStore('game', () => {
     if (!message || message.type !== 'LOG') return
     if (gameId.value && message.gameId !== gameId.value) return
     mergeDebugLog(message.entries)
+  }
+
+  /**
+   * Recadre les sélections de combat sur l'état reçu (le serveur fait foi) :
+   * une fenêtre fermée vide les coches, un Blocker redressé/vaincu ou un dé Gig
+   * disparu sort de la sélection, et le vol est tronqué au plafond strict M.
+   */
+  function pruneCombatSelections(next: GameState): void {
+    const pending = next.pendingAttack ?? null
+    const mine = next.players.find((player) => player.playerId === next.yourPlayerId)
+    const rival = next.players.find((player) => player.playerId !== next.yourPlayerId)
+
+    if (!pending || pending.step !== 'AWAITING_BLOCK' || pending.defendingPlayerId !== next.yourPlayerId) {
+      blockerSelection.value = []
+    } else {
+      const ready = new Set(
+        (mine?.field ?? [])
+          .filter((card) => card.type === 'unit' && hasKeyword(card, 'blocker') && !card.exhausted)
+          .map((card) => card.instanceId),
+      )
+      blockerSelection.value = blockerSelection.value.filter((id) => ready.has(id))
+    }
+
+    if (!pending || pending.step !== 'AWAITING_STEAL_CHOICE' || pending.attackerPlayerId !== next.yourPlayerId) {
+      stolenSelection.value = []
+    } else {
+      const ids = new Set(activeGigsOf(rival).map((die) => die.id))
+      stolenSelection.value = stolenSelection.value
+        .filter((id) => ids.has(id))
+        .slice(0, Math.max(0, pending.stealableCount))
+    }
   }
 
   /** Le ciblage en cours a-t-il encore un sens après réception d'un nouvel état ? */
@@ -511,6 +611,19 @@ export const useGameStore = defineStore('game', () => {
       ui.warn(reason)
       return false
     }
+    // Mini-Feature 6 : attaque directe — le plafond strict peut donner M = 0
+    // (puissance ≤ 0, ou aucun dé Gig actif chez l'adversaire). L'attaque est
+    // quand même légale : aucune modale de vol, seulement un message d'info.
+    if (!targetInstanceId && attacker && !opponentBlockerReady.value) {
+      const forecast = stealForecast(attacker)
+      if (forecast.stealable === 0) {
+        ui.info(
+          forecast.quota === 0
+            ? 'Puissance 0 : aucun Gig ne peut être volé (l’attaque passe quand même)'
+            : `L’adversaire n’a aucun Gig à voler (quota ${forecast.quota}, 0 dé actif)`,
+        )
+      }
+    }
     const sent = dispatch({ action: 'ATTACK', instanceId: attackerInstanceId, targetInstanceId: targetInstanceId ?? null })
     if (sent) clearSelection()
     return sent
@@ -592,6 +705,87 @@ export const useGameStore = defineStore('game', () => {
     return sent
   }
 
+  // --- Mini-Feature 6 : interception {Blocker} (défenseur) ---
+  /** Coche/décoche un Blocker prêt ; l'ordre de la liste est l'ordre de résolution. */
+  function toggleBlocker(instanceId: string): void {
+    if (!iMustBlock.value) return
+    const current = blockerSelection.value
+    blockerSelection.value = current.includes(instanceId)
+      ? current.filter((id) => id !== instanceId)
+      : [...current, instanceId]
+  }
+
+  /** Pourquoi le blocage coché n'est pas envoyable (`null` = prêt à bloquer). */
+  function canBlockWithSelection(): Affordance {
+    if (!iMustBlock.value) return 'Aucune attaque à bloquer pour le moment'
+    if (blockerSelection.value.length === 0) return 'Coche au moins un Blocker prêt — ou renonce à bloquer'
+    if (waitingForServer.value) return 'En attente du serveur…'
+    return null
+  }
+
+  /** Envoie `USE_BLOCKER` : tous les Blockers cochés sont dépensés, le DERNIER encaisse. */
+  function blockWithSelection(): boolean {
+    const reason = canBlockWithSelection()
+    if (reason) {
+      ui.warn(reason)
+      return false
+    }
+    const sent = dispatch({ action: 'USE_BLOCKER', cardIds: [...blockerSelection.value] })
+    if (sent) blockerSelection.value = []
+    return sent
+  }
+
+  /** Envoie `DECLINE_BLOCK` : l'attaque suit son cours (combat ou vol plafonné). */
+  function declineBlock(): boolean {
+    if (!iMustBlock.value) {
+      ui.warn('Aucune attaque à bloquer pour le moment')
+      return false
+    }
+    if (waitingForServer.value) return false
+    const sent = dispatch({ action: 'DECLINE_BLOCK' })
+    if (sent) blockerSelection.value = []
+    return sent
+  }
+
+  // --- Mini-Feature 6 : choix des dés Gigs volés (attaquant) ---
+  /** Coche/décoche un dé Gig actif du défenseur (au plus M dés). */
+  function toggleStolenDie(dieId: string): void {
+    if (!iMustChooseStolenDice.value) return
+    const current = stolenSelection.value
+    if (current.includes(dieId)) {
+      stolenSelection.value = current.filter((id) => id !== dieId)
+      return
+    }
+    if (current.length >= stealCountNow.value) {
+      ui.warn(`Plafond strict : exactement ${stealCountNow.value} dé(s) à choisir — décoche-en un d'abord`)
+      return
+    }
+    stolenSelection.value = [...current, dieId]
+  }
+
+  /** Pourquoi le vol coché n'est pas envoyable (`null` = prêt à voler). */
+  function canConfirmSteal(): Affordance {
+    if (!iMustChooseStolenDice.value) return 'Aucun vol de Gig en attente du choix des dés'
+    const expected = stealCountNow.value
+    if (stolenSelection.value.length !== expected) {
+      return `Choisis exactement ${expected} dé(s) Gig (quota ${stealQuotaNow.value}, plafond strict)`
+    }
+    if (waitingForServer.value) return 'En attente du serveur…'
+    return null
+  }
+
+  /** Envoie `STEAL_GIG` avec exactement M identifiants de dés. */
+  function confirmSteal(): boolean {
+    const reason = canConfirmSteal()
+    if (reason) {
+      ui.warn(reason)
+      return false
+    }
+    const sent = dispatch({ action: 'STEAL_GIG', dice: [...stolenSelection.value] })
+    if (sent) stolenSelection.value = []
+    return sent
+  }
+
   function concede(): boolean {
     return dispatch({ action: 'CONCEDE' })
   }
@@ -659,7 +853,10 @@ export const useGameStore = defineStore('game', () => {
       : playCard(request.sourceInstanceId, targetInstanceId)
   }
 
-  /** Attaque sans cible : vol direct de Gig. */
+  /**
+   * Attaque sans cible : attaque directe de la Gig Area adverse (Mini-Feature 6 —
+   * le vol lui-même se fait ensuite dans la modale `STEAL_GIG`, sauf plafond M = 0).
+   */
   function stealGig(): boolean {
     const request = targeting.value
     if (!request || request.kind !== 'attack' || !request.allowDirect) return false
@@ -739,6 +936,17 @@ export const useGameStore = defineStore('game', () => {
     debugLog,
     waitingForServer,
     opponentBlockerReady,
+    // combat interactif (Mini-Feature 6)
+    pendingAttack,
+    pendingAttacker,
+    iMustBlock,
+    iMustChooseStolenDice,
+    myReadyBlockers,
+    stealableDice,
+    stealQuotaNow,
+    stealCountNow,
+    blockerSelection,
+    stolenSelection,
     myFieldUnits,
     opponentFieldUnits,
     selectedCard,
@@ -761,6 +969,9 @@ export const useGameStore = defineStore('game', () => {
     canAttackWith,
     canEquipGear,
     canStealGig,
+    canBlockWithSelection,
+    canConfirmSteal,
+    stealForecast,
     validAttackTargets,
     validGearHosts,
     findInstance,
@@ -782,5 +993,10 @@ export const useGameStore = defineStore('game', () => {
     cancelTargeting,
     chooseTarget,
     stealGig,
+    toggleBlocker,
+    blockWithSelection,
+    declineBlock,
+    toggleStolenDie,
+    confirmSteal,
   }
 })

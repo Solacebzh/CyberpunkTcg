@@ -28,6 +28,8 @@ public class GameState {
     private final Map<String, Player> players;
     private Turn turn;
     private ReactionWindow reactionWindow;
+    /** Attaque en cours de résolution (Mini-Feature 6) : {@code null} = combat résolu. */
+    private PendingAttack pendingAttack;
     private String winnerId;
     private String endReason;
     private final long seed;
@@ -58,6 +60,7 @@ public class GameState {
         }
         this.turn = new Turn(1, players.get(0).getId(), Phase.MAIN);
         this.reactionWindow = null;
+        this.pendingAttack = null;
         this.winnerId = null;
         this.endReason = null;
         this.seed = seed;
@@ -69,9 +72,9 @@ public class GameState {
 
     /** Constructeur interne des copies (vues masquées : tirages jamais utilisés). */
     private GameState(String gameId, List<Player> players, long seed, Random random,
-                      Turn turn, ReactionWindow reactionWindow, String winnerId,
-                      String endReason, Instant createdAt, List<GameEvent> eventLog,
-                      GameLog gameLog) {
+                      Turn turn, ReactionWindow reactionWindow, PendingAttack pendingAttack,
+                      String winnerId, String endReason, Instant createdAt,
+                      List<GameEvent> eventLog, GameLog gameLog) {
         this.gameId = gameId;
         this.players = new LinkedHashMap<String, Player>();
         for (Player player : players) {
@@ -79,6 +82,7 @@ public class GameState {
         }
         this.turn = turn;
         this.reactionWindow = reactionWindow;
+        this.pendingAttack = pendingAttack;
         this.winnerId = winnerId;
         this.endReason = endReason;
         this.seed = seed;
@@ -273,6 +277,39 @@ public class GameState {
     }
 
     // ------------------------------------------------------------------
+    // Attaque en cours (Mini-Feature 6 : blocage et choix des dés volés)
+    // ------------------------------------------------------------------
+
+    /** Attaque en cours de résolution, {@code null} si le combat est résolu. */
+    public PendingAttack getPendingAttack() {
+        return pendingAttack;
+    }
+
+    public void setPendingAttack(PendingAttack pendingAttack) {
+        this.pendingAttack = pendingAttack;
+    }
+
+    /** Oublie l'attaque en cours (combat résolu, attaque annulée, fin de tour). */
+    public void clearPendingAttack() {
+        this.pendingAttack = null;
+    }
+
+    /** {@code true} tant qu'une attaque n'est pas résolue. */
+    public boolean isCombatPending() {
+        return pendingAttack != null;
+    }
+
+    /** {@code true} si le défenseur doit répondre à la fenêtre « Utiliser Blocker ? ». */
+    public boolean isAwaitingBlock() {
+        return pendingAttack != null && pendingAttack.getStep() == CombatStep.AWAITING_BLOCK;
+    }
+
+    /** {@code true} si l'attaquant doit choisir les dés Gigs à voler. */
+    public boolean isAwaitingStealChoice() {
+        return pendingAttack != null && pendingAttack.getStep() == CombatStep.AWAITING_STEAL_CHOICE;
+    }
+
+    // ------------------------------------------------------------------
     // Recherche et mesures
     // ------------------------------------------------------------------
 
@@ -366,6 +403,25 @@ public class GameState {
     }
 
     /**
+     * Vole un dé Gig <strong>précis</strong> (Mini-Feature 6) : l'attaquant
+     * choisit les dés qu'il vole parmi les dés actifs du défenseur. Le dé
+     * transféré conserve son identifiant, son type et sa valeur exacte.
+     *
+     * @param dieId identifiant d'un dé actif de la Gig Area de {@code fromPlayerId}
+     * @return le dé transféré, ou vide si l'identifiant ne correspond à aucun dé actif
+     */
+    public Optional<GigDie> stealGig(String fromPlayerId, String toPlayerId, String dieId) {
+        Player from = getPlayer(fromPlayerId);
+        Player to = getPlayer(toPlayerId);
+        Optional<GigDie> stolen = from.removeGigById(dieId);
+        if (!stolen.isPresent()) {
+            return Optional.empty();
+        }
+        to.addGigDie(stolen.get());
+        return stolen;
+    }
+
+    /**
      * Lance le prochain dé de la Fixer Area du joueur (le plus petit disponible,
      * {@code d20} en dernier) et place le résultat dans sa Gig Area.
      *
@@ -417,6 +473,7 @@ public class GameState {
         List<GameEvent> events = new ArrayList<GameEvent>(eventLog);
         return new GameState(gameId, copies, seed, new Random(), turn.copy(),
                 reactionWindow == null ? null : reactionWindow.copy(),
+                pendingAttack == null ? null : pendingAttack.copy(),
                 winnerId, endReason, createdAt, events, gameLog.copy());
     }
 

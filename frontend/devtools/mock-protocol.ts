@@ -82,6 +82,11 @@ interface MockPlayer {
   gigs: number[]
   /** Type du dé de chaque Gig, aligné sur `gigs` (Mini-Feature 5). */
   gigDice: string[]
+  /**
+   * Identifiant stable de chaque dé Gig actif, aligné sur `gigs`/`gigDice`
+   * (Mini-Feature 6) : c'est la cible de l'action `STEAL_GIG`.
+   */
+  gigDieIds: string[]
   fixerDice: string[]
   eddies: number
   costDiscount: number
@@ -90,6 +95,25 @@ interface MockPlayer {
 
 /** Sous-étapes de la phase DRAW interactive (miroir de `DrawStep.java`). */
 type DrawStep = 'DRAW_START' | 'AWAITING_DRAW' | 'AWAITING_DIE_SELECT' | 'ROLLING_DIE' | 'DRAW_COMPLETE'
+
+/** Sous-étapes de résolution d'une attaque (miroir de `CombatStep.java`, Mini-Feature 6). */
+type CombatStep = 'AWAITING_BLOCK' | 'AWAITING_STEAL_CHOICE'
+
+/**
+ * Attaque suspendue (miroir de `PendingAttackDTO`) : décision de blocage du
+ * défenseur, puis choix par l'attaquant des `M` dés Gigs à voler.
+ * `quota` = N théorique, `stealableCount` = plafond strict M.
+ */
+interface PendingAttackState {
+  attackerPlayerId: string
+  defendingPlayerId: string
+  attackerInstanceId: string
+  targetInstanceId: string | null
+  step: CombatStep
+  quota: number
+  stealableCount: number
+  blockerInstanceIds: string[]
+}
 
 interface LogEntry {
   index: number
@@ -119,6 +143,8 @@ interface MockGame {
   endReason: string | null
   turn: { number: number; activePlayerId: string; drawStep: DrawStep | null }
   reactionWindow: { kind: string; defendingPlayerId: string; attackerInstanceId: string } | null
+  /** Combat en cours de résolution (Mini-Feature 6) ; `null` = attaque résolue. */
+  pendingAttack: PendingAttackState | null
   players: MockPlayer[]
   log: LogEntry[]
   /** Journal de diagnostic : chaque action, y compris refusée. */
@@ -177,9 +203,15 @@ interface ActionPayload {
   instanceId?: string | null
   targetInstanceId?: string | null
   clientRequestId?: string | null
-  /** `SELECT_DIE` : dé choisi en première position (`['d6']`). */
+  /** `SELECT_DIE` : dé choisi en première position (`['d6']`).
+   *  `STEAL_GIG` : identifiants des M dés Gigs volés (`gigDieIds`). */
   dice?: string[] | null
   chosen?: string | null
+  /**
+   * `USE_BLOCKER` : identifiants des Blockers dépensés, **ordre significatif**
+   * (le dernier de la liste encaisse les dégâts du combat).
+   */
+  cardIds?: string[] | null
   [key: string]: unknown
 }
 
@@ -194,6 +226,8 @@ const DIE_FACES: Record<string, number> = { d4: 4, d6: 6, d8: 8, d10: 10, d12: 1
 /** Le d20 se lance toujours en dernier (règle officielle § START PHASE). */
 const LAST_DIE = 'd20'
 const ROOM_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
+/** `GameConstants.POWER_PER_EXTRA_GIG` : +1 Gig volé par tranche de 10 de puissance. */
+const POWER_PER_EXTRA_GIG = 10
 /**
  * Zones internes → zones du **protocole** (`ZoneName`, alignées sur `ZoneDTO` Java).
  *
@@ -231,6 +265,44 @@ class RuleError extends Error {
     this.code = code
     this.name = 'RuleError'
   }
+}
+
+/**
+ * Quota théorique de Gigs volés (miroir de `RuleEngine.calculateQuota`) :
+ * `N = power <= 0 ? 0 : (power / 10) + 1`.
+ */
+function stealQuota(power: number): number {
+  if (!Number.isFinite(power) || power <= 0) return 0
+  return Math.floor(power / POWER_PER_EXTRA_GIG) + 1
+}
+
+/**
+ * **Plafond strict** (miroir de `RuleEngine.calculateActualStealable`) :
+ * `M = min(N, dés Gigs actifs du défenseur)`. Les dés non lancés de la Fixer Area
+ * ne comptent jamais — on ne crée pas de dé, on ne vole que des dés actifs.
+ */
+function stealableCount(power: number, activeGigs: number): number {
+  return Math.max(0, Math.min(stealQuota(power), Math.max(0, activeGigs)))
+}
+
+/** `{Blocker}` prêts du joueur : les seuls capables d'intercepter une attaque. */
+function readyBlockers(player: MockPlayer): Instance[] {
+  return player.field.filter(
+    (card) => card.type === 'unit' && !card.attachedTo && card.keywords.includes('blocker') && !card.exhausted,
+  )
+}
+
+/** `{Go Solo}`, `{Adrenaline}` et `haste` ignorent le mal d'invocation. */
+function ignoresSummoningSickness(card: Instance): boolean {
+  return card.keywords.includes('go_solo') || card.keywords.includes('haste')
+}
+
+let gigDieCounter = 0
+
+/** Identifiant stable d'un dé Gig actif (cible de `STEAL_GIG`). */
+function nextGigDieId(): string {
+  gigDieCounter += 1
+  return `gig-${gigDieCounter.toString(16).padStart(4, '0')}`
 }
 
 /** PRNG déterministe (tests reproductibles). */
@@ -757,6 +829,7 @@ export class MockGameServer {
       endReason: null,
       turn: { number: 1, activePlayerId: host, drawStep: 'AWAITING_DRAW' },
       reactionWindow: null,
+      pendingAttack: null,
       players: [buildPlayer(host, deckHost, this), buildPlayer(guest, deckGuest, this)],
       log: [],
       gameLog: [],
@@ -926,6 +999,19 @@ export class MockGameServer {
         // Mini-Feature 5 : choix du dé Gig pendant AWAITING_DIE_SELECT.
         this.selectDie(game, pseudo, payload)
         break
+      case 'USE_BLOCKER':
+      case 'BLOCK':
+        // Mini-Feature 6 : le défenseur intercepte avec 1..n Blockers prêts.
+        this.useBlocker(game, pseudo, payload)
+        break
+      case 'DECLINE_BLOCK':
+        // Mini-Feature 6 : le défenseur renonce à intercepter.
+        this.declineBlock(game, pseudo)
+        break
+      case 'STEAL_GIG':
+        // Mini-Feature 6 : l'attaquant choisit les M dés Gigs actifs à voler.
+        this.stealGig(game, pseudo, payload)
+        break
       case 'CONCEDE': {
         const rival = this.opponent(game, pseudo)
         game.winnerId = rival.playerId
@@ -995,15 +1081,27 @@ export class MockGameServer {
     }
 
     move(player, 'hand', 'field', card)
-    card.summoningSickness = !card.keywords.includes('go_solo')
+    card.summoningSickness = !ignoresSummoningSickness(card)
     appendEvent(game, 'CARD_PLAYED', pseudo, `${card.name} posé sur le Field`)
   }
 
+  /**
+   * `ATTACK` (Mini-Feature 6) : déclare l'attaque puis suspend sa résolution.
+   *
+   * Cibles légales — règles officielles § ATTACKING :
+   * - une Unit rivale **dépensée** (« Ready Units can't be attacked ») ;
+   * - ou la Gig Area adverse (attaque directe → vol de dés plafonné).
+   *
+   * Si le défenseur contrôle un `{Blocker}` prêt, l'attaque passe en
+   * `AWAITING_BLOCK` : c'est **lui** qui décide d'intercepter (blocage multiple
+   * autorisé, seul le dernier Blocker encaisse) ou de renoncer. Sinon elle est
+   * résolue immédiatement ({@link MockGameServer.resolveAttack}).
+   */
   attack(game: MockGame, pseudo: string, payload: ActionPayload): void {
-    const player = this.player(game, pseudo)
     const rival = this.opponent(game, pseudo)
     requireActive(game, pseudo)
     if (game.phase !== 'MAIN' && game.phase !== 'COMBAT') throw new RuleError('On n’attaque qu’en phase Main ou Combat')
+    if (game.pendingAttack) throw new RuleError('Une attaque est déjà en cours de résolution')
 
     const found = this.findInstance(game, payload.instanceId)
     if (!found || found.zone !== 'field' || found.player.playerId !== pseudo) {
@@ -1012,26 +1110,21 @@ export class MockGameServer {
     const attacker = found.card
     if (attacker.type !== 'unit') throw new RuleError('Seule une Unit peut attaquer')
     if (attacker.exhausted) throw new RuleError('Cette Unit est déjà épuisée')
-    if (attacker.summoningSickness && !attacker.keywords.includes('go_solo')) {
+    if (attacker.summoningSickness && !ignoresSummoningSickness(attacker)) {
       throw new RuleError('Cette Unit vient d’être jouée (mal d’invocation)')
     }
 
-    const blockerReady = rival.field.some(
-      (card) => card.type === 'unit' && card.keywords.includes('blocker') && !card.exhausted,
-    )
-    const steal = !payload.targetInstanceId
-
-    if (steal) {
-      if (blockerReady) throw new RuleError('Vol de Gig intercepté : un BLOCKER rival doit être attaqué d’abord')
-      if (rival.gigs.length === 0) throw new RuleError('Le rival ne contrôle aucun Gig à voler')
-    } else {
-      const target = this.findInstance(game, payload.targetInstanceId)
-      if (!target || target.zone !== 'field' || target.player.playerId !== rival.playerId || target.card.type !== 'unit') {
+    const direct = !payload.targetInstanceId
+    let target: Instance | null = null
+    if (!direct) {
+      const located = this.findInstance(game, payload.targetInstanceId)
+      if (!located || located.zone !== 'field' || located.player.playerId !== rival.playerId || located.card.type !== 'unit') {
         throw new RuleError('On n’attaque qu’une Unit rivale du Field')
       }
-      if (blockerReady && !target.card.keywords.includes('blocker')) {
-        throw new RuleError('Un BLOCKER rival doit intercepter cette attaque')
+      if (!located.card.exhausted) {
+        throw new RuleError(`Cette Unit rivale est prête : on n’attaque qu’une Unit dépensée (inclinée)`)
       }
+      target = located.card
     }
 
     if (game.phase === 'MAIN') {
@@ -1039,12 +1132,13 @@ export class MockGameServer {
       appendEvent(game, 'PHASE_CHANGED', pseudo, 'phase Combat')
     }
 
+    // Déclarer une attaque incline l'attaquant (règle officielle § ATTACKING).
     attacker.exhausted = true
     appendEvent(
       game,
       'ATTACK_DECLARED',
       pseudo,
-      steal ? `attaque directe vers la Gig Area (${attacker.name})` : `attaque déclarée (${attacker.name})`,
+      direct ? `attaque directe vers la Gig Area (${attacker.name})` : `attaque déclarée (${attacker.name})`,
     )
 
     game.reactionWindow = {
@@ -1054,25 +1148,340 @@ export class MockGameServer {
     }
     appendEvent(game, 'REACTION_WINDOW_OPENED', rival.playerId, 'fenêtre de réaction ouverte (QUICK uniquement)')
 
-    if (steal) {
-      const stolenIndex = rival.gigs.indexOf(Math.max(...rival.gigs))
-      const stolen = rival.gigs.splice(stolenIndex, 1)[0] as number
-      const stolenDie = rival.gigDice.splice(stolenIndex, 1)[0] ?? '?'
-      player.gigs.push(stolen)
-      player.gigDice.push(stolenDie)
-      appendEvent(game, 'GIG_STOLEN', pseudo, `vol d’un Gig de valeur ${stolen} (total ${player.gigs.length})`)
+    const blockers = readyBlockers(rival)
+    if (blockers.length > 0) {
+      game.pendingAttack = {
+        attackerPlayerId: pseudo,
+        defendingPlayerId: rival.playerId,
+        attackerInstanceId: attacker.instanceId,
+        targetInstanceId: direct ? null : (target as Instance).instanceId,
+        step: 'AWAITING_BLOCK',
+        quota: 0,
+        stealableCount: 0,
+        blockerInstanceIds: [],
+      }
+      appendActionLog(game, {
+        playerId: rival.playerId,
+        actionType: 'BLOCKER_PROMPT',
+        description:
+          `Utiliser Blocker ? Joueur ${rival.playerId} peut intercepter avec ${blockers.length}` +
+          ` Blocker(s) prêt(s) : ${blockers.map((card) => card.name).join(', ')}` +
+          ' (blocage multiple autorisé — seul le dernier Blocker encaisse les dégâts)',
+        result: 'INFO',
+        details: {
+          blockers: blockers.map((card) => card.name),
+          blockerInstanceIds: blockers.map((card) => card.instanceId),
+          attacker: attacker.name,
+          direct,
+        },
+      })
       return
     }
 
-    const defender = (this.findInstance(game, payload.targetInstanceId) as { card: Instance }).card
-    const attackPower = totalPower(player, attacker)
-    const defensePower = totalPower(rival, defender)
-    if (attackPower > defensePower) defeat(game, rival, defender)
-    else if (attackPower < defensePower) defeat(game, player, attacker)
-    else {
-      defeat(game, rival, defender)
-      defeat(game, player, attacker)
+    this.resolveAttack(game, 'aucun Blocker prêt')
+  }
+
+  /**
+   * Résout l'attaque courante : combat contre la cible déclarée, ou ouverture du
+   * choix des dés à voler pour une attaque directe (plafond strict M ≥ 1) / vol nul
+   * (M = 0 : l'attaque réussit mais ne rapporte aucun Gig).
+   */
+  resolveAttack(game: MockGame, reason: string): void {
+    const pending = game.pendingAttack
+    if (!pending) return
+    const located = this.findInstance(game, pending.attackerInstanceId)
+    if (!located || located.zone !== 'field') {
+      appendEvent(game, 'ATTACK_DECLARED', pending.attackerPlayerId, `attaque sans effet (${reason})`)
+      this.clearCombat(game)
+      return
     }
+    const attackerPlayer = located.player
+    const attacker = located.card
+    const defender = game.players.find((player) => player.playerId === pending.defendingPlayerId) as MockPlayer
+
+    if (pending.targetInstanceId) {
+      const target = this.findInstance(game, pending.targetInstanceId)
+      if (!target || target.zone !== 'field') {
+        appendEvent(game, 'ATTACK_DECLARED', pending.attackerPlayerId, `attaque sans effet (la cible a quitté le Field)`)
+        this.clearCombat(game)
+        return
+      }
+      this.clearCombat(game)
+      this.fight(game, attackerPlayer, attacker, defender, target.card)
+      return
+    }
+
+    const power = totalPower(attackerPlayer, attacker)
+    const quota = stealQuota(power)
+    const stealable = stealableCount(power, defender.gigs.length)
+
+    if (stealable === 0) {
+      // Plafond strict : puissance ≤ 0 ou aucun dé Gig actif chez le défenseur.
+      // L'attaque reste réussie (Unité inclinée, phase Combat), rien n'est volé.
+      appendEvent(
+        game,
+        'ATTACK_DECLARED',
+        pending.attackerPlayerId,
+        `attaque directe sans vol (quota ${quota}, ${defender.gigs.length} dé(s) Gig actif(s) chez le défenseur)`,
+      )
+      appendActionLog(game, {
+        playerId: pending.attackerPlayerId,
+        actionType: 'GIG_STOLEN',
+        description:
+          `Attaque directe sans vol de Gig : quota N = ${quota} (power ${power}) plafonné à M = 0` +
+          ` — le défenseur n'a ${defender.gigs.length} dé(s) Gig actif(s)` +
+          ` (les ${defender.fixerDice.length} dés non lancés de sa Fixer Area ne sont jamais volés)`,
+        result: 'FAILED',
+        details: {
+          power,
+          quota,
+          stealable: 0,
+          activeGigs: defender.gigs.length,
+          fixerDice: [...defender.fixerDice],
+          reason,
+        },
+      })
+      this.clearCombat(game)
+      return
+    }
+
+    pending.step = 'AWAITING_STEAL_CHOICE'
+    pending.quota = quota
+    pending.stealableCount = stealable
+    appendActionLog(game, {
+      playerId: pending.attackerPlayerId,
+      actionType: 'GIG_STEAL_CHOICE',
+      description:
+        `Vol de Gigs : quota N = ${quota} (power ${power}), plafond strict M = ${stealable}` +
+        ` dé(s) à choisir parmi les ${defender.gigs.length} dés Gigs actifs du défenseur`,
+      result: 'INFO',
+      details: {
+        power,
+        quota,
+        stealable,
+        activeGigs: defender.gigs.length,
+        dieIds: defender.gigDieIds.map((id, index) => `${id}:${defender.gigDice[index] ?? '?'}=${defender.gigs[index]}`),
+      },
+    })
+  }
+
+  /**
+   * `USE_BLOCKER` (Mini-Feature 6) : le défenseur intercepte avec un ou plusieurs
+   * `{Blocker}` prêts. Tous sont inclinés et **seul le dernier** de la liste
+   * encaisse les dégâts du combat ; une attaque redirigée ne vole jamais de Gig.
+   */
+  useBlocker(game: MockGame, pseudo: string, payload: ActionPayload): void {
+    const pending = this.requireCombatStep(game, 'AWAITING_BLOCK')
+    if (pending.defendingPlayerId !== pseudo) {
+      throw new RuleError(`Seul le défenseur (${pending.defendingPlayerId}) peut bloquer cette attaque`)
+    }
+    const ids = (payload.cardIds ?? payload.dice ?? []).map((id) => String(id))
+    if (ids.length === 0) throw new RuleError('USE_BLOCKER exige au moins un Blocker dans ’cardIds’')
+    if (new Set(ids).size !== ids.length) throw new RuleError('Blocker désigné en double')
+
+    const defender = this.player(game, pseudo)
+    const blockers: Instance[] = []
+    for (const id of ids) {
+      const card = defender.field.find((item) => item.instanceId === id)
+      if (!card || card.type !== 'unit' || card.attachedTo) {
+        throw new RuleError(`Blocker introuvable sur le Field : ${id}`)
+      }
+      if (!card.keywords.includes('blocker')) throw new RuleError(`${card.name} n’a pas le mot-clé BLOCKER`)
+      if (card.exhausted) throw new RuleError(`${card.name} n’est pas prêt (déjà incliné)`)
+      blockers.push(card)
+    }
+
+    for (const blocker of blockers) {
+      blocker.exhausted = true
+      pending.blockerInstanceIds.push(blocker.instanceId)
+      appendEvent(game, 'ATTACK_BLOCKED', pseudo, `Blocker ${blocker.name} intercepte l'attaque (redirection)`)
+    }
+    appendActionLog(game, {
+      playerId: pseudo,
+      actionType: 'USE_BLOCKER',
+      description:
+        `Joueur ${pseudo} bloque avec ${blockers.map((card) => card.name).join(' puis ')}` +
+        ` (Unités inclinées, attaque redirigée — ${blockers[blockers.length - 1].name} encaisse les dégâts)`,
+      result: 'SUCCESS',
+      details: {
+        blockers: blockers.map((card) => card.instanceId),
+        attacker: pending.attackerInstanceId,
+        redirectedFrom: pending.targetInstanceId ? 'UNIT' : 'GIG_AREA',
+      },
+    })
+
+    const attacker = this.findInstance(game, pending.attackerInstanceId)
+    const last = blockers[blockers.length - 1] as Instance
+    this.clearCombat(game)
+    if (!attacker || attacker.zone !== 'field') {
+      appendEvent(game, 'ATTACK_DECLARED', pending.attackerPlayerId, 'attaque sans effet (attaquant disparu)')
+      return
+    }
+    this.fight(game, attacker.player, attacker.card, defender, last)
+  }
+
+  /** `DECLINE_BLOCK` : renoncement explicite, l'attaque suit son cours. */
+  declineBlock(game: MockGame, pseudo: string): void {
+    const pending = this.requireCombatStep(game, 'AWAITING_BLOCK')
+    if (pending.defendingPlayerId !== pseudo) {
+      throw new RuleError(`Seul le défenseur (${pending.defendingPlayerId}) peut renoncer au blocage`)
+    }
+    appendActionLog(game, {
+      playerId: pseudo,
+      actionType: 'DECLINE_BLOCK',
+      description: `Joueur ${pseudo} renonce à bloquer : l'attaque suit son cours`,
+      result: 'INFO',
+      details: { attacker: pending.attackerInstanceId, direct: !pending.targetInstanceId },
+    })
+    this.resolveAttack(game, 'blocage refusé')
+  }
+
+  /**
+   * `STEAL_GIG` (Mini-Feature 6) : l'attaquant choisit **exactement M** dés Gigs
+   * actifs du défenseur. Chaque dé transféré conserve son type et sa valeur
+   * (un d8 montrant 5 reste un d8 montrant 5) et son identifiant.
+   */
+  stealGig(game: MockGame, pseudo: string, payload: ActionPayload): void {
+    const pending = this.requireCombatStep(game, 'AWAITING_STEAL_CHOICE')
+    if (pending.attackerPlayerId !== pseudo) {
+      throw new RuleError(`Seul l’attaquant (${pending.attackerPlayerId}) choisit les dés Gigs volés`)
+    }
+    const ids = (payload.dice ?? payload.cardIds ?? (payload.chosen ? String(payload.chosen).split(',') : []))
+      .map((id) => String(id).trim())
+      .filter((id) => id.length > 0)
+    if (ids.length !== pending.stealableCount) {
+      throw new RuleError(
+        `Tu dois choisir exactement ${pending.stealableCount} dé(s) Gig (plafond strict) — reçu ${ids.length}`,
+      )
+    }
+    if (new Set(ids).size !== ids.length) throw new RuleError('Dé Gig choisi en double')
+    this.applySteal(game, pseudo, ids, `choix de l’attaquant (M = ${pending.stealableCount})`)
+  }
+
+  /**
+   * Transfère les dés désignés du défenseur vers l'attaquant (types, valeurs et
+   * identifiants préservés), puis referme le combat.
+   */
+  applySteal(game: MockGame, attackerId: string, dieIds: string[], reason: string): void {
+    const pending = this.requireCombatStep(game, 'AWAITING_STEAL_CHOICE')
+    const attacker = this.player(game, attackerId)
+    const defender = game.players.find((player) => player.playerId === pending.defendingPlayerId) as MockPlayer
+
+    const indexes: number[] = []
+    for (const id of dieIds) {
+      const index = defender.gigDieIds.indexOf(id)
+      if (index < 0) throw new RuleError(`Le dé ${id} n’est pas un dé Gig actif du défenseur`)
+      if (indexes.includes(index)) throw new RuleError('Dé Gig choisi en double')
+      indexes.push(index)
+    }
+
+    // Retraits en indices décroissants : l'alignement gigs/gigDice/gigDieIds tient.
+    const removed: Array<{ id: string; die: string; value: number }> = []
+    for (const index of [...indexes].sort((a, b) => b - a)) {
+      removed.push({
+        value: defender.gigs.splice(index, 1)[0] as number,
+        die: defender.gigDice.splice(index, 1)[0] ?? '?',
+        id: defender.gigDieIds.splice(index, 1)[0] as string,
+      })
+    }
+
+    // Transfert dans l'ordre demandé par l'attaquant : type, valeur et identifiant
+    // du dé sont conservés tels quels (un d8 montrant 5 reste un d8 montrant 5).
+    const transferred: string[] = []
+    for (const dieId of dieIds) {
+      const entry = removed.find((item) => item.id === dieId) as { id: string; die: string; value: number }
+      attacker.gigs.push(entry.value)
+      attacker.gigDice.push(entry.die)
+      attacker.gigDieIds.push(entry.id)
+      transferred.push(`${entry.die} → ${entry.value}`)
+      appendEvent(
+        game,
+        'GIG_STOLEN',
+        attackerId,
+        `vol d’un Gig ${entry.die} de valeur ${entry.value} (total ${attacker.gigs.length})`,
+      )
+    }
+
+    appendActionLog(game, {
+      playerId: attackerId,
+      actionType: 'GIG_STOLEN',
+      description:
+        `Vol de Gigs : Joueur ${attackerId} vole ${transferred.length} dé(s) (${transferred.join(', ')})` +
+        ` à Joueur ${defender.playerId} — ${reason}`,
+      result: 'SUCCESS',
+      details: {
+        quota: pending.quota,
+        stealable: pending.stealableCount,
+        dice: transferred,
+        dieIds,
+        defenderGigs: defender.gigs.length,
+        attackerGigs: attacker.gigs.length,
+      },
+    })
+    this.clearCombat(game)
+  }
+
+  /**
+   * Fin de tour avec un combat en suspens : renoncement implicite au blocage,
+   * puis vol automatique des M dés de plus haute valeur (tri stable).
+   */
+  autoResolveCombat(game: MockGame): void {
+    const pending = game.pendingAttack
+    if (!pending) return
+    if (pending.step === 'AWAITING_BLOCK') {
+      appendActionLog(game, {
+        playerId: pending.defendingPlayerId,
+        actionType: 'DECLINE_BLOCK',
+        description: `Fin de tour : Joueur ${pending.defendingPlayerId} n’a pas bloqué (renoncement implicite)`,
+        result: 'INFO',
+        details: { implicit: true },
+      })
+      this.resolveAttack(game, 'fin de tour (blocage refusé implicitement)')
+    }
+    const stealStep = game.pendingAttack
+    if (!stealStep || stealStep.step !== 'AWAITING_STEAL_CHOICE') return
+    const defender = game.players.find((player) => player.playerId === stealStep.defendingPlayerId)
+    if (!defender) {
+      this.clearCombat(game)
+      return
+    }
+    const ids = defender.gigs
+      .map((value, index) => ({ value, index }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, stealStep.stealableCount)
+      .map((entry) => defender.gigDieIds[entry.index] as string)
+    this.applySteal(game, stealStep.attackerPlayerId, ids, 'fin de tour (vol automatique des M dés de plus haute valeur)')
+  }
+
+  /** Combat Unité vs Unité : la puissance la plus haute l'emporte, égalité = les deux tombent. */
+  fight(game: MockGame, attackerPlayer: MockPlayer, attacker: Instance, defenderPlayer: MockPlayer, defender: Instance): void {
+    const attackPower = totalPower(attackerPlayer, attacker)
+    const defensePower = totalPower(defenderPlayer, defender)
+    if (attackPower > defensePower) defeat(game, defenderPlayer, defender)
+    else if (attackPower < defensePower) defeat(game, attackerPlayer, attacker)
+    else {
+      defeat(game, defenderPlayer, defender)
+      defeat(game, attackerPlayer, attacker)
+    }
+  }
+
+  /** Vérifie que le combat attendu est bien en cours, à l'étape indiquée. */
+  requireCombatStep(game: MockGame, expected: CombatStep): PendingAttackState {
+    const pending = game.pendingAttack
+    if (!pending) throw new RuleError('Aucune attaque en cours de résolution')
+    if (pending.step !== expected) {
+      throw new RuleError(
+        expected === 'AWAITING_BLOCK'
+          ? `Le blocage n’est possible qu’à l’étape AWAITING_BLOCK (étape courante : ${pending.step})`
+          : `Le choix des dés volés n’est possible qu’à l’étape AWAITING_STEAL_CHOICE (étape courante : ${pending.step})`,
+      )
+    }
+    return pending
+  }
+
+  /** Referme le combat : plus de blocage ni de vol possible. */
+  clearCombat(game: MockGame): void {
+    game.pendingAttack = null
   }
 
   sellCard(game: MockGame, pseudo: string, payload: ActionPayload): void {
@@ -1131,6 +1540,11 @@ export class MockGameServer {
     }
     const outgoing = this.player(game, pseudo)
     const incoming = this.opponent(game, pseudo)
+
+    // Mini-Feature 6 : terminer son tour avec un combat en suspens vaut
+    // renoncement implicite (blocage refusé, puis vol automatique des M dés
+    // de plus haute valeur) — comme `EndTurnCommand` côté serveur.
+    this.autoResolveCombat(game)
 
     game.phase = 'END'
     appendEvent(game, 'PHASE_CHANGED', pseudo, 'phase End')
@@ -1223,6 +1637,8 @@ export class MockGameServer {
     const value = 1 + Math.floor(this.random() * (DIE_FACES[die] ?? 6))
     player.gigs.push(value)
     player.gigDice.push(die)
+    // Mini-Feature 6 : chaque dé Gig actif porte un identifiant stable (cible de STEAL_GIG).
+    player.gigDieIds.push(nextGigDieId())
     appendEvent(game, 'GIG_ROLLED', pseudo, `lancer ${die} → ${value} (total ${player.gigs.length} Gigs)`)
     this.completeDrawPhase(game, pseudo)
   }
@@ -1340,6 +1756,7 @@ function buildPlayer(pseudo: string, deckIds: string[], server: MockGameServer):
     legendsArea: legends.map((card) => newInstance(card, pseudo, 'LEGENDS_AREA', { faceDown: true })),
     gigs: [],
     gigDice: [],
+    gigDieIds: [],
     fixerDice: ['d4', 'd6', 'd8', 'd10', 'd12', 'd20'],
     eddies: 0,
     costDiscount: 0,
@@ -1465,6 +1882,13 @@ function describeIntent(payload: ActionPayload, before: Located | null): string 
       return 'pioche sa carte (phase Draw)'
     case 'SELECT_DIE':
       return `choisit le dé ${String(payload.dice?.[0] ?? payload.chosen ?? '?').toLowerCase()}`
+    case 'USE_BLOCKER':
+    case 'BLOCK':
+      return `bloque avec ${String((payload.cardIds ?? payload.dice ?? []).length)} Blocker(s)`
+    case 'DECLINE_BLOCK':
+      return 'renonce à bloquer'
+    case 'STEAL_GIG':
+      return `vole ${String((payload.dice ?? payload.cardIds ?? []).length)} dé(s) Gig`
     default:
       return `action ${String(payload.action ?? '?')}`
   }
@@ -1577,6 +2001,7 @@ function playerView(player: MockPlayer, viewerId: string): Record<string, unknow
     legendsArea: player.legendsArea.map((card) => cardView(card, viewerId)),
     gigs: [...player.gigs],
     gigDice: [...player.gigDice],
+    gigDieIds: [...player.gigDieIds],
     fixerDice: [...player.fixerDice],
     gigCount: player.gigs.length,
     streetCred: streetCred(player),
@@ -1600,6 +2025,9 @@ function stateView(game: MockGame, viewerId: string, sequence: number, now: stri
       ? { ...game.turn }
       : { number: game.turn.number, activePlayerId: game.turn.activePlayerId },
     reactionWindow: game.reactionWindow,
+    // `pendingAttack` (Mini-Feature 6) : `null` hors combat — `prune()` l'omet,
+    // comme le DTO Java annoté `@JsonInclude(NON_NULL)`.
+    pendingAttack: game.pendingAttack ? { ...game.pendingAttack } : null,
     players: game.players.map((player) => playerView(player, viewerId)),
     log: game.log.map((entry) => ({ ...entry })),
     gameLog: game.gameLog.slice(-50).map((entry) => ({ ...entry })),

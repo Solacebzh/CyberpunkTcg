@@ -12,6 +12,14 @@ public final class GameConstants {
     /** Gigs contrôlés au début de son tour pour gagner immédiatement. */
     public static final int GIGS_TO_WIN = 7;
 
+    /**
+     * Tranches de puissance donnant un Gig volé supplémentaire (Mini-Feature 6,
+     * règle officielle § ATTACKING — « Units steal an extra Gig for every 10
+     * power (and 0 Gigs at power 0) ») : quota {@code N = (power / 10) + 1} pour
+     * toute puissance ≥ 1, plafonné aux dés Gigs <em>actifs</em> du défenseur.
+     */
+    public static final int POWER_PER_EXTRA_GIG = 10;
+
     /** Ventes autorisées par tour et par joueur. */
     public static final int SALES_PER_TURN = 1;
 

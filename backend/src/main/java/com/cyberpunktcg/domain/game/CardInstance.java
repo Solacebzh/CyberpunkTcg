@@ -286,9 +286,14 @@ public class CardInstance {
         return hasKeyword(CardKeyword.ADRENALINE) || hasKeyword(CardKeyword.GO_SOLO);
     }
 
-    /** Peut attaquer le tour où elle est jouée (Lag ignoré). */
+    /** {@code HASTE} (Mini-Feature 6) : alias d'{@code ADRENALINE}, Lag ignoré. */
+    public boolean hasHaste() {
+        return hasKeyword(CardKeyword.HASTE);
+    }
+
+    /** Peut attaquer le tour où elle est jouée (Lag ignoré : GO_SOLO, ADRENALINE, HASTE). */
     public boolean canIgnoreSummoningSickness() {
-        return hasGoSolo() || hasAdrenaline();
+        return hasGoSolo() || hasAdrenaline() || hasHaste();
     }
 
     /**

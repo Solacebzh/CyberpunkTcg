@@ -2,6 +2,7 @@ package com.cyberpunktcg.api.dto.debug;
 
 import com.cyberpunktcg.api.dto.ws.GameActionLogDTO;
 import com.cyberpunktcg.api.dto.ws.GameLogEntryDTO;
+import com.cyberpunktcg.api.dto.ws.PendingAttackDTO;
 
 import java.time.Instant;
 import java.util.List;
@@ -25,6 +26,7 @@ import java.util.List;
  * @param seed           graine des tirages (rejeu déterministe)
  * @param createdAt      date de création
  * @param reactionWindow fenêtre de réaction ouverte ({@code null} sinon)
+ * @param pendingAttack  attaque en cours de résolution (Mini-Feature 6, {@code null} sinon)
  * @param players        état complet des deux joueurs
  * @param log            journal public (événements, comme les clients)
  * @param gameLog        journal de diagnostic (dernières entrées)
@@ -41,6 +43,7 @@ public record DebugGameStateDTO(
         long seed,
         Instant createdAt,
         DebugReactionWindowDTO reactionWindow,
+        PendingAttackDTO pendingAttack,
         List<DebugPlayerStateDTO> players,
         List<GameLogEntryDTO> log,
         List<GameActionLogDTO> gameLog

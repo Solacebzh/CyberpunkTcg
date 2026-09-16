@@ -14,6 +14,8 @@ public enum GameEventType {
     CARD_SOLD,
     LEGEND_FLIPPED,
     ATTACK_DECLARED,
+    /** Mini-Feature 6 : un {Blocker} dépensé redirige l'attaque vers lui. */
+    ATTACK_BLOCKED,
     UNIT_DEFEATED,
     EFFECT_RESOLVED,
     GIG_STOLEN,

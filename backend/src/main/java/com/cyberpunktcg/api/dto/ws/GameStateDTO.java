@@ -14,6 +14,11 @@ import java.util.Set;
  * <p>Le champ {@code yourPlayerId} permet au front de se repérer entre les
  * deux sièges ; {@code connected} de chaque joueur pilote l'affichage du
  * minuteur de reconnexion (120 s avant forfait).</p>
+ *
+ * <p>{@code pendingAttack} (Mini-Feature 6) porte l'attaque en cours de
+ * résolution : fenêtre « Utiliser Blocker ? » ({@code AWAITING_BLOCK}) ou choix
+ * des dés Gigs à voler ({@code AWAITING_STEAL_CHOICE}, avec le quota {@code N}
+ * et le plafond strict {@code M}).</p>
  */
 public record GameStateDTO(
         String gameId,
@@ -24,6 +29,7 @@ public record GameStateDTO(
         String yourPlayerId,
         TurnDTO turn,
         ReactionWindowDTO reactionWindow,
+        PendingAttackDTO pendingAttack,
         List<PlayerStateDTO> players,
         List<GameLogEntryDTO> log,
         List<GameActionLogDTO> gameLog,
@@ -54,6 +60,7 @@ public record GameStateDTO(
                 viewerId,
                 TurnDTO.from(state),
                 reaction,
+                PendingAttackDTO.from(state.getPendingAttack()),
                 players,
                 log,
                 gameLog,

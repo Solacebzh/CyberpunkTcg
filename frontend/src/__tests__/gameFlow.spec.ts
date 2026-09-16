@@ -1,6 +1,7 @@
 /**
  * Test de flux : Lobby → Partie → Vendre → Incliner (R4) → Jouer → Fin de tour →
- * phase DRAW interactive (Mini-Feature 5 : pioche + choix du dé) → Attaquer → Fin de tour.
+ * phase DRAW interactive (Mini-Feature 5 : pioche + choix du dé) → Attaquer
+ * (Mini-Feature 6 : cible dépensée ou Gig Area, vol de dés plafonné M) → Fin de tour.
  *
  * Ce qui est réellement exercé : les composants (`LobbyView`, `GameView`,
  * `CardComponent`, `TargetingOverlay`, `PlayerBoard`), les stores Pinia
@@ -456,30 +457,73 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     expect((game.me?.gigCount ?? 0) + (game.opponent?.gigCount ?? 0)).toBe(3)
     expect(wrapper.get('[data-zone="GIGS"]').text()).toContain('d8')
 
-    // --- 8. Attaque ciblée via l'overlay ----------------------------------
+    // --- 8. Attaque (Mini-Feature 6) : cible dépensée ou vol direct plafonné ---
     const attacker = game.me?.field.find((card) => card.type === 'unit') as CardInstance
     expect(game.canAttackWith(attacker)).toBeNull() // mal d'invocation levé au début du tour
+
+    // La Unit de Bravo a été redressée au début de son tour : « Ready Units can't be
+    // attacked » → elle n'est PAS une cible légale (seules les Units dépensées le sont).
+    const rivalUnit = game.opponent?.field.find((card) => card.type === 'unit') as CardInstance
+    expect(rivalUnit.exhausted).toBe(false)
+    expect(game.validAttackTargets(attacker)).not.toContain(rivalUnit.instanceId)
+    expect(game.validAttackTargets(attacker)).toEqual([])
+    expect(game.canStealGig(attacker)).toBe(true)
+    // Quota affiché côté client (le serveur reste seul juge) : Power 9 → N = 1,
+    // Bravo n'a qu'un dé Gig actif → plafond strict M = 1.
+    expect(game.stealForecast(attacker)).toEqual({ quota: 1, stealable: 1 })
 
     await wrapper.get(`[data-instance-id="${attacker.instanceId}"]`).trigger('click')
     await buttonWith(wrapper, 'Attaquer').trigger('click')
     await waitFor(() => game.targeting !== null, 'mode ciblage actif')
-    expect(wrapper.text()).toContain('Choisis une Unit rivale à attaquer')
+    expect(wrapper.text()).toContain('Choisis une Unit rivale dépensée à attaquer')
+    expect(game.targeting?.candidates).toEqual([])
+    expect(game.targeting?.allowDirect).toBe(true)
 
-    const rivalUnit = game.opponent?.field.find((card) => card.type === 'unit') as CardInstance
-    expect(game.targeting?.candidates).toContain(rivalUnit.instanceId)
+    // Attaque directe de la Gig Area → modale « Choisissez M dé(s) Gig à voler ».
+    await wrapper.get('[data-targeting-direct]').trigger('click')
+    await waitFor(() => game.iMustChooseStolenDice, 'modale de vol de dés (M = 1)')
+    expect(wrapper.find('[data-steal-modal]').exists()).toBe(true)
+    expect(wrapper.get('[data-steal-modal]').attributes('data-steal-quota')).toBe('1')
+    expect(wrapper.get('[data-steal-modal]').attributes('data-steal-count')).toBe('1')
+    expect(wrapper.get('[data-steal-modal]').text()).toContain('Choisissez 1 dé(s) Gig à voler')
+    const rivalDie = game.stealableDice[0]
+    expect(rivalDie?.die).toBe('d6')
+    expect(rivalDie?.id).toBe(game.opponent?.gigDieIds?.[0])
+    expect((buttonWith(wrapper, 'Voler').element as HTMLButtonElement).disabled).toBe(true)
+    expect(game.canConfirmSteal()).toMatch(/exactement 1/)
 
-    await wrapper.get(`[data-instance-id="${rivalUnit.instanceId}"]`).trigger('click')
-    await waitFor(() => (game.opponent?.field.length ?? 1) === 0, 'Unit rivale vaincue')
+    // Un seul dé actif chez Bravo : c'est lui qui est volé (type ET valeur conservés).
+    await wrapper.get(`[data-steal-die="${rivalDie?.id}"]`).trigger('click')
+    expect(game.stolenSelection).toEqual([rivalDie?.id])
+    expect(game.canConfirmSteal()).toBeNull()
+    expect((buttonWith(wrapper, 'Voler').element as HTMLButtonElement).disabled).toBe(false)
+    await buttonWith(wrapper, 'Voler').trigger('click')
+    await waitFor(() => game.pendingAttack === null, 'combat résolu après STEAL_GIG')
 
     const attackCommand = actions().find((command) => command.action === 'ATTACK')
     expect(attackCommand).toMatchObject({
       action: 'ATTACK',
       instanceId: attacker.instanceId,
-      targetInstanceId: rivalUnit.instanceId,
+      targetInstanceId: null,
     })
-    expect(game.opponent?.trash).toHaveLength(1)
-    expect(game.log.some((entry) => entry.type === 'UNIT_DEFEATED')).toBe(true)
+    const stealCommand = actions().find((command) => command.action === 'STEAL_GIG')
+    expect(stealCommand).toMatchObject({ action: 'STEAL_GIG', dice: [rivalDie?.id] })
+    expect(typeof stealCommand?.clientRequestId).toBe('string')
+
+    // Plafond strict respecté : Bravo perd son unique Gig, Alpha le récupère tel quel.
+    expect(game.opponent?.gigCount).toBe(0)
+    expect(game.opponent?.gigs).toEqual([])
+    expect(game.me?.gigCount).toBe(3)
+    const stolenAt = (game.me?.gigDice ?? []).indexOf('d6')
+    expect(stolenAt).toBe(2) // d4 (tour 1), d8 (tour 3), puis le d6 volé
+    expect(game.me?.gigs[stolenAt]).toBe(rivalDie?.value)
+    expect(game.me?.gigDieIds).toHaveLength(3)
+    expect(game.log.some((entry) => entry.type === 'GIG_STOLEN')).toBe(true)
     expect(game.targeting).toBeNull()
+    expect(game.iMustChooseStolenDice).toBe(false)
+    // Déclarer une attaque incline l'attaquant.
+    expect((game.me?.field.find((card) => card.instanceId === attacker.instanceId) as CardInstance).exhausted).toBe(true)
+    expect(game.phase).toBe('COMBAT')
 
     // --- 9. Fin de tour : la main passe à Bravo ---------------------------
     await buttonWith(wrapper, 'Fin de tour').trigger('click')

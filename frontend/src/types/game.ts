@@ -22,6 +22,13 @@ export type Phase = 'DRAW' | 'MAIN' | 'COMBAT' | 'END'
  * transitoires côté serveur.
  */
 export type DrawStep = 'DRAW_START' | 'AWAITING_DRAW' | 'AWAITING_DIE_SELECT' | 'ROLLING_DIE' | 'DRAW_COMPLETE'
+/**
+ * Sous-étapes de résolution d'une attaque (Mini-Feature 6, `CombatStep.java`).
+ * `AWAITING_BLOCK` = fenêtre « Utiliser Blocker ? » côté défenseur ;
+ * `AWAITING_STEAL_CHOICE` = modale « Choisissez M dé(s) Gig à voler » côté attaquant.
+ */
+export type CombatStep = 'AWAITING_BLOCK' | 'AWAITING_STEAL_CHOICE'
+
 export type Zone = 'DECK' | 'HAND' | 'FIELD' | 'TRASH' | 'EDDIES_AREA' | 'LEGENDS_AREA' | 'REMOVED'
 export type RoomStatus = 'WAITING' | 'PLAYING' | 'CLOSED'
 
@@ -39,6 +46,18 @@ export type GameAction =
   | 'DRAW_CARD'
   /** Mini-Feature 5 : choix du dé Gig (`dice: ['d6']`, étape `AWAITING_DIE_SELECT`). */
   | 'SELECT_DIE'
+  /**
+   * Mini-Feature 6 : choix des dés Gigs volés après une attaque directe non
+   * bloquée — exactement `M` identifiants dans `dice` (plafond strict).
+   */
+  | 'STEAL_GIG'
+  /**
+   * Mini-Feature 6 : le défenseur intercepte avec un ou plusieurs `{Blocker}`
+   * prêts (`cardIds`, ordre significatif — le DERNIER encaisse les dégâts).
+   */
+  | 'USE_BLOCKER'
+  /** Mini-Feature 6 : le défenseur renonce à intercepter. */
+  | 'DECLINE_BLOCK'
   | 'END_TURN'
   | 'CONCEDE'
 
@@ -51,6 +70,8 @@ export type GameEventType =
   | 'CARD_SOLD'
   | 'LEGEND_FLIPPED'
   | 'ATTACK_DECLARED'
+  /** Mini-Feature 6 : un `{Blocker}` dépensé redirige l'attaque vers lui. */
+  | 'ATTACK_BLOCKED'
   | 'REACTION_WINDOW_OPENED'
   | 'REACTION_WINDOW_CLOSED'
   | 'UNIT_DEFEATED'
@@ -115,6 +136,27 @@ export interface ReactionWindow {
   attackerInstanceId: string
 }
 
+/**
+ * Attaque en cours de résolution (`PendingAttackDTO`, Mini-Feature 6) — `null`
+ * quand aucun combat n'attend de décision de joueur.
+ *
+ * `quota` est le quota théorique `N = (power / 10) + 1` (0 si power ≤ 0) et
+ * `stealableCount` le **plafond strict** `M = min(N, dés Gigs actifs du
+ * défenseur)` : ce sont les `M` dés que l'attaquant doit choisir.
+ */
+export interface PendingAttack {
+  attackerPlayerId: string
+  defendingPlayerId: string
+  attackerInstanceId: string
+  /** `null` pour une attaque directe vers la Gig Area (vol de dés). */
+  targetInstanceId?: string | null
+  step: CombatStep
+  quota: number
+  stealableCount: number
+  /** Blockers déjà dépensés pour cette attaque (blocage multiple). */
+  blockerInstanceIds?: string[]
+}
+
 export interface GameLogEntry {
   index: number
   type: GameEventType
@@ -139,7 +181,15 @@ export interface PlayerState {
    * un Gig obtenu hors lancer). Optionnel : anciens serveurs / mocks.
    */
   gigDice?: string[]
-  /** Dés de la Fixer Area pas encore lancés (`d4`…`d20`). */
+  /**
+   * Identifiant stable de chaque dé Gig actif, aligné sur `gigs` (Mini-Feature 6) :
+   * c'est l'identifiant envoyé dans `STEAL_GIG` pour choisir les dés volés.
+   */
+  gigDieIds?: string[]
+  /**
+   * Dés de la Fixer Area pas encore lancés (`d4`…`d20`) : ils ne sont
+   * **jamais** volables (plafond strict, Mini-Feature 6).
+   */
   fixerDice: string[]
   gigCount: number
   streetCred: number
@@ -159,6 +209,8 @@ export interface GameState {
   yourPlayerId: string
   turn: TurnState
   reactionWindow?: ReactionWindow | null
+  /** Attaque en cours de résolution (Mini-Feature 6) ; absent = combat résolu. */
+  pendingAttack?: PendingAttack | null
   /** Siège 0 = hôte, siège 1 = invité. */
   players: PlayerState[]
   log: GameLogEntry[]
@@ -317,6 +369,78 @@ export const DRAW_STEP_HINTS: Record<DrawStep, string> = {
 /** Le d20 n'est sélectionnable que lorsqu'il est le dernier dé de la Fixer Area. */
 export const LAST_FIXER_DIE = 'd20'
 
+/** `GameConstants.POWER_PER_EXTRA_GIG` : un Gig volé en plus par tranche de 10 de puissance. */
+export const POWER_PER_EXTRA_GIG = 10
+
+/**
+ * Un dé Gig **actif** (déjà lancé) de la Gig Area : les seuls volables
+ * (Mini-Feature 6). `id` vient de `PlayerState.gigDieIds` et sert de cible à
+ * l'action `STEAL_GIG`.
+ */
+export interface GigDieView {
+  id: string
+  /** Type du dé (`d4`…`d20`), `'?'` pour un Gig injecté hors lancer. */
+  die: string
+  value: number
+}
+
+/**
+ * Puissance effective d'une carte pour l'affichage (`power` + `powerBonus`,
+ * approche de `GameState.totalPowerFor` qui ajoute aussi les Gears équipés).
+ * Le serveur reste seul juge du combat et du quota.
+ */
+export function effectivePower(card: CardInstance | null | undefined): number {
+  if (!card) return 0
+  return Math.max(0, (card.power ?? 0) + (card.powerBonus ?? 0))
+}
+
+/**
+ * Quota théorique de Gigs volés : `N = power <= 0 ? 0 : (power / 10) + 1`
+ * (miroir de `RuleEngine.calculateQuota`, pour l'affichage — le serveur fait foi).
+ */
+export function stealQuota(power: number): number {
+  if (!Number.isFinite(power) || power <= 0) return 0
+  return Math.floor(power / POWER_PER_EXTRA_GIG) + 1
+}
+
+/**
+ * Plafond strict : `M = min(N, dés Gigs actifs du défenseur)` (miroir de
+ * `RuleEngine.calculateActualStealable`). On ne crée jamais de dé et on ne vole
+ * jamais dans la Fixer Area.
+ */
+export function stealableDiceCount(power: number, activeDiceCount: number): number {
+  return Math.max(0, Math.min(stealQuota(power), Math.max(0, activeDiceCount)))
+}
+
+/**
+ * Dés Gigs actifs d'un joueur, alignés (valeurs + types + identifiants).
+ * Les serveurs/mock anciens qui n'envoient pas `gigDieIds` reçoivent un
+ * identifiant de repli indexé (le serveur reste seul juge).
+ */
+export function activeGigsOf(player: PlayerState | null | undefined): GigDieView[] {
+  if (!player) return []
+  const dice = player.gigDice ?? []
+  const ids = player.gigDieIds ?? []
+  return player.gigs.map((value, index) => ({
+    id: ids[index] ?? `gig-${index}`,
+    die: dice[index] ?? '?',
+    value,
+  }))
+}
+
+/** Libellés des étapes de combat (Mini-Feature 6), côté joueur concerné. */
+export const COMBAT_STEP_LABELS: Record<CombatStep, string> = {
+  AWAITING_BLOCK: 'UTILISER BLOCKER ?',
+  AWAITING_STEAL_CHOICE: 'CHOISIS LES DÉS À VOLER',
+}
+
+export const COMBAT_STEP_HINTS: Record<CombatStep, string> = {
+  AWAITING_BLOCK:
+    'Ton adversaire attaque : dépense un ou plusieurs Blockers prêts pour rediriger l’attaque (seul le dernier Blocker choisi encaisse les dégâts), ou renonce.',
+  AWAITING_STEAL_CHOICE:
+    'Choisis exactement M dés Gigs actifs à voler chez ton adversaire — chaque dé conserve son type et sa valeur.',
+}
+
 /**
  * Miroir de `Player.selectableFixerDice()` : tous les dés restants sauf le d20,
  * ou `['d20']` quand il est le dernier. Sert uniquement à griser l'UI — le
@@ -335,15 +459,18 @@ export const KEYWORD_LABELS: Record<CardKeyword, string> = {
   flip: 'Flip',
   play: 'Play',
   attack: 'Attack',
+  haste: 'Haste',
 }
 
 export const KEYWORD_HINTS: Record<CardKeyword, string> = {
   go_solo: 'Peut attaquer le tour où elle est jouée',
-  blocker: 'Doit être attaquée en priorité et interdit le vol direct de Gig',
+  blocker:
+    'Le défenseur peut la dépenser pour rediriger une attaque vers elle (blocage multiple : seul le dernier Blocker encaisse)',
   quick: 'Jouable pendant la fenêtre de réaction adverse',
   flip: 'Se révèle depuis la Legends Area (effet FLIP)',
   play: 'Effet déclenché quand la carte est jouée',
   attack: 'Effet déclenché quand la carte attaque',
+  haste: 'Ignore le mal d’invocation (peut attaquer le tour où elle est jouée)',
 }
 
 export const ZONE_LABELS: Record<Zone, string> = {
@@ -365,6 +492,7 @@ export const EVENT_LABELS: Record<GameEventType, string> = {
   CARD_SOLD: 'Vente',
   LEGEND_FLIPPED: 'Legend révélée',
   ATTACK_DECLARED: 'Attaque',
+  ATTACK_BLOCKED: 'Blocage',
   REACTION_WINDOW_OPENED: 'Réaction ouverte',
   REACTION_WINDOW_CLOSED: 'Réaction fermée',
   UNIT_DEFEATED: 'Unit vaincue',

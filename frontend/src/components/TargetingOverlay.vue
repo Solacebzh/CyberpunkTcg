@@ -25,7 +25,10 @@ const emit = defineEmits<{ cancel: []; direct: [] }>()
 const reticle = ref<HTMLElement | null>(null)
 
 const TITLE: Record<TargetingKind, string> = {
-  attack: 'Choisis une Unit rivale à attaquer',
+  // Mini-Feature 6 : « Ready Units can't be attacked » — seules les Units rivales
+  // dépensées (inclinées) sont des cibles légales ; un {Blocker} prêt n'est jamais
+  // ciblable, il intercepte via la fenêtre « Utiliser Blocker ? » du défenseur.
+  attack: 'Choisis une Unit rivale dépensée à attaquer',
   gear: 'Choisis l’Unit alliée à équiper',
 }
 
@@ -85,10 +88,18 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
-          <button v-if="allowDirect" type="button" class="cyber-btn cyber-btn--accent" @click="emit('direct')">
-            Vol direct de Gig
+          <button
+            v-if="allowDirect"
+            type="button"
+            class="cyber-btn cyber-btn--accent"
+            data-targeting-direct
+            @click="emit('direct')"
+          >
+            Attaquer la Gig Area (vol de dés)
           </button>
-          <button type="button" class="cyber-btn" @click="emit('cancel')">Annuler (Échap)</button>
+          <button type="button" class="cyber-btn" data-targeting-cancel @click="emit('cancel')">
+            Annuler (Échap)
+          </button>
         </div>
       </div>
     </div>

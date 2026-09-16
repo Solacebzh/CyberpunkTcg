@@ -55,6 +55,14 @@ public class Player {
      * que par un lancer (vol, fixture) porte {@link #UNKNOWN_DIE}.
      */
     private List<String> gigDice;
+    /**
+     * Identifiant stable de chaque dé Gig actif, aligné index par index sur
+     * {@link #gigs} (Mini-Feature 6) : c'est cet identifiant que l'attaquant
+     * désigne pour voler un dé précis ({@code StealGigCommand}). Les entrées
+     * ajoutées directement à {@link #gigs} (fixtures, effets) reçoivent un
+     * identifiant frais lors de la resynchronisation ({@link #syncGigDice()}).
+     */
+    private List<String> gigDieIds;
     /** Dés restants dans la Fixer Area, dans l'ordre de lancer. */
     private List<String> fixerDice;
 
@@ -77,6 +85,7 @@ public class Player {
         this.legendsArea = new ArrayList<CardInstance>();
         this.gigs = new ArrayList<Integer>();
         this.gigDice = new ArrayList<String>();
+        this.gigDieIds = new ArrayList<String>();
         this.fixerDice = freshFixerDice();
         this.eddies = 0;
         this.costDiscount = 0;
@@ -181,13 +190,61 @@ public class Player {
         return gigDice;
     }
 
-    /** Aligne la taille de {@link #gigDice} sur celle de {@link #gigs}. */
+    /**
+     * Identifiants des dés Gigs actifs, alignés sur {@link #getGigs()}
+     * (Mini-Feature 6 : choix des dés à voler).
+     */
+    public List<String> getGigDieIds() {
+        syncGigDice();
+        return gigDieIds;
+    }
+
+    /**
+     * Dés Gigs <strong>actifs</strong> de la Gig Area : les seuls volables
+     * (Mini-Feature 6 — plafond strict {@code M = min(N, dés actifs)}). Les dés
+     * encore dans la Fixer Area ({@link #getFixerDice()}) n'y figurent jamais.
+     */
+    public List<GigDie> activeGigs() {
+        syncGigDice();
+        List<GigDie> dice = new ArrayList<GigDie>(gigs.size());
+        for (int i = 0; i < gigs.size(); i++) {
+            dice.add(new GigDie(gigDieIds.get(i), gigDice.get(i), gigs.get(i)));
+        }
+        return dice;
+    }
+
+    /** Nombre de dés Gigs actifs (lancés) — plafond strict du vol de Gigs. */
+    public int getActiveGigCount() {
+        return gigs.size();
+    }
+
+    /** Cherche un dé Gig actif par son identifiant. */
+    public Optional<GigDie> findActiveGig(String dieId) {
+        if (dieId == null) {
+            return Optional.empty();
+        }
+        syncGigDice();
+        for (int i = 0; i < gigDieIds.size(); i++) {
+            if (gigDieIds.get(i).equals(dieId)) {
+                return Optional.of(new GigDie(gigDieIds.get(i), gigDice.get(i), gigs.get(i)));
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** Aligne {@link #gigDice} et {@link #gigDieIds} sur la taille de {@link #gigs}. */
     private void syncGigDice() {
         while (gigDice.size() < gigs.size()) {
             gigDice.add(UNKNOWN_DIE);
         }
         while (gigDice.size() > gigs.size()) {
             gigDice.remove(gigDice.size() - 1);
+        }
+        while (gigDieIds.size() < gigs.size()) {
+            gigDieIds.add(UUID.randomUUID().toString());
+        }
+        while (gigDieIds.size() > gigs.size()) {
+            gigDieIds.remove(gigDieIds.size() - 1);
         }
     }
 
@@ -199,6 +256,21 @@ public class Player {
         syncGigDice();
         gigs.add(value);
         gigDice.add(die == null ? UNKNOWN_DIE : die);
+        gigDieIds.add(UUID.randomUUID().toString());
+    }
+
+    /**
+     * Ajoute un dé Gig déjà lancé, transféré tel quel (vol — Mini-Feature 6) :
+     * identifiant, type de dé et valeur sont conservés.
+     */
+    public void addGigDie(GigDie die) {
+        if (die == null) {
+            throw new IllegalArgumentException("Le dé Gig est obligatoire");
+        }
+        syncGigDice();
+        gigs.add(die.value());
+        gigDice.add(die.die() == null ? UNKNOWN_DIE : die.die());
+        gigDieIds.add(die.id());
     }
 
     /**
@@ -209,8 +281,29 @@ public class Player {
     public DieRoll removeGig(int index) {
         syncGigDice();
         String die = gigDice.remove(index);
+        gigDieIds.remove(index);
         int value = gigs.remove(index);
         return new DieRoll(die, value);
+    }
+
+    /**
+     * Retire le dé Gig actif désigné par son identifiant (vol choisi par
+     * l'attaquant — Mini-Feature 6).
+     *
+     * @return le dé retiré (type + valeur conservés), ou vide si l'identifiant
+     *         ne correspond à aucun dé actif de ce joueur
+     */
+    public Optional<GigDie> removeGigById(String dieId) {
+        Optional<GigDie> found = findActiveGig(dieId);
+        if (!found.isPresent()) {
+            return Optional.empty();
+        }
+        syncGigDice();
+        int index = gigDieIds.indexOf(found.get().id());
+        gigDieIds.remove(index);
+        gigDice.remove(index);
+        gigs.remove(index);
+        return found;
     }
 
     public List<String> getFixerDice() {
@@ -627,6 +720,7 @@ public class Player {
         }
         copy.gigs = new ArrayList<Integer>(this.gigs);
         copy.gigDice = new ArrayList<String>(this.getGigDice());
+        copy.gigDieIds = new ArrayList<String>(this.getGigDieIds());
         copy.fixerDice = new ArrayList<String>(this.fixerDice);
         copy.eddies = this.eddies;
         copy.costDiscount = this.costDiscount;

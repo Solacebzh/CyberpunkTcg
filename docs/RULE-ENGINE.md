@@ -9,6 +9,17 @@ Documents liés : `game-rules.md` (règles), `architecture.md` (§2-3, couches),
 
 ## 1. Carte du code
 
+> Mini-Feature 6 (2026-09-16) : **Combat, Vol de Dés & Plafond des Dés Actifs** —
+> l'attaque devient une machine à états interactive (`CombatStep`, `PendingAttack`,
+> `CombatResolver`) : déclaration (l'attaquant s'incline) → fenêtre « Utiliser
+> Blocker ? » **au choix du défenseur** (`BlockCommand` / `DeclineBlockCommand`,
+> blocage multiple : seul le **dernier** Blocker encaisse) → combat
+> (`RuleEngine.fight`) ou vol de dés (`StealGigCommand`) avec quota
+> `N = (power / 10) + 1` (0 si power ≤ 0) **plafonné strictement** aux dés Gigs
+> actifs du défenseur (`M = min(N, dés actifs)`). Chaque dé actif porte un
+> identifiant stable (`GigDie`, `Player.gigDieIds`) : l'attaquant choisit
+> **quels** dés il vole, type et valeur conservés. Détails §3.5 et §4.
+>
 > Mini-Feature 4 (2026-09-15) : **Générer des Eddies (R4)** — commande unifiée
 > `SpendResourceCommand` (phase `MAIN`) : incline une Legend non inclinée
 > (Legends Area) **ou** une carte vendue non inclinée (Eddies Area) du joueur
@@ -31,9 +42,12 @@ backend/src/main/java/com/cyberpunktcg/
 │   ├── Zone.java         # DECK, HAND, FIELD, TRASH, EDDIES_AREA, LEGENDS_AREA, REMOVED
 │   ├── Phase.java        # DRAW, MAIN, COMBAT, END (+ next())
 │   ├── DrawStep.java     # sous-étapes de la phase DRAW interactive (Mini-Feature 5)
+│   ├── CombatStep.java   # sous-étapes d'une attaque (Mini-Feature 6)
+│   ├── PendingAttack.java # attaque en cours : attaquants, cible, quota N, plafond M
 │   ├── Turn.java         # numéro, joueur actif, phase, drawStep
 │   ├── ReactionWindow.java
 │   ├── DieRoll.java      # résultat d'un lancer de dé Gig
+│   ├── GigDie.java       # dé Gig actif : id stable + type + valeur (vol choisi)
 │   ├── GameEvent.java / GameEventType.java  # journal (sans secret, base du rejeu R10)
 ├── engine/               # règles (pur Java, testé sans Spring)
 │   ├── GameConstants.java   # 7 Gigs, 1 vente/tour, main de 6 (imposés, non configurables)
@@ -41,14 +55,18 @@ backend/src/main/java/com/cyberpunktcg/
 │   ├── GameEffect.java / EffectType.java / TriggerType.java / EffectTarget.java
 │   ├── EffectParser.java    # interprète les abilities JSON (mini-langage + heuristiques)
 │   ├── EffectHandler.java   # stratégie d'application d'un type d'effet
-│   ├── RuleEngine.java      # resolveEffect(s), defeatUnit, routage Strategy
+│   ├── RuleEngine.java      # resolveEffect(s), defeatUnit, fight, quota/plafond de vol
 │   ├── DrawPhaseHandler.java # machine à états de la phase DRAW interactive (Mini-Feature 5)
+│   ├── CombatResolver.java  # machine à états du combat (Mini-Feature 6)
 │   └── command/
 │       ├── GameCommand.java      # interface : validate + execute (+ gardes partagés)
 │       ├── PlayCardCommand.java
-│       ├── AttackCommand.java
+│       ├── AttackCommand.java    # déclare l'attaque, ouvre la résolution
+│       ├── BlockCommand.java     # USE_BLOCKER : interception au choix du défenseur
+│       ├── DeclineBlockCommand.java # DECLINE_BLOCK : renoncement explicite
+│       ├── StealGigCommand.java  # STEAL_GIG : les M dés choisis par l'attaquant
 │       ├── SellCardCommand.java
-│       └── EndTurnCommand.java
+│       └── EndTurnCommand.java   # résout automatiquement un combat en suspens
 └── service/
     └── GameService.java  # parties en mémoire : createGame, executeCommand, getGameState
 ```
@@ -86,12 +104,18 @@ appellera `executeCommand`, puis diffusera `getGameState(gameId, joueur)` à cha
 - `eventLog` append-only (descriptions sans secret → exposé tel quel).
 - Victoire : `winnerId` + `endReason` ; `isGameOver()` bloque toute commande.
 - Primitives mécaniques (sans journalisation, les appelants journalisent) :
-  `drawCards` (deck vide → défaite immédiate), `stealGig` (dé max, le type de
-  dé suit le Gig volé), `rollFixerDie(playerId, die)` (dé **choisi** par le joueur,
+  `drawCards` (deck vide → défaite immédiate), `stealGig(from, to)` (dé de plus
+  forte valeur — effets de cartes), `stealGig(from, to, dieId)` (**dé choisi** par
+  l'attaquant, Mini-Feature 6 : identifiant, type et valeur transférés tels quels),
+  `rollFixerDie(playerId, die)` (dé **choisi** par le joueur,
   Mini-Feature 5 ; la variante sans dé lance le plus petit dé sélectionnable),
   `totalPowerFor` (unit + gears attachés), `findInstance` / `findInstanceOwner`.
 - `getDrawStep()` / `setDrawStep()` : sous-étape de la phase `DRAW` (`null` hors
   `DRAW`, effacée automatiquement par `setPhase`).
+- `getPendingAttack()` / `setPendingAttack()` / `clearPendingAttack()` : attaque en
+  cours de résolution (Mini-Feature 6, §3.5) ; gardes `isCombatPending()`,
+  `isAwaitingBlock()`, `isAwaitingStealChoice()`. Recopiée par `maskedCopyFor`
+  (aucun secret : identifiants, étape, quota `N` et plafond `M`).
 - `maskedCopyFor(viewerId)` : copie détachée aux secrets effacés (§7).
 
 ### 3.2 Player
@@ -104,6 +128,13 @@ appellera `executeCommand`, puis diffusera `getGameState(gameId, joueur)` à cha
   = tous les dés restants **sauf le `d20`**, ou `[d20]` quand il est le dernier ;
   `canSelectFixerDie(die)`, `removeFixerDie(die)`, `addRolledGig(die, value)`,
   `removeGig(index)`, `normalizeDie("D8") → "d8"`.
+- **Dés Gigs actifs (Mini-Feature 6)** : `gigDieIds` (identifiant stable de chaque
+  dé, aligné sur `gigs`/`gigDice`, généré au lancer et **conservé** en cas de vol),
+  `activeGigs()` → `List<GigDie>` (`id`, `die`, `value`), `getActiveGigCount()`,
+  `findActiveGig(dieId)`, `removeGigById(dieId)`, `addGigDie(GigDie)`. Seuls ces dés
+  *déjà lancés* sont volables : la Fixer Area (`fixerDice`) ne l'est **jamais**
+  (plafond strict). Un Gig injecté hors lancer reçoit `UNKNOWN_DIE` (`"?"`) et un
+  identifiant frais (`syncGigDice()` réaligne les trois listes).
 - Dérivés : `getGigCount()`, `getStreetCred()` (somme, jamais stocké).
 - Ressources : `eddies` (réserve : inclinaison d'une Legend ou d'une carte de
   l'Eddies Area = +1, jeu = dépense ; **la vente ne crédite rien**, elle crée la
@@ -113,7 +144,9 @@ appellera `executeCommand`, puis diffusera `getGameState(gameId, joueur)` à cha
 - **Vente = création de ressource (Mini-Feature 3)** : `SellCardCommand` **ne crédite aucun Eddie**. La carte est révélée au rival (`CARD_REVEALED`), retirée de la main, puis posée en Eddies Area `faceDown = true` et `exhausted = false` (prête). Elle vaut dès lors 1 €$ **par tour** via `SpendEddiesCommand` — y compris le tour même de la vente. Seule limite : `SALES_PER_TURN = 1` vente par tour, en phase `MAIN`.
 - **RAM (R7)** : `ramCeilingFor` existe pour le deckbuilder, mais `GameConstants.RAM_CEILING_ENFORCED=false` — **aucune vérification en jeu** (`PlayCardCommand` ne vérifie plus la RAM). La RAM n'est donc qu'une limite de construction de deck (Guide § DECK BUILDING).
 - `startTurn()` : **Eddies remis à 0**, vente (`hasSoldThisTurn`) et Call (`hasCalledLegendThisTurn`) réinitialisés, remise remise à 0, redressement de **toutes** les cartes dépensées (Field+Legends+EddiesArea), fin des mals d'invocation (Lag).
-- `readyBlockers()` / `controlsReadyBlocker()` : BLOCKERs prêts (non épuisés).
+- `readyBlockers()` / `controlsReadyBlocker()` : BLOCKERs prêts (non épuisés) —
+  ils ouvrent la fenêtre « Utiliser Blocker ? » (§3.5), sans jamais forcer le
+  ciblage de l'attaquant.
 
 ### 3.3 CardInstance
 
@@ -123,7 +156,11 @@ appellera `executeCommand`, puis diffusera `getGameState(gameId, joueur)` à cha
 - Mutable : `powerBonus` / `damage` (buffs), `exhausted`, `faceDown`,
   `summoningSickness`, `attachedTo` / `attachments` (Gears).
 - `getEffectivePower()` = `max(0, base + bonus − dégâts)` (`null` si pas de
-  puissance imprimée) ; `isLethalDamage()` quand `dégâts ≥ base + bonus`.
+  puissance imprimée) ; `getEffectivePowerOrZero()` (variante `int`) ;
+  `isLethalDamage()` quand `dégâts ≥ base + bonus`.
+- `isBlocker()`, `hasGoSolo()`, `hasAdrenaline()`, `hasHaste()` et
+  `canIgnoreSummoningSickness()` (= `GO_SOLO` **ou** `ADRENALINE` **ou** `HASTE`,
+  alias « jeu rapide » ajouté par la Mini-Feature 6).
 - `copy()` / `masked()` (secrets effacés, identité conservée).
 
 ### 3.4 Phases et tours
@@ -176,15 +213,73 @@ Le premier joueur est **tiré au sort** à la création (`GameService` +
 `Random` injectable pour les tests) ; il subit le malus de mise en place (2
 Legends déjà inclinées). Il n'y a pas de mulligan (limite assumée, §11).
 
+### 3.5 Combat interactif (Mini-Feature 6)
+
+Règle officielle § ATTACKING : « *Each Unit attacks individually, and completes all
+the attacking steps before another Unit can attack.* » Une attaque n'est donc plus
+résolue d'un seul bloc : elle traverse des étapes portées par `PendingAttack`
+(`GameState.pendingAttack`, publié dans `GameStateDTO.pendingAttack`).
+
+```text
+AttackCommand (déclare, incline l'attaquant, MAIN→COMBAT, ON_ATTACK)
+      │
+      ├─ défenseur avec {Blocker} prêt ──▶ AWAITING_BLOCK ──┬─ USE_BLOCKER  ──▶ FIGHT! (dernier Blocker)
+      │                                                     └─ DECLINE_BLOCK ─┐
+      └─ aucun Blocker prêt ─────────────────────────────────────────────────┤
+                                                                              ▼
+                              cible déclarée (Unit rivale dépensée) ──▶ FIGHT! (RuleEngine.fight)
+                              attaque directe (Gig Area) ──▶ quota N = (power / 10) + 1  (0 si power ≤ 0)
+                                                              plafond M = min(N, dés Gigs ACTIFS du défenseur)
+                                                                   ├─ M = 0 ──▶ attaque réussie, 0 dé volé
+                                                                   └─ M ≥ 1 ──▶ AWAITING_STEAL_CHOICE ──(STEAL_GIG : M identifiants)──▶ dés transférés
+```
+
+- **Cibles légales** (`AttackCommand.validate`) : une Unit rivale **dépensée**
+  (« *Ready Units can't be attacked* ») ou la Gig Area adverse (attaque directe).
+  Un `{Blocker}` prêt n'est donc jamais une cible : il intercepte via la fenêtre.
+  Une attaque déjà en cours bloque toute nouvelle déclaration (`isCombatPending()`).
+- **Blocage au choix du défenseur** (`BlockCommand`, action `USE_BLOCKER`) : le
+  défenseur peut dépenser **un ou plusieurs** `{Blocker}` prêts (`cardIds`, ordre
+  significatif). Chaque Blocker est incliné, l'événement `ATTACK_BLOCKED` est
+  publié, ses compétences sont résolues (`ON_BLOCK` puis `ON_ATTACK`, cible =
+  l'attaquant) et **seul le dernier Blocker déclaré** encaisse les dégâts du
+  combat. Une attaque redirigée ne vole **jamais** de Gig. `DeclineBlockCommand`
+  (`DECLINE_BLOCK`) laisse l'attaque suivre son cours.
+- **Quota et plafond strict** (`RuleEngine.calculateQuota` /
+  `calculateActualStealable`, `GameConstants.POWER_PER_EXTRA_GIG = 10`) :
+  `N = power ≤ 0 ? 0 : (power / 10) + 1` (1-9 → 1, 10-19 → 2, 20-29 → 3, …) puis
+  `M = min(N, défenseur.getActiveGigCount())`. On ne crée jamais de dé et on ne
+  ponctionne jamais la Fixer Area. `M = 0` n'ouvre **aucun** choix : l'attaque est
+  réussie (Unit inclinée, phase `COMBAT`) et le journal consigne `GIG_STOLEN` en
+  `FAILED` avec le détail du plafond.
+- **Choix de l'attaquant** (`StealGigCommand`, action `STEAL_GIG`) : exactement `M`
+  identifiants (`dice`, repli `cardIds` / `chosen`), tous distincts et tous actifs
+  chez le défenseur — sinon refus sans mutation. `M` est **recalculé** à la
+  validation (une réaction `QUICK` peut avoir changé la puissance ou les dés).
+  Chaque dé transféré conserve son identifiant, son type et sa valeur
+  (« un d8 affichant 5 reste un d8 affichant 5 »), événement `GIG_STOLEN` par dé.
+- **Fin de tour** (`EndTurnCommand` → `CombatResolver.autoResolve`) : un combat en
+  suspens est résolu automatiquement pour qu'un joueur silencieux ne gèle pas la
+  partie — blocage refusé implicitement, puis vol des `M` dés de plus haute valeur
+  (tri stable, journal `GIG_STEAL_AUTO`).
+- **Victoire** : un vol ne fait jamais gagner immédiatement ; les ≥ 7 dés sont
+  vérifiés au tout début de la phase `DRAW` du joueur entrant (§3.4, étape 2).
+
+Journal de diagnostic (`actionType`) : `ATTACK`, `BLOCKER_PROMPT`, `USE_BLOCKER`,
+`DECLINE_BLOCK`, `GIG_STEAL_CHOICE`, `GIG_STOLEN`, `GIG_STEAL_AUTO`, `FIGHT`.
+
 ## 4. Commandes
 
 | Commande | Ordonnateur | Phase | Effet |
 |---|---|---|---|
 | `PlayCardCommand` | actif (ou défenseur QUICK en réaction) | `MAIN`/`COMBAT` | Legend : FLIP gratuit ; Unit : paie → Field (+ mal d'invocation sauf `GO_SOLO`) ; Program : paie → `ON_PLAY` → défausse ; Gear : paie → attaché à une Unit alliée |
-| `AttackCommand` | actif | `MAIN`/`COMBAT` (auto `MAIN→COMBAT`) | épuise, ouvre la fenêtre, `ON_ATTACK`, puis vol de Gig (sans cible) ou comparaison des puissances (égalité = les deux vaincues) |
+| `AttackCommand` | actif | `MAIN`/`COMBAT` (auto `MAIN→COMBAT`) | épuise l'attaquant, ouvre la fenêtre de réaction, `ON_ATTACK`, puis **ouvre la résolution** (`CombatResolver.openAttack`, §3.5) : `AWAITING_BLOCK` si le défenseur a un `{Blocker}` prêt, sinon combat (cible déclarée **dépensée**) ou vol plafonné (attaque directe). Refusée tant qu'une attaque est en cours |
+| `BlockCommand` (Mini-Feature 6) | **défenseur** (hors tour) | `MAIN`/`COMBAT` / `AWAITING_BLOCK` | `USE_BLOCKER` : incline chaque `{Blocker}` désigné (`cardIds`, ordre significatif ; `instanceId` pour un blocage simple), `ATTACK_BLOCKED`, compétences `ON_BLOCK` puis `ON_ATTACK`, combat contre le **dernier** Blocker, aucun Gig volé |
+| `DeclineBlockCommand` (Mini-Feature 6) | **défenseur** (hors tour) | `MAIN`/`COMBAT` / `AWAITING_BLOCK` | `DECLINE_BLOCK` : renoncement explicite → `CombatResolver.resolveAttack` (combat ou choix des dés à voler) |
+| `StealGigCommand` (Mini-Feature 6) | actif (attaquant) | `MAIN`/`COMBAT` / `AWAITING_STEAL_CHOICE` | `STEAL_GIG` : transfère **exactement M** dés Gigs actifs choisis (`dice` = identifiants `gigDieIds`), type + valeur + identifiant conservés, `GIG_STOLEN` par dé |
 | `SellCardCommand` | actif | `MAIN` | 1 carte de la main → révélée au rival puis posée en Eddies Area `faceDown=true`, `exhausted=false` (prête) ; **aucun Eddie immédiat** : la carte devient une ressource à incliner (`SpendResourceCommand`, 1 €$/tour) |
 | `SpendResourceCommand` (R4, Mini-Feature 4) | actif | `MAIN` | **Générer des Eddies** : incliner une ressource — Legend non inclinée de la `LEGENDS_AREA` **ou** carte vendue non inclinée de l'`EDDIES_AREA` (ID unique, propriété du joueur ordonnateur vérifiée) → `exhausted=true`, `availableEddies += 1` ; 1 €$ par tour et par carte, redressée au START PHASE. Actions filaires : `SPEND_RESOURCE` (+ aliases historiques `SPEND_LEGEND`/`SPEND_EDDIES` via `SpendLegendCommand`/`SpendEddiesCommand`, sous-classes de cette commande) |
-| `EndTurnCommand` | actif | toute sauf `DRAW` | `ON_TURN_END`, fermeture fenêtre, passage du tour, `DRAW_START`, victoire à 7 Gigs, redressement, puis **attente** `AWAITING_DRAW` |
+| `EndTurnCommand` | actif | toute sauf `DRAW` | **résolution automatique d'un combat en suspens** (`CombatResolver.autoResolve`), `ON_TURN_END`, fermeture fenêtre, passage du tour, `DRAW_START`, victoire à 7 Gigs, redressement, puis **attente** `AWAITING_DRAW` |
 | `DrawCardCommand` (Mini-Feature 5) | actif | `DRAW` / `AWAITING_DRAW` | pioche 1 (deck vide → défaite), puis `AWAITING_DIE_SELECT` (ou `MAIN` si plus aucun dé). Action filaire `DRAW_CARD` |
 | `SelectDieCommand` (Mini-Feature 5) | actif | `DRAW` / `AWAITING_DIE_SELECT` | valide le dé (`dice[0]` ∈ Fixer Area, `d20` seulement en dernier), lance côté serveur, `gigs`/`gigDice` += résultat, puis `MAIN`. Action filaire `SELECT_DIE` |
 
@@ -196,14 +291,30 @@ Détails :
 - **Gear** : hôte obligatoire (Unit alliée du Field) ; sa puissance compte dans
   le total de l'hôte ; il suit l'hôte dans la défausse. Pas de déséquipement en V1.
 - **Program** : résolu depuis la main puis défaussé (même sans effet).
-- **Combat** : totaux = unit + gears. Si la cible a quitté le Field pendant
-  `ON_ATTACK`, l'attaque est sans effet (pas de dégâts « dans le vide »).
-- **BLOCKER** : un BLOCKER rival prêt force le ciblage (toute attaque vers une
-  autre Unit est refusée) et interdit le vol direct de Gig.
+- **Combat** (`RuleEngine.fight`) : totaux = unit + gears ; la puissance la plus
+  haute l'emporte, **égalité = les deux Units vaincues** (règle officielle
+  « *Higher defeats other. Tie both defeated.* »), journal `FIGHT`. Si un
+  participant a quitté le Field (réaction `ON_ATTACK`, effet tiers), l'attaque est
+  **sans effet** (`CombatResolver.fizzle`, journal `ATTACK` en `FAILED`) — pas de
+  dégâts « dans le vide ».
+- **Cibles d'attaque** : une Unit rivale **dépensée** uniquement (« *Ready Units
+  can't be attacked* ») ou la Gig Area adverse. Attaquer sa propre Unit, une Unit
+  prête ou une carte hors Field est refusé.
+- **BLOCKER** : un `{Blocker}` rival prêt n'interdit plus rien à l'attaquant — il
+  ouvre la fenêtre « Utiliser Blocker ? » et c'est le **défenseur** qui décide
+  (`USE_BLOCKER` / `DECLINE_BLOCK`, §3.5). Blocage multiple autorisé : tous les
+  Blockers désignés sont dépensés et résolvent leurs compétences, **seul le
+  dernier** encaisse les dégâts. Une attaque redirigée ne vole aucun Gig.
+- **Vol de Gigs** : quota `N = (power / 10) + 1` (0 si power ≤ 0), **plafond
+  strict** `M = min(N, dés Gigs actifs du défenseur)` — jamais un dé de la Fixer
+  Area, jamais de dé créé. L'attaquant choisit les `M` dés (`STEAL_GIG`) ; `M = 0`
+  = attaque réussie sans vol.
 - **Fenêtre de réaction** : ouverte à chaque attaque pour le défenseur ; le
   défenseur n'y joue que des cartes `QUICK` (hors tour, coûts payés normalement) ;
   le joueur actif n'est pas restreint ; fermeture sur `EndTurnCommand`.
-- **Fin de tour** : victoire immédiate si l'entrant a ≥ 7 Gigs (**avant** pioche
+- **Fin de tour** : un combat encore en attente est résolu d'office (blocage
+  refusé implicitement, puis vol automatique des `M` dés de plus haute valeur) ;
+  victoire immédiate si l'entrant a ≥ 7 Gigs (**avant** pioche
   et lancer) ; sinon redressement puis **attente** de la pioche (`AWAITING_DRAW`).
   La pioche (`DRAW_CARD`, deck vide → défaite) et le lancer (`SELECT_DIE`, plus de
   dé → on saute) sont ordonnés par le joueur ; `MAIN` s'ouvre ensuite (§3.4).
@@ -303,8 +414,9 @@ correspondante n'apparaît pas au journal de diagnostic.
 | Mot-clé | Rôle |
 |---|---|
 | `quick` | seul timing de réaction (commande + déclencheur `QUICK`) |
-| `blocker` | interception obligatoire (si prêt) |
+| `blocker` | interception **au choix du défenseur** (fenêtre `AWAITING_BLOCK`, déclencheur `ON_BLOCK`, mini-langage `ON_BLOCK:…` ou marqueur `{Block}`) ; le rappel `{Blocker}` dans un texte reste ignoré |
 | `go_solo` | attaque le tour de pose (Units ; Legends-jouées-en-Units = V2) |
+| `adrenaline` / `haste` | alias « jeu rapide » : mal d'invocation ignoré (`haste` accepté par le moteur et le schéma, aucune carte du catalogue officiel ne le porte encore) |
 | `flip` | informatif (le déclencheur `FLIP` part au retournement d'une Legend) |
 | `play` / `attack` | informatifs (le déclencheur vient du mini-langage) |
 
@@ -324,8 +436,10 @@ pas de double `ON_DEATH`.
 | Phases Draw → Main → Combat → End | `Phase`, transitions auto (`EndTurnCommand`, `AttackCommand`) ; `DRAW` interactive (`DrawStep`, `DrawPhaseHandler`) |
 | START PHASE : ready → draw 1 → gain a Gig, `d20` en dernier | `DrawPhaseHandler` (`readyAndAwaitDraw`, `drawCard`, `rollSelectedDie`), `Player.selectableFixerDice()` |
 | Legend Call : 1 Eddie, once per turn, effet CALL/FLIP (R4) | `PlayCardCommand` branche Legend (coût 1, `hasCalledLegendThisTurn`, triggers `FLIP`+`CALL`) |
-| Unit : power = dégâts | comparaison des puissances (`AttackCommand`), `DAMAGE` létal |
-| Unit posée : pas d'attaque sauf `GO_SOLO` | `summoningSickness` (`PlayCardCommand`), levée au tour suivant, exemption `hasGoSolo()` |
+| Unit : power = dégâts | `RuleEngine.fight` (comparaison des puissances, égalité = les deux vaincues), `DAMAGE` létal |
+| Cibles d'attaque : Unit rivale **dépensée** ou Gig Area | `AttackCommand.validate` (« Ready Units can't be attacked »), `validAttackTargets` côté front |
+| Une attaque à la fois (toutes ses étapes avant la suivante) | `GameState.isCombatPending()`, refus `AttackCommand.validate` |
+| Unit posée : pas d'attaque sauf `GO_SOLO`/`ADRENALINE`/`HASTE` | `summoningSickness` (`PlayCardCommand`), levée au tour suivant, exemption `CardInstance.canIgnoreSummoningSickness()` |
 | Program : effet Play puis défausse | `PlayCardCommand` (branche Program) |
 | Gear : attaché à une Unit | `PlayCardCommand` (hôte obligatoire), `totalPowerFor`, suivi en défausse |
 | RAM = deckbuilding uniquement (R7) — aucune vérif en jeu | `GameConstants.RAM_CEILING_ENFORCED=false`, `PlayCardCommand` sans vérif RAM |
@@ -333,7 +447,11 @@ pas de double `ON_DEATH`.
 | Eddies / Street Cred | réserve dépensée / seuil non consommé (`Player`, `PlayCardCommand`) |
 | Vente 1 carte/tour, **0 Eddie immédiat** (création de ressource) | `SALES_PER_TURN`, `SellCardCommand` + `hasSoldThisTurn`, gain via `SpendEddiesCommand` |
 | Réactions QUICK uniquement | `ReactionWindow`, `PlayCardCommand` (défenseur), fermeture en fin de tour |
-| BLOCKER intercepte | `AttackCommand.validate` + `Player.controlsReadyBlocker` |
+| BLOCKER intercepte **au choix du défenseur** (blocage multiple, dernier Blocker seul touché) | `CombatResolver.openAttack`/`resolveBlock`, `BlockCommand` (`USE_BLOCKER`), `DeclineBlockCommand`, `Player.readyBlockers()`, événement `ATTACK_BLOCKED`, déclencheur `ON_BLOCK` |
+| Vol de Gigs : quota `N = (power / 10) + 1`, 0 si power 0 | `RuleEngine.calculateQuota`, `GameConstants.POWER_PER_EXTRA_GIG` |
+| **Plafond strict** : `M = min(N, dés Gigs actifs du défenseur)`, jamais la Fixer Area, jamais de dé créé | `RuleEngine.calculateActualStealable`, `Player.activeGigs()`/`getActiveGigCount()`, `CombatResolver.resolveAttack` |
+| L'attaquant choisit **quels** dés voler, type + valeur conservés | `StealGigCommand` (`STEAL_GIG`), `GameState.stealGig(from, to, dieId)`, `Player.addGigDie`/`removeGigById`, `GigDie` |
+| Victoire : 7 dés au **tout début** de la phase DRAW (jamais pendant un vol) | `EndTurnCommand` → `DrawPhaseHandler` (`VICTORY_CHECK`), `GameConstants.GIGS_TO_WIN` |
 | Journal de diagnostic (toutes les actions) | `GameLog`, `GameState.log*`, `GameService.executeCommand`, `/topic/game/{id}/log`, `DebugController` |
 
 ## 7. Vues masquées
@@ -397,8 +515,30 @@ cd backend && mvn clean test   # profil H2 (aucun Docker requis)
 
 - `engine/RuleEngineTest` : déclencheurs, 6 effets, mini-langage, heuristiques.
 - `engine/GameCommandTest` : pose (Unit/Program/Gear/Legend), coûts, seuils,
-  combat (victoire/égalité), BLOCKER, vol, QUICK, vente unique, victoire à 7,
-  phase DRAW interactive (pioche puis dé sur action du joueur), deck-out, `GO_SOLO`.
+  combat (victoire/égalité, cibles dépensées), BLOCKER (interception au choix du
+  défenseur), vol (choix de l'attaquant + plafond strict), QUICK, vente unique,
+  victoire à 7, phase DRAW interactive (pioche puis dé sur action du joueur),
+  deck-out, `GO_SOLO`.
+- `engine/CombatStealTest` (Mini-Feature 6 — « Combat, Vol de Dés & Plafond des
+  Dés Actifs ») : `testR6_Power0_StealsZeroGigs`, `testR6_Power1To9_StealsOneGig`,
+  `testR6_Power10To19_StealsTwoGigs`, `testR6_Power25_TargetHasOnly2Gigs_StealsOnly2Gigs`,
+  `testR6_TargetHas0Gigs_Steals0Gigs_AttackSucceeds`,
+  `testR6_Blocker_RedirectsAttackToBlockerUnit`,
+  `testR6_UnitVsUnit_DefeatsUnitIfDamageGreaterOrEqualPower`,
+  `testR6_VictoryCondition_7Gigs_AtStartOfDrawPhase`, plus
+  `testR6_Quota_Formula_AndStrictCeiling`, `testR6_StolenDie_KeepsExactDieAndValue`,
+  `testR6_StealChoice_ValidationGuards`, `testR6_OnlyActiveDiceAreStealable`,
+  `testR6_Steal_NeverWinsImmediately`, `testR6_Blocker_DirectAttack_StealsNothing`,
+  `testR6_DeclineBlock_ThenAttackResolves`, `testR6_MultiBlock_OnlyLastBlockerTakesDamage`,
+  `testR6_MultiBlock_LastBlockerMayDie`, `testR6_Block_ValidationGuards`,
+  `testR6_NoReadyBlocker_AttackResolvesImmediately`,
+  `testR6_AttackTargets_OnlySpentRivalUnits`, `testR6_Haste_IgnoresSummoningSickness`,
+  `testR6_OneAttackAtATime`, `testR6_EndTurn_AutoResolvesPendingAttack`.
+  > Numérotation : les noms `testR6_*` suivent le brief de la Mini-Feature 6
+  > (« règle R6 : Combat, Vol de Dés & Plafond ») et ne recouvrent pas le `R6`
+  > de `docs/RULE-CHECKLIST.md` (cartes de l'Eddies Area) — les entrées de
+  > checklist concernées sont R9 (combat), R10 (Lag/`HASTE`), R11 (`{Blocker}`)
+  > et R12 (Gigs & victoire).
 - `engine/DrawPhaseTest` (Mini-Feature 5 — « Phase DRAW interactive & choix des
   dés ») : `testR5_Draw_Sequence_RequiresPlayerActionForDraw` (fin de tour →
   `AWAITING_DRAW`, rien de pioché ni lancé, `END_TURN`/`SELECT_DIE`/jeu refusés,
@@ -456,6 +596,15 @@ cd backend && mvn clean test   # profil H2 (aucun Docker requis)
   motifs ; les nouvelles cartes peuvent embarquer le mini-langage pour un
   comportement exact et testable.
 - Fenêtre de réaction simplifiée : synchrone, ouverte à chaque attaque, fermée
-  en fin de tour (pas de passe explicite ni de pile proposée/répondue).
+  en fin de tour (pas de passe explicite ni de pile proposée/répondue). Les cartes
+  `QUICK` se jouent **avant** la décision de blocage (la fenêtre Blocker s'ouvre
+  après `ON_ATTACK`) ; un empilement fin de réactions pendant le combat reste à
+  faire (V2).
+- Combat interactif (Mini-Feature 6) : pas de délai côté serveur pour la fenêtre
+  « Utiliser Blocker ? » ni pour le choix des dés — `END_TURN` résout d'office
+  (blocage refusé, vol des `M` dés les plus forts). Un minuteur de décision
+  resterait à ajouter pour le jeu compétitif.
+- `haste` est accepté (moteur, schéma `card-schema.json`, types front) mais aucune
+  carte du catalogue officiel ne le porte : le scraper ne le produit pas encore.
 - Pas de persistance des parties ni de diffusion STOMP (feature 04) ; pas de
   contrôle de deck (feature deck-builder).

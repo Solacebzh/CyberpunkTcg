@@ -8,6 +8,12 @@ public enum TriggerType {
     ON_PLAY,
     /** L'Unit déclare une attaque (résolu avant la comparaison des puissances). */
     ON_ATTACK,
+    /**
+     * L'Unit intercepte une attaque avec le mot-clé {@code BLOCKER}
+     * (Mini-Feature 6) : résolu pour CHAQUE Blocker dépensé, avant le combat
+     * contre le dernier d'entre eux.
+     */
+    ON_BLOCK,
     /** L'Unit est vaincue (mise dans la défausse). */
     ON_DEATH,
     /** Fin du tour du contrôleur (déclenché par {@code EndTurnCommand}). */

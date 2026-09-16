@@ -3,7 +3,14 @@
 export type CardType = 'legend' | 'unit' | 'program' | 'gear'
 export type CardColor = 'red' | 'green' | 'blue' | 'yellow'
 export type CardRarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'secret' | 'iconic' | 'nova' | 'promo'
-export type CardKeyword = 'go_solo' | 'blocker' | 'quick' | 'flip' | 'play' | 'attack'
+/**
+ * Mots-clés de cartes (miroir de `CardKeyword.java`).
+ *
+ * `haste` (Mini-Feature 6) est l'alias « jeu rapide » du mal d'invocation ignoré :
+ * il se comporte comme `go_solo` (et comme `adrenaline` côté moteur). Aucune carte
+ * du catalogue officiel ne le porte encore.
+ */
+export type CardKeyword = 'go_solo' | 'blocker' | 'quick' | 'flip' | 'play' | 'attack' | 'haste'
 
 export interface GameCard {
   id: string

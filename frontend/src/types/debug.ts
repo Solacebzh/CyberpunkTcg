@@ -5,7 +5,7 @@
  * `test` et `dev` : en production elles répondent 404, le panneau de debug
  * affiche alors l'erreur sans casser la partie. Voir `docs/DEBUG-GUIDE.md`.
  */
-import type { CardInstance, GameActionLogEntry, GameLogEntry } from '@/types/game'
+import type { CardInstance, GameActionLogEntry, GameLogEntry, PendingAttack } from '@/types/game'
 
 /** État complet et **non masqué** d'un joueur (`GET /api/debug/game/{id}/player/{pid}`). */
 export interface DebugPlayerState {
@@ -18,6 +18,8 @@ export interface DebugPlayerState {
   gigs: number[]
   /** Type du dé de chaque Gig (aligné sur `gigs`). */
   gigDice?: string[]
+  /** Identifiant stable de chaque dé Gig actif (Mini-Feature 6 : vol choisi). */
+  gigDieIds?: string[]
   gigCount: number
   streetCred: number
   fixerDice: string[]
@@ -55,6 +57,8 @@ export interface DebugGameState {
   seed: number
   createdAt: string
   reactionWindow?: DebugReactionWindow | null
+  /** Attaque en cours de résolution (Mini-Feature 6), absente hors combat. */
+  pendingAttack?: PendingAttack | null
   players: DebugPlayerState[]
   log: GameLogEntry[]
   gameLog: GameActionLogEntry[]

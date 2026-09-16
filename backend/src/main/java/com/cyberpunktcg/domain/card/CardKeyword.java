@@ -8,6 +8,12 @@ import java.util.Arrays;
 public enum CardKeyword {
     GO_SOLO("go_solo"),
     ADRENALINE("adrenaline"),
+    /**
+     * Alias « jeu rapide » (Mini-Feature 6) : l'Unit ignore le mal d'invocation,
+     * comme {@link #ADRENALINE} et {@link #GO_SOLO}. Aucune carte du catalogue
+     * officiel ne le porte encore ; il est accepté par le moteur et le schéma.
+     */
+    HASTE("haste"),
     BLOCKER("blocker"),
     QUICK("quick"),
     FLIP("flip"),
