@@ -1,5 +1,6 @@
 package com.cyberpunktcg.domain.user;
 
+import com.cyberpunktcg.domain.deck.DeckRepository;
 import com.cyberpunktcg.domain.user.dto.AuthResponse;
 import com.cyberpunktcg.domain.user.dto.LoginRequest;
 import com.cyberpunktcg.domain.user.dto.RegisterRequest;
@@ -35,8 +36,13 @@ class AuthControllerTest {
     @Autowired
     private UserRepository userRepository;
 
+    @Autowired
+    private DeckRepository deckRepository;
+
     @BeforeEach
     void cleanUp() {
+        // Isole les comptes et leurs decks (Mini-Feature 9C) d'une classe de tests à l'autre.
+        deckRepository.deleteAll();
         userRepository.deleteAll();
     }
 
@@ -147,10 +153,11 @@ class AuthControllerTest {
                 AuthResponse.class
         );
 
-        // Une route protégée retourne non pas 403, mais 404 si le endpoint n'existe pas encore
-        // ou 200/autre, mais l'authentification est passée (non 403/401).
+        // L'authentification est passée (ni 401 ni 403) : /api/decks est servi
+        // (Mini-Feature 9C) et un compte neuf n'a encore aucun deck.
         mockMvc.perform(get("/api/decks")
                         .header("Authorization", "Bearer " + auth.getToken()))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
     }
 }

@@ -7,12 +7,29 @@
  * 3. Maximum 3 exemplaires de la même carte dans le Main Deck.
  * 4. Plafond de RAM calculé par couleur depuis les Legends (cartes de couleurs
  *    à plafond > 0 uniquement, coût RAM <= plafond).
+ *
+ * Mini-Feature 9C — persistance : le deck en cours d'édition reste dans le
+ * `localStorage` (brouillon hors ligne), et « Mes Decks » est lu/écrit sur le
+ * compte du joueur via `/api/decks` (JWT). Le serveur rejoue les règles
+ * ci-dessus **avant** d'écrire : ses refus (`400` + `errors`) alimentent
+ * `serverErrors`, affichés en rouge par `DeckBuilderView`.
  */
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 
-import { fetchCards } from '@/services/api'
+import {
+  ApiError,
+  createDeck,
+  deleteDeck,
+  fetchCards,
+  fetchDecks,
+  updateDeck,
+  type SavedDeck,
+} from '@/services/api'
+import { AUTH_CLEARED_EVENT, getAuthToken } from '@/services/authToken'
 import { CARD_COLOR_LABELS, type CardColor, type CardType, type GameCard } from '@/types/card'
+
+export type { SavedDeck }
 
 const STORAGE_KEY = 'cyberpunk-tcg.deck.v1'
 
@@ -23,6 +40,9 @@ export const MAX_COPIES_PER_CARD = 3
 export const REQUIRED_NON_LEGENDS = MAIN_DECK_MIN
 
 export type CatalogState = 'idle' | 'loading' | 'ready' | 'error'
+
+/** État du chargement de « Mes Decks » (decks persistés du compte courant). */
+export type SavedDecksState = 'idle' | 'loading' | 'ready' | 'error'
 
 function loadStoredDeck(): string[] {
   if (typeof window === 'undefined') return []
@@ -115,6 +135,21 @@ export const useDeckStore = defineStore('deck', () => {
 
   // --- Deck ---
   const deck = ref<string[]>(loadStoredDeck())
+
+  // --- Decks sauvegardés sur le compte (Mini-Feature 9C) ---
+  /** « Mes Decks » : uniquement ceux du joueur connecté. */
+  const savedDecks = ref<SavedDeck[]>([])
+  const savedDecksState = ref<SavedDecksState>('idle')
+  const savedDecksError = ref<string | null>(null)
+  /**
+   * Infractions renvoyées par le serveur lors d'une sauvegarde refusée
+   * (`400` + `ApiErrorResponse.errors`) : affichées telles quelles, en rouge.
+   */
+  const serverErrors = ref<string[]>([])
+  /** Deck du compte en cours d'édition ; `null` = la sauvegarde créera un nouveau deck. */
+  const currentDeckId = ref<number | null>(null)
+  const currentDeckName = ref('')
+  const savingDeck = ref(false)
 
   const byId = computed(() => new Map(cards.value.map((card) => [card.id, card])))
 
@@ -255,6 +290,25 @@ export const useDeckStore = defineStore('deck', () => {
     return 'Deck Incomplet'
   })
 
+  // --- Decks sauvegardés : dérivés ---
+  const currentSavedDeck = computed<SavedDeck | null>(
+    () => savedDecks.value.find((saved) => saved.id === currentDeckId.value) ?? null,
+  )
+
+  /** Le deck en cours d'édition diffère-t-il de sa version sauvegardée ? */
+  const isDirty = computed(() => {
+    if (currentDeckId.value === null) return deck.value.length > 0
+    const saved = currentSavedDeck.value
+    if (!saved) return true
+    return saved.cardIds.join('|') !== deck.value.join('|')
+  })
+
+  /** Résumé affichable d'un deck sauvegardé (« 43 cartes · 3 Legends »). */
+  function describeSavedDeck(saved: SavedDeck): string {
+    const legends = saved.cardIds.filter((id) => byId.value.get(id)?.type === 'legend').length
+    return `${saved.cardIds.length} cartes · ${legends} Legends`
+  }
+
   const filteredCards = computed(() => {
     const needle = search.value.trim().toLowerCase()
     return cards.value.filter((card) => {
@@ -339,6 +393,129 @@ export const useDeckStore = defineStore('deck', () => {
   function setDeck(ids: string[]): void {
     deck.value = [...ids]
     persist()
+  }
+
+  // --- Decks sauvegardés sur le compte (Mini-Feature 9C) ---
+
+  /** Un jeton est-il présent ? (le deck builder est une route authentifiée) */
+  function hasToken(): boolean {
+    return getAuthToken() !== null
+  }
+
+  /**
+   * Traduit une erreur d'API en lignes affichables : le serveur renvoie une
+   * infraction par ligne (`ApiErrorResponse.errors`), on les montre telles
+   * quelles, en rouge, sans reformater.
+   */
+  function describeError(error: unknown): string[] {
+    if (error instanceof ApiError) {
+      if (error.details.length > 0) return [...error.details]
+      if (error.status === 401 || error.status === 403) {
+        return ['Session expirée ou accès refusé : reconnecte-toi pour gérer tes decks.']
+      }
+      if (error.serverMessage) return [error.serverMessage]
+    }
+    return [error instanceof Error ? error.message : 'Erreur inconnue']
+  }
+
+  /** Charge « Mes Decks » (`GET /api/decks`). Sans jeton, on n'appelle rien. */
+  async function loadSavedDecks(): Promise<void> {
+    if (!hasToken()) {
+      savedDecks.value = []
+      savedDecksState.value = 'idle'
+      savedDecksError.value = null
+      return
+    }
+
+    savedDecksState.value = 'loading'
+    savedDecksError.value = null
+    try {
+      savedDecks.value = await fetchDecks()
+      savedDecksState.value = 'ready'
+    } catch (error) {
+      savedDecksState.value = 'error'
+      savedDecksError.value = describeError(error)[0] ?? 'Mes Decks indisponibles'
+    }
+  }
+
+  /**
+   * Sauvegarde le deck courant sur le compte du joueur :
+   * `POST /api/decks` s'il est nouveau, `PUT /api/decks/{id}` s'il est déjà chargé.
+   *
+   * <p>Le serveur rejoue les règles officielles (3 Legends uniques, Main Deck
+   * 40-50, max 3 copies, plafonds de RAM) <strong>avant</strong> d'écrire :
+   * en cas de refus (`400`), {@link serverErrors} porte ses messages et le deck
+   * n'est pas créé.</p>
+   *
+   * @return `true` si le serveur a accepté le deck
+   */
+  async function saveDeck(name: string): Promise<boolean> {
+    serverErrors.value = []
+    const trimmedName = name.trim()
+
+    if (!hasToken()) {
+      serverErrors.value = ['Connecte-toi pour sauvegarder tes decks.']
+      return false
+    }
+    if (!trimmedName) {
+      serverErrors.value = ['Donne un nom au deck avant de le sauvegarder.']
+      return false
+    }
+    if (deck.value.length === 0) {
+      serverErrors.value = ['Le deck est vide : ajoute des cartes avant de le sauvegarder.']
+      return false
+    }
+
+    savingDeck.value = true
+    try {
+      const payload = { name: trimmedName, cardIds: [...deck.value] }
+      const saved =
+        currentDeckId.value === null
+          ? await createDeck(payload)
+          : await updateDeck(currentDeckId.value, payload)
+      currentDeckId.value = saved.id
+      currentDeckName.value = saved.name
+      await loadSavedDecks()
+      return true
+    } catch (error) {
+      serverErrors.value = describeError(error)
+      return false
+    } finally {
+      savingDeck.value = false
+    }
+  }
+
+  /** Charge un deck sauvegardé dans l'éditeur (il devient le deck courant). */
+  function openSavedDeck(saved: SavedDeck): void {
+    setDeck(saved.cardIds)
+    currentDeckId.value = saved.id
+    currentDeckName.value = saved.name
+    serverErrors.value = []
+  }
+
+  /** Détache l'éditeur : la prochaine sauvegarde créera un deck distinct. */
+  function startNewDeck(): void {
+    currentDeckId.value = null
+    currentDeckName.value = ''
+    serverErrors.value = []
+  }
+
+  /** Supprime un de mes decks (`DELETE /api/decks/{id}`). */
+  async function deleteSavedDeck(deckId: number): Promise<boolean> {
+    serverErrors.value = []
+    try {
+      await deleteDeck(deckId)
+      savedDecks.value = savedDecks.value.filter((saved) => saved.id !== deckId)
+      if (currentDeckId.value === deckId) startNewDeck()
+      return true
+    } catch (error) {
+      serverErrors.value = describeError(error)
+      return false
+    }
+  }
+
+  function clearServerErrors(): void {
+    serverErrors.value = []
   }
 
   /**
@@ -462,6 +639,19 @@ export const useDeckStore = defineStore('deck', () => {
     setDeck(newDeckIds)
   }
 
+  // Une déconnexion — ou un JWT expiré signalé par l'API — vide « Mes Decks » :
+  // aucun deck d'un autre compte ne doit rester affiché.
+  if (typeof window !== 'undefined') {
+    window.addEventListener(AUTH_CLEARED_EVENT, () => {
+      savedDecks.value = []
+      savedDecksState.value = 'idle'
+      savedDecksError.value = null
+      serverErrors.value = []
+      currentDeckId.value = null
+      currentDeckName.value = ''
+    })
+  }
+
   return {
     // catalogue
     cards,
@@ -485,6 +675,16 @@ export const useDeckStore = defineStore('deck', () => {
     problems,
     isValid,
     validationStatus,
+    // decks sauvegardés sur le compte
+    savedDecks,
+    savedDecksState,
+    savedDecksError,
+    serverErrors,
+    currentDeckId,
+    currentDeckName,
+    currentSavedDeck,
+    savingDeck,
+    isDirty,
     // actions
     loadCatalog,
     add,
@@ -494,5 +694,12 @@ export const useDeckStore = defineStore('deck', () => {
     canAdd,
     buildSampleDeck,
     importFromText,
+    loadSavedDecks,
+    saveDeck,
+    openSavedDeck,
+    startNewDeck,
+    deleteSavedDeck,
+    clearServerErrors,
+    describeSavedDeck,
   }
 })

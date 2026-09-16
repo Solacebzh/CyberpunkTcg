@@ -25,6 +25,10 @@ H2 en mémoire et ne requiert ni Docker ni service externe.
 | REST | `GET /api/cards?type=unit&color=red` | Catalogue, filtres facultatifs type/couleur |
 | REST | `GET /api/cards/{id}` | Détail d'une carte (`404` si absente) |
 | REST | `GET /api/cards/stats` | Totaux par type et couleur |
+| REST | `GET /api/decks` | **Mes decks** (JWT requis) — uniquement ceux du compte courant |
+| REST | `POST /api/decks` | Sauvegarde d'un deck (`201`) ; `400` + liste des infractions si les règles officielles sont violées |
+| REST | `PUT /api/decks/{id}` | Mise à jour d'un de mes decks (re-validation complète) |
+| REST | `DELETE /api/decks/{id}` | Suppression d'un de mes decks (`204`) |
 | WS | `ws://localhost:8080/ws` | Handshake WebSocket (STOMP) |
 | STOMP | `SEND /app/ping` → `SUBSCRIBE /topic/pong` | Test aller-retour temps réel |
 
@@ -43,7 +47,7 @@ mvn test      # profil « test » : H2 en mémoire, import des 5 cartes, aucun D
 com.cyberpunktcg
 ├── api/            # contrôleurs REST + STOMP, DTO (records)
 ├── config/         # WebSocket, CORS, sérialisation
-├── domain/         # modèle de jeu : Card, Game, GameState, Player, Deck (feature 02+)
+├── domain/         # modèle de jeu : Card, Game, GameState, Player, User, Deck (deck = compte + règles)
 ├── engine/         # moteur de règles : phases, combat, résolution d'effets (feature 05+)
 ├── repository/     # Spring Data JPA
 └── service/        # orchestration, transactions, diffusion temps réel

@@ -31,7 +31,8 @@ frontend/
 ├── devtools/
 │   └── mock-protocol.ts          # Serveur STOMP simulé (contrat de transport uniquement)
 ├── tools/
-│   └── mock-server.mjs           # Backend de dev : /api/* + ws://…/ws (npm run mock:ws)
+│   ├── mock-server.mjs           # Backend de dev : /api/* + ws://…/ws (npm run mock:ws)
+│   └── mock-decks.mjs            # /api/auth/* + /api/decks en mémoire (règles de deckbuilding rejouées)
 ├── src/
 │   ├── assets/main.css           # Thème cyberpunk (Tailwind v4 @theme + composants maison)
 │   ├── components/
@@ -58,11 +59,11 @@ frontend/
 │   │   └── useGameSocket.ts      # Canal STOMP unique : connexion, abonnements, intentions
 │   ├── router/index.ts           # /, /lobby, /deck, /game/:gameId?
 │   ├── services/
-│   │   ├── api.ts                # REST (GET /api/health, /api/cards)
+│   │   ├── api.ts                # REST (GET /api/health, /api/cards, /api/decks — JWT)
 │   │   └── socket.ts             # Enveloppe @stomp/stompjs (reconnexion, abonnements)
 │   ├── stores/
 │   │   ├── connection.ts         # Santé API + état du canal partagé
-│   │   ├── deck.ts               # Catalogue + deck (localStorage)
+│   │   ├── deck.ts               # Catalogue + deck (localStorage) + « Mes Decks » persistés (/api/decks)
 │   │   ├── game.ts               # État de partie, sélection, ciblage, intentions
 │   │   ├── lobby.ts              # Pseudo, salons, gameId
 │   │   └── ui.ts                 # Toasts
@@ -73,7 +74,7 @@ frontend/
 │   └── views/
 │       ├── HomeView.vue          # Diagnostic (API + ping) — feature 01
 │       ├── LobbyView.vue         # Pseudo, créer/rejoindre, attente 2e joueur
-│       ├── DeckBuilderView.vue   # Catalogue + glisser-déposer
+│       ├── DeckBuilderView.vue   # Catalogue + glisser-déposer + Mes Decks / sauvegarde
 │       └── GameView.vue          # Plateau 2 joueurs
 ├── vitest.config.ts
 └── src/__tests__/                # Tests de flux (client réel ↔ serveur simulé)

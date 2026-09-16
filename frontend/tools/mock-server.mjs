@@ -6,6 +6,10 @@
  *   • `GET /api/health`, `GET /api/cards[?type=&color=]`, `GET /api/cards/{id}`,
  *     `GET /api/cards/stats` — depuis le vrai catalogue embarqué
  *     (`backend/src/main/resources/data/cards.json`) ;
+ *   • `POST /api/auth/{register,login}` + `GET|POST|PUT|DELETE /api/decks` —
+ *     comptes et decks persistés en mémoire, avec les règles officielles de
+ *     deckbuilding rejouées avant écriture (`tools/mock-decks.mjs`,
+ *     Mini-Feature 9C) ;
  *   • `WS /ws` — serveur STOMP simulé (`devtools/mock-protocol.ts`).
  *
  * Vite proxifie `/api` et `/ws` vers ce port : `npm run dev` + `npm run mock:ws`
@@ -46,6 +50,8 @@ import { WebSocketServer } from 'ws'
 
 import { MockGameServer } from '../devtools/mock-protocol.ts'
 
+import { createAccountDeckApi } from './mock-decks.mjs'
+
 const here = dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.MOCK_PORT ?? 8080)
 const HOST = process.env.MOCK_HOST ?? '0.0.0.0'
@@ -53,6 +59,7 @@ const CATALOG_PATH = join(here, '..', '..', 'backend', 'src', 'main', 'resources
 
 const cards = JSON.parse(readFileSync(CATALOG_PATH, 'utf8'))
 const server = new MockGameServer({ cards, seed: Number(process.env.MOCK_SEED ?? 7) })
+const accounts = createAccountDeckApi({ cards })
 
 console.log(`[mock] catalogue chargé : ${cards.length} cartes depuis ${CATALOG_PATH}`)
 
@@ -66,8 +73,11 @@ function sendJson(response, status, payload) {
   response.end(body)
 }
 
-const httpServer = createServer((request, response) => {
+const httpServer = createServer(async (request, response) => {
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`)
+
+  // Comptes + decks sauvegardés (Mini-Feature 9C) : mêmes routes que Spring.
+  if (await accounts.handle(request, response, url)) return
 
   if (url.pathname === '/api/health') {
     return sendJson(response, 200, {
@@ -126,5 +136,6 @@ wss.on('connection', (socket) => {
 
 httpServer.listen(PORT, HOST, () => {
   console.log(`[mock] API REST + STOMP simulés sur http://${HOST}:${PORT} (ws://${HOST}:${PORT}/ws)`)
+  console.log(`[mock] comptes + decks en mémoire : /api/auth/*, /api/decks (règles de deckbuilding appliquées)`)
   console.log('[mock] ⚠️  moteur de règles simplifié — à utiliser pour l’UI uniquement')
 })
