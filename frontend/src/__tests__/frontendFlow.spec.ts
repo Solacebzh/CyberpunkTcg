@@ -28,11 +28,12 @@ const LEGENDS: MockCard[] = [1, 2, 3, 4].map((index) => ({
   abilities: [],
 }))
 
-const OTHERS: MockCard[] = Array.from({ length: 12 }, (_, index) => ({
+const OTHERS: MockCard[] = Array.from({ length: 14 }, (_, index) => ({
   id: `unit-${index}`,
   name: `Unit ${index}`,
   type: index % 3 === 0 ? 'gear' : index % 3 === 1 ? 'program' : 'unit',
-  color: 'green',
+  color: 'red',
+  ram: 1,
   cost: 2,
   power: 5,
   streetCred: null,
@@ -83,13 +84,13 @@ describe('Deck builder', () => {
     expect(decks.deck).toEqual([legend.id])
     expect(decks.problems.join(' ')).toContain('3 Legends')
 
-    // Deck d'exemple : 3 Legends + 12 cartes non-Legend.
+    // Deck d'exemple : 3 Legends + 40 cartes non-Legend (règles officielles).
     decks.buildSampleDeck()
     await tick()
     expect(decks.legendCount).toBe(3)
-    expect(decks.mainCount).toBe(12)
+    expect(decks.mainCount).toBe(40)
     expect(decks.isValid).toBe(true)
-    expect(wrapper.text()).toContain('Deck valide')
+    expect(wrapper.text()).toContain('Deck Valide')
 
     // Persistance : le deck est relu depuis le localStorage.
     expect(window.localStorage.getItem('cyberpunk-tcg.deck.v1')).toContain('legend-')
