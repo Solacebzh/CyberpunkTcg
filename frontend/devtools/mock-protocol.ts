@@ -155,6 +155,8 @@ interface MockGame {
 export interface MockRoomPlayer {
   pseudo: string
   seat: number
+  /** Mini-Feature 9D : identifiant du deck sauvegardé sélectionné par le joueur. */
+  deckId: number | null
   deck: string[]
 }
 
@@ -374,6 +376,16 @@ export class MockGameServer {
   readonly games = new Map<string, MockGame>()
   /** Journal des frames reçues, dans l'ordre (assertions de protocole). */
   readonly received: MockFrame[] = []
+  /**
+   * Decks sauvegardés mockés (Mini-Feature 9D) : pour chaque pseudo (=
+   * username), une map `deckId → liste de cartes`. Le frontend pré-remplit
+   * cette carte dans ses tests via {@link registerSavedDeck} ; sans entrée,
+   * le serveur tolère encore l'ancien format `deckCardIds` pour les tests
+   * qui n'utilisent pas le nouveau contrat de decks persistés.
+   */
+  readonly savedDecks = new Map<string, Map<number, string[]>>()
+  /** Compteur auto-incrémenté pour générer des identifiants de decks de test. */
+  private savedDeckCounter = 0
 
   private readonly now: () => string
   private readonly random: () => number
@@ -388,6 +400,20 @@ export class MockGameServer {
     this.cardsById = new Map(this.cards.map((card) => [card.id, card]))
     this.now = options.now ?? (() => new Date().toISOString())
     this.random = createRandom(options.seed ?? 42)
+  }
+
+  /**
+   * Enregistre un deck sauvegardé pour un pseudo (= compte JWT). Renvoie
+   * l'identifiant de deck généré, à passer dans le payload STOMP
+   * (`deckId`). Équivalent mocké de `POST /api/decks`.
+   */
+  registerSavedDeck(pseudo: string, cardIds: string[]): number {
+    this.savedDeckCounter += 1
+    const deckId = this.savedDeckCounter
+    const registry = this.savedDecks.get(pseudo) ?? new Map<number, string[]>()
+    registry.set(deckId, [...cardIds])
+    this.savedDecks.set(pseudo, registry)
+    return deckId
   }
 
   /** Tirage déterministe exposé pour la construction des decks. */
@@ -583,6 +609,32 @@ export class MockGameServer {
     return ids
   }
 
+  /**
+   * Mini-Feature 9D : résout le deck d'un joueur à partir du payload STOMP
+   * (`deckId` ou, en repli, `deckCardIds` legacy). Refuse la jonction si
+   * le joueur n'a pas sélectionné de deck, ou si le deck ne lui appartient
+   * pas (mocké : `savedDecks.get(pseudo)?.get(deckId)`).
+   */
+  resolvePlayerDeck(pseudo: string, payload: Record<string, unknown>): string[] {
+    const rawDeckId = payload.deckId
+    if (rawDeckId === undefined || rawDeckId === null) {
+      // Aucun `deckId` envoyé : repli sur l'ancien format `deckCardIds`,
+      // utilisé par les tests qui n'ont pas (encore) migré.
+      return this.resolveDeck(payload.deckCardIds as string[] | null)
+    }
+    if (typeof rawDeckId !== 'number' || !Number.isFinite(rawDeckId)) {
+      throw new RuleError('Identifiant de deck invalide', 'NO_DECK_SELECTED')
+    }
+    const registry = this.savedDecks.get(pseudo)
+    const deck = registry?.get(rawDeckId)
+    if (!deck) {
+      // Miroir du `DECK_NOT_OWNED` côté backend — on ne révèle pas
+      // l'existence du deck d'un autre compte.
+      throw new RuleError(`Ce deck n'existe pas ou ne t'appartient pas : ${rawDeckId}`, 'DECK_NOT_OWNED')
+    }
+    return this.resolveDeck(deck)
+  }
+
   defaultDeck(): string[] {
     const legends = this.cards.filter((card) => card.type === 'legend').sort(byName).slice(0, REQUIRED_LEGENDS)
     const units = this.cards.filter((card) => card.type === 'unit').sort(byName).slice(0, REQUIRED_NON_LEGENDS)
@@ -598,7 +650,7 @@ export class MockGameServer {
 
     let deck: string[]
     try {
-      deck = this.resolveDeck(payload.deckCardIds as string[] | null)
+      deck = this.resolvePlayerDeck(pseudo, payload)
     } catch (invalid) {
       this.error(pseudo, {
         code: invalid instanceof RuleError ? invalid.code : 'DECK_INVALID',
@@ -609,12 +661,13 @@ export class MockGameServer {
     }
 
     const name = typeof payload.roomName === 'string' ? payload.roomName.trim() : ''
+    const deckId = typeof payload.deckId === 'number' ? (payload.deckId as number) : null
     const room: MockRoom = {
       code: this.newRoomCode(),
       name: name || `Salon de ${pseudo}`,
       status: 'WAITING',
       hostPseudo: pseudo,
-      players: [{ pseudo, seat: 0, deck }],
+      players: [{ pseudo, seat: 0, deckId, deck }],
       gameId: null,
       createdAt: this.now(),
     }
@@ -642,7 +695,7 @@ export class MockGameServer {
 
     let deck: string[]
     try {
-      deck = this.resolveDeck(payload.deckCardIds as string[] | null)
+      deck = this.resolvePlayerDeck(pseudo, payload)
     } catch (invalid) {
       this.error(pseudo, {
         code: invalid instanceof RuleError ? invalid.code : 'DECK_INVALID',
@@ -652,7 +705,7 @@ export class MockGameServer {
       return
     }
 
-    room.players.push({ pseudo, seat: 1, deck })
+    room.players.push({ pseudo, seat: 1, deckId: typeof payload.deckId === 'number' ? (payload.deckId as number) : null, deck })
     const host = room.players[0] as MockRoomPlayer
     const game = this.createGame(host.pseudo, pseudo, host.deck, deck)
     room.status = 'PLAYING'
@@ -1931,6 +1984,7 @@ function roomView(room: MockRoom): Record<string, unknown> {
     players: room.players.map((player) => ({
       pseudo: player.pseudo,
       seat: player.seat,
+      deckId: player.deckId ?? null,
       deckCardCount: player.deck.length,
     })),
     gameId: room.gameId,

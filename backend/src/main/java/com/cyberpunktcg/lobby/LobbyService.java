@@ -1,11 +1,13 @@
 package com.cyberpunktcg.lobby;
 
+import com.cyberpunktcg.domain.deck.DeckService;
 import com.cyberpunktcg.domain.game.GameState;
-import com.cyberpunktcg.service.DefaultDeckService;
 import com.cyberpunktcg.service.GameService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.security.SecureRandom;
 import java.util.ArrayList;
@@ -22,6 +24,14 @@ import java.util.regex.Pattern;
  * {@code roomByPseudo}). Dès que deux joueurs sont assis, la partie est
  * créée automatiquement via {@link GameService#createGame(String, String,
  * List, List)} et le salon passe {@link RoomStatus#PLAYING}.</p>
+ *
+ * <p>Mini-Feature 9D « Lobby & Deck de Jeu » : un deck sauvegardé est
+ * désormais <strong>obligatoire</strong> pour rejoindre ou créer un salon.
+ * Le salon stocke l'identifiant du deck ({@code deckId}) — pas la liste
+ * des cartes. Le service vérifie que le deck existe, qu'il appartient au
+ * joueur (username dérivé du pseudo STOMP), et résout la liste de cartes
+ * au démarrage de la partie. Un joueur sans deck se voit refuser l'accès
+ * ({@link LobbyException} {@code NO_DECK_SELECTED}).</p>
  */
 @Service
 public class LobbyService {
@@ -39,9 +49,9 @@ public class LobbyService {
 
     private final SecureRandom random = new SecureRandom();
     private final GameService gameService;
-    private final DefaultDeckService deckService;
+    private final DeckService deckService;
 
-    public LobbyService(GameService gameService, DefaultDeckService deckService) {
+    public LobbyService(GameService gameService, DeckService deckService) {
         this.gameService = gameService;
         this.deckService = deckService;
     }
@@ -55,32 +65,76 @@ public class LobbyService {
     }
 
     /**
+     * Vérifie qu'un deck existe et appartient au joueur. La résolution des
+     * cartes est <em>différée</em> au démarrage de la partie — le salon ne
+     * stocke que l'identifiant du deck, pas la liste de cartes.
+     *
+     * @param username pseudo STOMP — sert d'identifiant de compte pour la
+     *                 vérification de propriété. Le client frontend doit
+     *                 utiliser le même pseudo que son compte JWT.
+     * @param deckId   identifiant du deck à charger
+     * @throws LobbyException {@code NO_DECK_SELECTED} si l'identifiant est nul ;
+     *                        {@code DECK_NOT_OWNED} si le deck n'existe pas ou
+     *                        n'appartient pas au joueur (le serveur ne révèle pas
+     *                        l'existence du deck d'un autre compte).
+     */
+    public void requireOwnedDeck(String username, Long deckId) {
+        if (deckId == null) {
+            throw new LobbyException("NO_DECK_SELECTED",
+                    "Sélectionne un deck sauvegardé avant de rejoindre la partie");
+        }
+        try {
+            if (deckService.getDeck(username, deckId).cardIds().isEmpty()) {
+                throw new LobbyException("DECK_INVALID",
+                        "Le deck sélectionné est vide");
+            }
+        } catch (ResponseStatusException error) {
+            // 404 = deck introuvable OU pas la propriété du joueur — indistinct
+            // pour ne rien révéler du catalogue des autres comptes. On accepte
+            // aussi les autres codes 4xx comme « non autorisé ».
+            if (error.getStatusCode() == HttpStatus.NOT_FOUND) {
+                throw new LobbyException("DECK_NOT_OWNED",
+                        "Ce deck n'existe pas ou ne t'appartient pas : " + deckId);
+            }
+            throw error;
+        }
+    }
+
+    /**
      * Crée un salon dont le joueur devient l'hôte (siège 0).
      *
+     * @param pseudo   pseudo STOMP (= username du compte)
+     * @param roomName nom optionnel du salon
+     * @param deckId   identifiant d'un deck sauvegardé par le joueur (obligatoire)
      * @return le salon créé (état WAITING)
      */
-    public Room createRoom(String pseudo, String roomName, List<String> requestedDeck) {
+    public Room createRoom(String pseudo, String roomName, Long deckId) {
         requireValidPseudo(pseudo);
         if (roomByPseudo.containsKey(pseudo)) {
             throw new LobbyException("ALREADY_IN_ROOM", "Vous êtes déjà dans un salon");
         }
-        List<String> deck = deckService.resolveDeck(requestedDeck);
+        // Validation en amont : un salon invalide n'est jamais créé.
+        requireOwnedDeck(pseudo, deckId);
         String code = generateUniqueCode();
         String displayName = (roomName == null || roomName.isBlank())
                 ? "Salon de " + pseudo
                 : roomName.trim();
-        Room room = new Room(code, displayName, pseudo, deck);
+        Room room = new Room(code, displayName, pseudo, deckId);
         roomsByCode.put(code, room);
         roomByPseudo.put(pseudo, code);
-        log.info("Salon {} créé par {}", code, pseudo);
+        log.info("Salon {} créé par {} (deck #{})", code, pseudo, deckId);
         return room;
     }
 
     /**
      * Fait rejoindre un salon. Si c'est le second joueur, la partie démarre
      * automatiquement et le salon passe PLAYING.
+     *
+     * @param pseudo   pseudo STOMP (= username du compte)
+     * @param roomCode code du salon
+     * @param deckId   identifiant d'un deck sauvegardé par le joueur (obligatoire)
      */
-    public Room joinRoom(String pseudo, String roomCode, List<String> requestedDeck) {
+    public Room joinRoom(String pseudo, String roomCode, Long deckId) {
         requireValidPseudo(pseudo);
         if (roomByPseudo.containsKey(pseudo)) {
             throw new LobbyException("ALREADY_IN_ROOM", "Vous êtes déjà dans un salon");
@@ -95,10 +149,11 @@ public class LobbyService {
         if (room.contains(pseudo)) {
             throw new LobbyException("PSEUDO_TAKEN", "Ce pseudo est déjà utilisé dans ce salon");
         }
-        List<String> deck = deckService.resolveDeck(requestedDeck);
-        room.addGuest(pseudo, deck);
+        // Validation en amont : aucun siège fantôme avec un deck invalide.
+        requireOwnedDeck(pseudo, deckId);
+        room.addGuest(pseudo, deckId);
         roomByPseudo.put(pseudo, room.getCode());
-        log.info("{} rejoint le salon {}", pseudo, room.getCode());
+        log.info("{} rejoint le salon {} (deck #{})", pseudo, room.getCode(), deckId);
 
         if (room.isFull()) {
             startGame(room);
@@ -106,14 +161,32 @@ public class LobbyService {
         return room;
     }
 
+    /**
+     * Démarre la partie à partir des decks persistés des deux sièges : on
+     * relit le {@code DeckService} avec le pseudo de chaque joueur pour
+     * récupérer la liste de cartes réelle. Si un deck a été supprimé entre
+     * temps, le salon est refermé et une erreur est consignée.
+     */
     private void startGame(Room room) {
         List<Room.SeatView> seats = room.seatView();
         String host = seats.get(0).pseudo();
         String guest = seats.get(1).pseudo();
-        GameState state = gameService.createGame(host, guest, room.deckOf(host), room.deckOf(guest));
-        room.markStarted(state.getGameId());
-        log.info("Partie {} démarrée dans le salon {} ({} vs {})",
-                state.getGameId(), room.getCode(), host, guest);
+        try {
+            List<String> hostDeck = deckService.getDeck(host, room.deckIdOf(host)).cardIds();
+            List<String> guestDeck = deckService.getDeck(guest, room.deckIdOf(guest)).cardIds();
+            GameState state = gameService.createGame(host, guest, hostDeck, guestDeck);
+            room.markStarted(state.getGameId());
+            log.info("Partie {} démarrée dans le salon {} ({} vs {})",
+                    state.getGameId(), room.getCode(), host, guest);
+        } catch (RuntimeException error) {
+            // Deck supprimé / devenu invalide entre l'arrivée des joueurs et
+            // le démarrage : on referme proprement le salon pour permettre une
+            // nouvelle tentative, sans laisser un siège orphelin.
+            log.warn("Démarrage impossible dans le salon {} : {}", room.getCode(), error.getMessage());
+            closeRoom(room);
+            throw new LobbyException("DECK_INVALID",
+                    "Démarrage impossible : un des decks n'est plus disponible");
+        }
     }
 
     /**

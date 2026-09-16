@@ -104,7 +104,9 @@ function seatGuest(server: MockGameServer, pseudo: string, roomCode: string): Ra
   guest.subscribe('/user/queue/lobby')
   guest.subscribe('/user/queue/errors')
   guest.subscribe('/topic/rooms')
-  guest.send('/app/lobby.join', { roomCode, deckCardIds: DECK_B })
+  // Mini-Feature 9D : on enregistre le deck de Bravo côté mock et on envoie son deckId.
+  const guestDeckId = server.registerSavedDeck(pseudo, DECK_B)
+  guest.send('/app/lobby.join', { roomCode, deckId: guestDeckId })
   return guest
 }
 
@@ -181,7 +183,10 @@ describe('Présence des joueurs (déconnexion / reconnexion)', () => {
     await waitFor(() => lobby.isConnected, 'connexion STOMP')
 
     decks.setDeck(DECK_A)
-    lobby.useCustomDeck = true
+    // Mini-Feature 9D : enregistrer un deck pour Alpha puis le sélectionner.
+    const alphaDeckId = server.registerSavedDeck('Alpha', DECK_A)
+    lobby.selectDeck(alphaDeckId)
+    await tick(2)
     await buttonWith(wrapper, 'Créer le salon').trigger('click')
     await waitFor(() => lobby.room !== null, 'LOBBY_STATE du salon créé')
     const roomCode = lobby.room?.code ?? ''
@@ -234,7 +239,10 @@ describe('Présence des joueurs (déconnexion / reconnexion)', () => {
     await waitFor(() => lobby.isConnected, 'connexion STOMP')
 
     decks.setDeck(DECK_A)
-    lobby.useCustomDeck = true
+    // Mini-Feature 9D : enregistrer un deck pour Alpha puis le sélectionner.
+    const alphaDeckId = server.registerSavedDeck('Alpha', DECK_A)
+    lobby.selectDeck(alphaDeckId)
+    await tick(2)
     await buttonWith(wrapper, 'Créer le salon').trigger('click')
     await waitFor(() => lobby.room !== null, 'LOBBY_STATE du salon créé')
 

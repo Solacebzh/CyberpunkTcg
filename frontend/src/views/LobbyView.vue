@@ -2,6 +2,10 @@
 /**
  * Lobby : pseudo, création/join de salon, attente du second joueur.
  *
+ * Mini-Feature 9D : la sélection du deck se fait *avant* la création/rejoindre
+ * d'un salon. Le client exige un deck sauvegardé côté serveur (`savedDeck.id`) ;
+ * le serveur le revérifie via `DeckService.getDeck(pseudo, deckId)`.
+ *
  * Tout passe par le canal STOMP (doc §4) : `SEND /app/lobby.create|join|leave|list`
  * puis écoute de `LOBBY_STATE` (privé + topic du salon) et `ROOMS`. Dès que le
  * salon passe en `PLAYING`, le `gameId` est récupéré et l'écran de jeu prend le
@@ -20,8 +24,21 @@ const lobby = useLobbyStore()
 const decks = useDeckStore()
 const ui = useUiStore()
 
-const { status, room, rooms, gameId, error, busy, isConnected, pseudo, isHost, opponent, deckCardCount } =
-  storeToRefs(lobby)
+const {
+  status,
+  room,
+  rooms,
+  gameId,
+  error,
+  busy,
+  isConnected,
+  pseudo,
+  isHost,
+  opponent,
+  selectedDeckId,
+  hasSelectedDeck,
+  selectedDeck,
+} = storeToRefs(lobby)
 
 const pseudoDraft = ref(pseudo.value)
 const pseudoInvalid = ref(false)
@@ -44,6 +61,16 @@ const statusLabel = computed(() => {
 })
 
 const seatLabels = computed(() => (room.value ? ['Hôte (siège 0)', 'Invité (siège 1)'] : []))
+
+const deckLockedReason = computed(() => {
+  if (decks.savedDecksState.value === 'loading')
+    return 'Chargement de mes decks…'
+  if (decks.savedDecksState.value === 'error')
+    return 'Mes decks sont indisponibles pour le moment.'
+  if (decks.savedDecks.length === 0)
+    return 'Aucun deck sauvegardé — ouvre le deck builder pour en créer un.'
+  return ''
+})
 
 function applyPseudo(): boolean {
   const ok = lobby.setPseudo(pseudoDraft.value)
@@ -77,6 +104,10 @@ function goToDeckBuilder(): void {
   void router.push({ name: 'deck' })
 }
 
+function selectDeckFromList(deckId: number): void {
+  lobby.selectDeck(deckId)
+}
+
 watch(gameId, (id) => {
   if (id) void router.push({ name: 'game', params: { gameId: id } })
 })
@@ -85,6 +116,11 @@ onMounted(() => {
   lobby.init()
   void decks.loadCatalog()
   if (isConnected.value) lobby.refreshRooms()
+
+  // Mini-Feature 9D : on a besoin de la liste des decks sauvegardés pour
+  // proposer une sélection. `loadSavedDecks` est idempotent et rechargera
+  // silencieusement en cas d'erreur réseau.
+  void decks.loadSavedDecks()
 
   // Reprise après rechargement de page (doc §8 : le client conserve son état).
   const stored = lobby.resumeStoredGame()
@@ -132,27 +168,90 @@ onMounted(() => {
       <p v-else-if="error" class="mt-2 font-mono text-[0.68rem] text-cyber-magenta">{{ error }}</p>
     </section>
 
-    <!-- Deck -->
-    <section class="cyber-panel flex flex-wrap items-center gap-x-6 gap-y-3 p-5">
-      <div>
-        <h2 class="cyber-title text-sm text-cyber-cyan">Deck</h2>
-        <p class="font-mono text-[0.65rem] text-slate-400">
-          Règles serveur : exactement {{ REQUIRED_LEGENDS }} Legends, au moins {{ REQUIRED_NON_LEGENDS }} cartes
-          non-Legend, aucun doublon.
-        </p>
+    <!-- Deck (sélection depuis les decks sauvegardés, MF 9D) -->
+    <section data-testid="lobby-deck-selection" class="cyber-panel p-5">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 class="cyber-title text-sm text-cyber-cyan">Choisis ton deck de jeu</h2>
+          <p class="mt-1 font-mono text-[0.65rem] text-slate-400">
+            Règles serveur : exactement {{ REQUIRED_LEGENDS }} Legends, au moins
+            {{ REQUIRED_NON_LEGENDS }} cartes non-Legend, aucun doublon. Le deck
+            doit déjà être sauvegardé en base avant de rejoindre un salon.
+          </p>
+        </div>
+        <button type="button" class="cyber-btn" @click="goToDeckBuilder">
+          Ouvrir le deck builder
+        </button>
       </div>
 
-      <label class="flex items-center gap-2 font-mono text-[0.7rem] text-slate-300">
-        <input v-model="lobby.useCustomDeck" type="checkbox" class="h-4 w-4 accent-cyber-cyan" />
-        Utiliser mon deck ({{ deckCardCount ?? 0 }} cartes)
-      </label>
-
-      <p class="font-mono text-[0.65rem]" :class="decks.isValid ? 'text-cyber-green' : 'text-cyber-yellow'">
-        {{ decks.legendCount }}/{{ REQUIRED_LEGENDS }} Legends · {{ decks.mainCount }} autres
-        <template v-if="!decks.isValid && lobby.useCustomDeck"> — deck incomplet</template>
+      <div
+        v-if="decks.savedDecksState === 'loading'"
+        class="mt-4 font-mono text-[0.7rem] text-slate-400"
+      >
+        Chargement de mes decks…
+      </div>
+      <div
+        v-else-if="decks.savedDecksState === 'error'"
+        class="mt-4 font-mono text-[0.7rem] text-cyber-magenta"
+      >
+        Mes decks sont indisponibles pour le moment. Réessaie plus tard.
+      </div>
+      <p
+        v-else-if="decks.savedDecks.length === 0"
+        data-testid="lobby-no-saved-deck"
+        class="mt-4 font-mono text-[0.7rem] text-cyber-yellow"
+      >
+        Aucun deck sauvegardé — ouvre le deck builder pour en créer un (puis
+        sauvegarde-le avec le bouton "Enregistrer"). Tu pourras ensuite revenir
+        ici choisir un deck.
       </p>
+      <ul v-else data-testid="lobby-deck-list" class="mt-4 grid gap-2 md:grid-cols-2">
+        <li
+          v-for="deck in decks.savedDecks"
+          :key="deck.id"
+          data-testid="lobby-deck-item"
+          class="flex items-center justify-between gap-2 rounded border px-3 py-2"
+          :class="
+            selectedDeckId === deck.id
+              ? 'border-cyber-cyan/70 bg-cyber-cyan/5'
+              : 'border-cyber-line'
+          "
+        >
+          <label class="flex flex-1 cursor-pointer items-center gap-2">
+            <input
+              data-testid="lobby-deck-radio"
+              type="radio"
+              name="lobby-deck"
+              :value="deck.id"
+              :checked="selectedDeckId === deck.id"
+              class="h-4 w-4 accent-cyber-cyan"
+              @change="selectDeckFromList(deck.id)"
+            />
+            <div class="flex flex-col">
+              <span class="text-sm font-semibold text-slate-100">{{ deck.name }}</span>
+              <span class="font-mono text-[0.65rem] text-slate-400">
+                {{ deck.cardIds.length }} cartes
+              </span>
+            </div>
+          </label>
+          <span
+            v-if="selectedDeckId === deck.id"
+            data-testid="lobby-deck-selected"
+            class="cyber-chip border-cyber-cyan/60 text-cyber-cyan"
+          >
+            Sélectionné
+          </span>
+        </li>
+      </ul>
 
-      <button type="button" class="cyber-btn" @click="goToDeckBuilder">Ouvrir le deck builder</button>
+      <p v-if="selectedDeck" class="mt-3 font-mono text-[0.65rem] text-slate-300">
+        Deck actif :
+        <span class="text-cyber-cyan">{{ selectedDeck.name }}</span>
+        · {{ selectedDeck.cardIds.length }} cartes
+      </p>
+      <p v-else-if="deckLockedReason" class="mt-3 font-mono text-[0.65rem] text-cyber-yellow">
+        {{ deckLockedReason }}
+      </p>
     </section>
 
     <!-- Salon en attente -->
@@ -184,7 +283,7 @@ onMounted(() => {
           <span v-if="room.players[seat]" class="text-sm font-semibold text-slate-100">
             {{ room.players[seat]?.pseudo }}
             <span class="font-mono text-[0.65rem] text-slate-400">
-              · {{ room.players[seat]?.deckCardCount }} cartes
+              · {{ room.players[seat]?.deckCardCount ?? 0 }} cartes
             </span>
           </span>
           <span v-else class="font-mono text-[0.7rem] text-slate-600">
@@ -224,10 +323,18 @@ onMounted(() => {
             maxlength="40"
             class="rounded border border-cyber-line bg-black/40 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyber-cyan"
             :placeholder="`Salon de ${pseudo}`"
+            :disabled="!hasSelectedDeck"
             @keyup.enter="createRoom"
           />
         </label>
-        <button type="button" class="cyber-btn cyber-btn--accent mt-4" :disabled="busy" @click="createRoom">
+        <button
+          data-testid="lobby-create-room"
+          type="button"
+          class="cyber-btn cyber-btn--accent mt-4"
+          :disabled="busy || !hasSelectedDeck"
+          :title="hasSelectedDeck ? '' : deckLockedReason || 'Sélectionne un deck sauvegardé'"
+          @click="createRoom"
+        >
           Créer le salon
         </button>
       </section>
@@ -243,10 +350,18 @@ onMounted(() => {
             maxlength="6"
             class="rounded border border-cyber-line bg-black/40 px-3 py-2 font-mono text-sm uppercase tracking-[0.3em] text-slate-100 outline-none transition focus:border-cyber-cyan"
             placeholder="6SQX4Z"
+            :disabled="!hasSelectedDeck"
             @keyup.enter="joinRoom()"
           />
         </label>
-        <button type="button" class="cyber-btn cyber-btn--accent mt-4" :disabled="busy" @click="joinRoom()">
+        <button
+          data-testid="lobby-join-room"
+          type="button"
+          class="cyber-btn cyber-btn--accent mt-4"
+          :disabled="busy || !hasSelectedDeck"
+          :title="hasSelectedDeck ? '' : deckLockedReason || 'Sélectionne un deck sauvegardé'"
+          @click="joinRoom()"
+        >
           Rejoindre
         </button>
       </section>
@@ -259,7 +374,10 @@ onMounted(() => {
         <button type="button" class="cyber-btn" @click="lobby.refreshRooms()">Rafraîchir</button>
       </header>
 
-      <p v-if="rooms.length === 0" class="mt-3 font-mono text-[0.7rem] text-slate-500">
+      <p v-if="!hasSelectedDeck" class="mt-3 font-mono text-[0.7rem] text-cyber-yellow">
+        Choisis d'abord un deck sauvegardé ci-dessus pour pouvoir rejoindre un salon.
+      </p>
+      <p v-else-if="rooms.length === 0" class="mt-3 font-mono text-[0.7rem] text-slate-500">
         Aucun salon ouvert pour l'instant — crée le tien.
       </p>
       <ul v-else class="mt-3 grid gap-2 md:grid-cols-2">

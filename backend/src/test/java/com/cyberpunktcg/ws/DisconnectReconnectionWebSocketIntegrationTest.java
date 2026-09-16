@@ -3,10 +3,18 @@ package com.cyberpunktcg.ws;
 import com.cyberpunktcg.api.dto.ws.CreateRoomRequest;
 import com.cyberpunktcg.api.dto.ws.GameCommandDTO;
 import com.cyberpunktcg.api.dto.ws.JoinRoomRequest;
+import com.cyberpunktcg.domain.deck.Deck;
+import com.cyberpunktcg.domain.deck.DeckRepository;
+import com.cyberpunktcg.domain.user.User;
+import com.cyberpunktcg.domain.user.UserRepository;
+import com.cyberpunktcg.repository.CardRepository;
 import com.fasterxml.jackson.databind.JsonNode;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
@@ -17,6 +25,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Intégration du délai de grâce de reconnexion (réglé à 1 s pour les tests) :
  * déconnexion sans retour = forfait automatique ; reconnexion = annulation.
+ *
+ * <p>Mini-Feature 9D : un deck sauvegardé par joueur est obligatoire pour
+ * créer ou rejoindre un salon (voir {@link LobbyDeckFixture}).</p>
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -26,12 +37,33 @@ class DisconnectReconnectionWebSocketIntegrationTest {
     @LocalServerPort
     private int port;
 
+    @Autowired
+    private UserRepository userRepository;
+    @Autowired
+    private DeckRepository deckRepository;
+    @Autowired
+    private CardRepository cardRepository;
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
+    @BeforeEach
+    void cleanState() {
+        deckRepository.deleteAll();
+        userRepository.deleteAll();
+    }
+
     @Test
     void deconnexionSansRetour_apresLeDelai_forfaitAutomatique() throws Exception {
+        // On amorce explicitement les decks des deux joueurs (DH / DG).
+        User dh = LobbyDeckFixture.upsertUser(userRepository, passwordEncoder, "DH");
+        User dg = LobbyDeckFixture.upsertUser(userRepository, passwordEncoder, "DG");
+        Deck dhDeck = LobbyDeckFixture.persistLegalDeck(deckRepository, cardRepository, "Deck DH", dh.getId());
+        Deck dgDeck = LobbyDeckFixture.persistLegalDeck(deckRepository, cardRepository, "Deck DG", dg.getId());
+
         StompTestClient host = new StompTestClient();
         StompTestClient guest = new StompTestClient();
         try {
-            StartedGame game = startGame(host, guest, "DH", "DG");
+            StartedGame game = startGame(host, guest, "DH", "DG", dhDeck.getId(), dgDeck.getId());
 
             guest.close(); // déconnexion brutale (DISCONNECT + fermeture TCP)
 
@@ -55,9 +87,9 @@ class DisconnectReconnectionWebSocketIntegrationTest {
             assertThat(finalState).isNotNull();
             assertThat(finalState.path("state").path("endReason").asText()).contains("Forfait");
 
-            // Le salon est libéré : l'hôte peut en recréer un.
+            // Le salon est libéré : l'hôte peut en recréer un (avec son deck).
             BlockingQueue<JsonNode> lobbyQueue = host.subscribe("/user/queue/lobby");
-            host.send("/app/lobby.create", new CreateRoomRequest(null, null));
+            host.send("/app/lobby.create", new CreateRoomRequest(null, dhDeck.getId()));
             assertThat(host.await(lobbyQueue,
                     node -> "WAITING".equals(node.path("status").asText()), 10)).isNotNull();
         } finally {
@@ -68,11 +100,16 @@ class DisconnectReconnectionWebSocketIntegrationTest {
 
     @Test
     void reconnexionDansLeDelai_annuleLeForfait() throws Exception {
+        User rh = LobbyDeckFixture.upsertUser(userRepository, passwordEncoder, "RH");
+        User rg = LobbyDeckFixture.upsertUser(userRepository, passwordEncoder, "RG");
+        Deck rhDeck = LobbyDeckFixture.persistLegalDeck(deckRepository, cardRepository, "Deck RH", rh.getId());
+        Deck rgDeck = LobbyDeckFixture.persistLegalDeck(deckRepository, cardRepository, "Deck RG", rg.getId());
+
         StompTestClient host = new StompTestClient();
         StompTestClient guest = new StompTestClient();
         StompTestClient returningGuest = new StompTestClient();
         try {
-            StartedGame game = startGame(host, guest, "RH", "RG");
+            StartedGame game = startGame(host, guest, "RH", "RG", rhDeck.getId(), rgDeck.getId());
 
             guest.close();
             assertThat(host.await(game.hostNotices(),
@@ -120,11 +157,12 @@ class DisconnectReconnectionWebSocketIntegrationTest {
     }
 
     private StartedGame startGame(StompTestClient host, StompTestClient guest,
-                                  String hostPseudo, String guestPseudo) throws Exception {
+                                  String hostPseudo, String guestPseudo,
+                                  long hostDeckId, long guestDeckId) throws Exception {
         host.connect(port, hostPseudo);
         host.subscribe("/user/queue/errors");
         BlockingQueue<JsonNode> hostLobbyQueue = host.subscribe("/user/queue/lobby");
-        host.send("/app/lobby.create", new CreateRoomRequest(null, null));
+        host.send("/app/lobby.create", new CreateRoomRequest(null, hostDeckId));
         JsonNode created = host.await(hostLobbyQueue,
                 node -> "WAITING".equals(node.path("status").asText()), 10);
         String code = created.path("code").asText();
@@ -133,7 +171,7 @@ class DisconnectReconnectionWebSocketIntegrationTest {
         guest.connect(port, guestPseudo);
         guest.subscribe("/user/queue/errors");
         BlockingQueue<JsonNode> guestLobbyTopic = guest.subscribe("/topic/lobby/" + code);
-        guest.send("/app/lobby.join", new JoinRoomRequest(code, null));
+        guest.send("/app/lobby.join", new JoinRoomRequest(code, guestDeckId));
 
         JsonNode playing = host.await(hostLobbyTopic,
                 node -> "PLAYING".equals(node.path("status").asText()), 10);

@@ -42,7 +42,13 @@ public class LobbyWsController {
         this.gameBroadcaster = gameBroadcaster;
     }
 
-    /** Crée un salon (hôte = siège 0). Réponse privée sur /user/queue/lobby. */
+    /**
+     * Crée un salon (hôte = siège 0). Réponse privée sur /user/queue/lobby.
+     *
+     * <p>Mini-Feature 9D : {@code request.deckId()} est désormais
+     * <strong>obligatoire</strong>. Le backend vérifie que le deck existe,
+     * appartient au joueur et reste valide avant d'autoriser la création.</p>
+     */
     @MessageMapping("/lobby.create")
     public void createRoom(@Payload CreateRoomRequest request, StompHeaderAccessor accessor) {
         String pseudo = currentPseudo(accessor);
@@ -50,7 +56,8 @@ public class LobbyWsController {
             return;
         }
         try {
-            Room room = lobbyService.createRoom(pseudo, request.roomName(), request.deckCardIds());
+            Long deckId = request == null ? null : request.deckId();
+            Room room = lobbyService.createRoom(pseudo, request == null ? null : request.roomName(), deckId);
             lobbyBroadcaster.sendRoomTo(pseudo, room);
             lobbyBroadcaster.broadcastRoom(room);
             lobbyBroadcaster.broadcastRoomList();
@@ -59,7 +66,14 @@ public class LobbyWsController {
         }
     }
 
-    /** Rejoint un salon ; démarre automatiquement la partie s'il était à 1 joueur. */
+    /**
+     * Rejoint un salon ; démarre automatiquement la partie s'il était à 1 joueur.
+     *
+     * <p>Mini-Feature 9D : {@code request.deckId()} est obligatoire et doit
+     * désigner un deck sauvegardé appartenant au joueur. Sans deck, l'accès
+     * au salon est refusé (cf. {@link com.cyberpunktcg.lobby.LobbyService}
+     * pour les codes d'erreur).</p>
+     */
     @MessageMapping("/lobby.join")
     public void joinRoom(@Payload JoinRoomRequest request, StompHeaderAccessor accessor) {
         String pseudo = currentPseudo(accessor);
@@ -67,7 +81,8 @@ public class LobbyWsController {
             return;
         }
         try {
-            Room room = lobbyService.joinRoom(pseudo, request.roomCode(), request.deckCardIds());
+            Long deckId = request == null ? null : request.deckId();
+            Room room = lobbyService.joinRoom(pseudo, request == null ? null : request.roomCode(), deckId);
             lobbyBroadcaster.sendRoomTo(pseudo, room);
             lobbyBroadcaster.broadcastRoom(room);
             lobbyBroadcaster.broadcastRoomList();
