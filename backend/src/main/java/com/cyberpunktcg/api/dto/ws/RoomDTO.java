@@ -37,7 +37,7 @@ public record RoomDTO(
                 room.getStatus(),
                 room.getHostPseudo(),
                 room.seatView().stream()
-                        .map(seat -> new RoomPlayerDTO(seat.pseudo(), seat.seat(), seat.deckCardCount()))
+                        .map(seat -> new RoomPlayerDTO(seat.pseudo(), seat.seat(), seat.deckId()))
                         .toList(),
                 room.getGameId(),
                 room.getCreatedAt().truncatedTo(java.time.temporal.ChronoUnit.MILLIS));

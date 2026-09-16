@@ -10,14 +10,23 @@ import java.util.Map;
  * Un salon d'attente : jusqu'à deux joueurs, triés par siège (0 = hôte,
  * 1 = invité). Toutes les mutations sont synchronisées pour encaisser les
  * arrivées/départs concurrents sur sessions WebSocket.
+ *
+ * <p>Mini-Feature 9D : chaque siège porte un identifiant de deck sauvegardé
+ * (clé étrangère vers {@code decks.id}). Les <em>cartes</em> ne sont résolues
+ * qu'au moment du démarrage de la partie (par {@code LobbyService}), via le
+ * {@code DeckService} : le salon ne transporte donc plus de liste de cartes,
+ * seulement la référence au deck. La présence d'un {@code deckId} non nul est
+ * obligatoire pour qu'un siège soit occupé — un joueur sans deck ne peut pas
+ * s'asseoir.</p>
  */
 public class Room {
 
     /** Vue immuable d'un siège, utilisée par les DTO. */
-    public record SeatView(String pseudo, int seat, int deckCardCount) {
+    public record SeatView(String pseudo, int seat, Long deckId) {
     }
 
-    private record Seat(String pseudo, List<String> deckCardIds, Instant joinedAt) {
+    /** Siège : pseudo, identifiant du deck choisi par le joueur, heure d'arrivée. */
+    private record Seat(String pseudo, Long deckId, Instant joinedAt) {
     }
 
     private final String code;
@@ -27,10 +36,10 @@ public class Room {
     private volatile RoomStatus status = RoomStatus.WAITING;
     private volatile String gameId;
 
-    public Room(String code, String name, String hostPseudo, List<String> hostDeck) {
+    public Room(String code, String name, String hostPseudo, Long hostDeckId) {
         this.code = code;
         this.name = name;
-        this.seats.put(hostPseudo, new Seat(hostPseudo, List.copyOf(hostDeck), Instant.now()));
+        this.seats.put(hostPseudo, new Seat(hostPseudo, hostDeckId, Instant.now()));
     }
 
     public String getCode() {
@@ -70,7 +79,7 @@ public class Room {
     }
 
     /** Ajoute le second joueur ; renvoie IllegalStateException si plein/déjà présent. */
-    public synchronized void addGuest(String pseudo, List<String> deckCardIds) {
+    public synchronized void addGuest(String pseudo, Long deckId) {
         if (status != RoomStatus.WAITING) {
             throw new IllegalStateException("Le salon n'est plus rejoignable");
         }
@@ -80,7 +89,7 @@ public class Room {
         if (seats.size() >= 2) {
             throw new IllegalStateException("Le salon est plein");
         }
-        seats.put(pseudo, new Seat(pseudo, List.copyOf(deckCardIds), Instant.now()));
+        seats.put(pseudo, new Seat(pseudo, deckId, Instant.now()));
     }
 
     /** Retire un joueur ; renvoie true si le salon devient vide. */
@@ -104,15 +113,15 @@ public class Room {
         List<SeatView> views = new ArrayList<>(seats.size());
         int seat = 0;
         for (Seat current : seats.values()) {
-            views.add(new SeatView(current.pseudo(), seat, current.deckCardIds().size()));
+            views.add(new SeatView(current.pseudo(), seat, current.deckId()));
             seat++;
         }
         return List.copyOf(views);
     }
 
-    /** Identifiants de cartes du deck d'un joueur. */
-    public synchronized List<String> deckOf(String pseudo) {
+    /** Identifiant du deck choisi par un joueur, ou {@code null} s'il n'est pas assis. */
+    public synchronized Long deckIdOf(String pseudo) {
         Seat seat = seats.get(pseudo);
-        return seat == null ? List.of() : seat.deckCardIds();
+        return seat == null ? null : seat.deckId();
     }
 }

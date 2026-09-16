@@ -4,10 +4,18 @@ import com.cyberpunktcg.api.dto.ws.CreateRoomRequest;
 import com.cyberpunktcg.api.dto.ws.GameCommandDTO;
 import com.cyberpunktcg.api.dto.ws.JoinRoomRequest;
 import com.cyberpunktcg.api.dto.ws.LeaveRoomRequest;
+import com.cyberpunktcg.domain.deck.Deck;
+import com.cyberpunktcg.domain.deck.DeckRepository;
+import com.cyberpunktcg.domain.user.User;
+import com.cyberpunktcg.domain.user.UserRepository;
+import com.cyberpunktcg.repository.CardRepository;
 import com.fasterxml.jackson.databind.JsonNode;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.util.List;
@@ -20,6 +28,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * Intégration STOMP bout-en-bout : création de salon, rejointe, démarrage
  * automatique, états masqués, actions de jeu, erreurs privées, abandon.
+ *
+ * <p>Mini-Feature 9D : un deck sauvegardé par joueur est obligatoire pour
+ * créer ou rejoindre un salon. On amorce donc un compte (username = pseudo
+ * STOMP) et un deck légal pour chaque protagoniste via
+ * {@link LobbyDeckFixture}.</p>
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -31,6 +44,30 @@ class LobbyGameFlowWebSocketIntegrationTest {
     @LocalServerPort
     private int port;
 
+    @Autowired
+    private UserRepository userRepository;
+    @Autowired
+    private DeckRepository deckRepository;
+    @Autowired
+    private CardRepository cardRepository;
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
+    private long hostDeckId;
+    private long guestDeckId;
+
+    @BeforeEach
+    void seed() {
+        deckRepository.deleteAll();
+        userRepository.deleteAll();
+        User host = LobbyDeckFixture.upsertUser(userRepository, passwordEncoder, HOST);
+        User guest = LobbyDeckFixture.upsertUser(userRepository, passwordEncoder, GUEST);
+        Deck hostDeck = LobbyDeckFixture.persistLegalDeck(deckRepository, cardRepository, "Deck de " + HOST, host.getId());
+        Deck guestDeck = LobbyDeckFixture.persistLegalDeck(deckRepository, cardRepository, "Deck de " + GUEST, guest.getId());
+        hostDeckId = hostDeck.getId();
+        guestDeckId = guestDeck.getId();
+    }
+
     @Test
     void cycleComplet_lobby_partieEtatsMasques_abandon() throws Exception {
         try (StompTestClient host = new StompTestClient();
@@ -38,7 +75,7 @@ class LobbyGameFlowWebSocketIntegrationTest {
             host.connect(port, HOST);
             BlockingQueue<JsonNode> hostErrors = host.subscribe("/user/queue/errors");
             BlockingQueue<JsonNode> hostLobbyQueue = host.subscribe("/user/queue/lobby");
-            host.send("/app/lobby.create", new CreateRoomRequest(null, null));
+            host.send("/app/lobby.create", new CreateRoomRequest(null, hostDeckId));
 
             JsonNode created = host.await(hostLobbyQueue,
                     node -> "LOBBY_STATE".equals(node.path("type").asText())
@@ -47,6 +84,8 @@ class LobbyGameFlowWebSocketIntegrationTest {
             String code = created.path("code").asText();
             assertThat(code).hasSize(6);
             assertThat(created.path("players").get(0).path("pseudo").asText()).isEqualTo(HOST);
+            // Mini-Feature 9D : le siège expose le deckId sélectionné.
+            assertThat(created.path("players").get(0).path("deckId").asLong()).isEqualTo(hostDeckId);
             BlockingQueue<JsonNode> hostLobbyTopic = host.subscribe("/topic/lobby/" + code);
 
             guest.connect(port, GUEST);
@@ -58,7 +97,7 @@ class LobbyGameFlowWebSocketIntegrationTest {
 
             BlockingQueue<JsonNode> guestLobbyTopic = guest.subscribe("/topic/lobby/" + code);
             BlockingQueue<JsonNode> guestLobbyQueue = guest.subscribe("/user/queue/lobby");
-            guest.send("/app/lobby.join", new JoinRoomRequest(code, null));
+            guest.send("/app/lobby.join", new JoinRoomRequest(code, guestDeckId));
 
             JsonNode hostPlaying = host.await(hostLobbyTopic,
                     node -> "PLAYING".equals(node.path("status").asText()), 10);
@@ -276,7 +315,7 @@ class LobbyGameFlowWebSocketIntegrationTest {
             assertThat(guestNotice.path("winnerId").asText()).isEqualTo(HOST);
 
             // Le salon est fermé : l'hôte peut recréer une partie.
-            host.send("/app/lobby.create", new CreateRoomRequest("Revanche", null));
+            host.send("/app/lobby.create", new CreateRoomRequest("Revanche", hostDeckId));
             JsonNode revanche = host.await(hostLobbyQueue,
                     node -> "LOBBY_STATE".equals(node.path("type").asText())
                             && "WAITING".equals(node.path("status").asText()), 10);

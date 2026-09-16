@@ -192,7 +192,8 @@ describe('Combat, blocage et vol de dés à plafond strict (contrat WebSocket)',
     alpha.connect()
     alpha.subscribe('/user/queue/lobby')
     alpha.subscribe('/user/queue/errors')
-    alpha.send('/app/lobby.create', { roomName: 'Combat R6', deckCardIds: DECK_ALPHA })
+    const alphaDeckId = server.registerSavedDeck('Alpha', DECK_ALPHA);
+    alpha.send('/app/lobby.create', { roomName: 'Combat R6', deckId: alphaDeckId })
     const created = alpha.messages.find((message) => message.body.type === 'LOBBY_STATE')
     const roomCode = String(created?.body.code ?? '')
     expect(roomCode).toMatch(/^[A-Z2-9]{6}$/)
@@ -201,7 +202,8 @@ describe('Combat, blocage et vol de dés à plafond strict (contrat WebSocket)',
     bravo.connect()
     bravo.subscribe('/user/queue/lobby')
     bravo.subscribe('/user/queue/errors')
-    bravo.send('/app/lobby.join', { roomCode, deckCardIds: DECK_BRAVO })
+    const bravoDeckId = server.registerSavedDeck('Bravo', DECK_BRAVO);
+    bravo.send('/app/lobby.join', { roomCode, deckId: bravoDeckId })
 
     const lobby = alpha.messages.filter((message) => message.body.type === 'LOBBY_STATE').pop()
     gameId = String(lobby?.body.gameId ?? '')

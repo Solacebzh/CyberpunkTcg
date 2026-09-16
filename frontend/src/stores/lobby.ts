@@ -28,6 +28,9 @@ const LOBBY_ERROR_CODES = new Set([
   'ALREADY_IN_ROOM',
   'GAME_IN_PROGRESS',
   'DECK_INVALID',
+  // Mini-Feature 9D : erreurs spécifiques à la sélection d'un deck sauvegardé.
+  'NO_DECK_SELECTED',
+  'DECK_NOT_OWNED',
 ])
 
 interface StoredSession {
@@ -62,8 +65,13 @@ export const useLobbyStore = defineStore('lobby', () => {
   const busy = ref(false)
   const roomNameDraft = ref('')
   const roomCodeDraft = ref('')
-  /** Deck choisi : `null` = deck par défaut du serveur. */
-  const useCustomDeck = ref(false)
+  /**
+   * Mini-Feature 9D : identifiant du deck sauvegardé (`null` tant que le
+   * joueur n'a rien choisi). Le salon et la partie ne sont accessibles
+   * qu'après cette sélection ; tant que `selectedDeckId` est nul, les
+   * boutons « Créer/Rejoindre » restent grisés côté UI.
+   */
+  const selectedDeckId = ref<number | null>(null)
 
   let wired = false
   let stopRoom: Unsubscribe | null = null
@@ -76,10 +84,18 @@ export const useLobbyStore = defineStore('lobby', () => {
   const opponent = computed(() => room.value?.players.find((player) => player.pseudo !== pseudo.value) ?? null)
   const isWaiting = computed(() => status.value === 'waiting')
   const isInGame = computed(() => status.value === 'in-game' && gameId.value !== null)
-  const deckCardIds = computed<string[] | null>(() =>
-    useCustomDeck.value && decks.deck.length > 0 ? decks.deck : null,
-  )
-  const deckCardCount = computed(() => deckCardIds.value?.length ?? null)
+  /**
+   * `true` si le joueur a sélectionné un de ses decks sauvegardés et peut
+   * donc créer ou rejoindre un salon (cf. exigence 9D : pas de partie sans
+   * deck). C'est ce booléen que la vue utilise pour griser le bouton.
+   */
+  const hasSelectedDeck = computed(() => selectedDeckId.value !== null)
+  /** Deck sélectionné, exposé pour affichage (« Deck de Val · 43 cartes »). */
+  const selectedDeck = computed(() => {
+    const id = selectedDeckId.value
+    if (id === null) return null
+    return decks.savedDecks.find((saved) => saved.id === id) ?? null
+  })
 
   // --- Persistance de session (reprise après rechargement, doc §8) ---
   function persistSession(): void {
@@ -184,12 +200,16 @@ export const useLobbyStore = defineStore('lobby', () => {
   function createRoom(name?: string): boolean {
     init()
     if (!ensureConnected()) return false
+    if (selectedDeckId.value === null) {
+      error.value = 'Sélectionne un deck sauvegardé avant de créer un salon'
+      return false
+    }
 
     busy.value = true
     error.value = null
     status.value = 'waiting'
     const roomName = (name ?? roomNameDraft.value).trim()
-    const sent = socket.createRoom({ roomName: roomName || null, deckCardIds: deckCardIds.value })
+    const sent = socket.createRoom({ roomName: roomName || null, deckId: selectedDeckId.value })
     if (!sent) {
       busy.value = false
       status.value = 'ready'
@@ -202,6 +222,10 @@ export const useLobbyStore = defineStore('lobby', () => {
   function joinRoom(code?: string): boolean {
     init()
     if (!ensureConnected()) return false
+    if (selectedDeckId.value === null) {
+      error.value = 'Sélectionne un deck sauvegardé avant de rejoindre un salon'
+      return false
+    }
 
     const roomCode = (code ?? roomCodeDraft.value).trim().toUpperCase()
     if (!roomCode) {
@@ -212,7 +236,7 @@ export const useLobbyStore = defineStore('lobby', () => {
     busy.value = true
     error.value = null
     status.value = 'starting'
-    const sent = socket.joinRoom({ roomCode, deckCardIds: deckCardIds.value })
+    const sent = socket.joinRoom({ roomCode, deckId: selectedDeckId.value })
     if (!sent) {
       busy.value = false
       status.value = 'ready'
@@ -220,6 +244,16 @@ export const useLobbyStore = defineStore('lobby', () => {
       return false
     }
     return true
+  }
+
+  /**
+   * Sélectionne un deck sauvegardé (`null` = retire la sélection). À partir
+   * de là, les boutons « Créer/Rejoindre » sont activés côté UI et le
+   * payload STOMP portera ce `deckId`.
+   */
+  function selectDeck(deckId: number | null): void {
+    selectedDeckId.value = deckId
+    if (deckId !== null) error.value = null
   }
 
   function leaveRoom(): void {
@@ -277,7 +311,7 @@ export const useLobbyStore = defineStore('lobby', () => {
     busy,
     roomNameDraft,
     roomCodeDraft,
-    useCustomDeck,
+    selectedDeckId,
     // dérivés
     pseudo,
     isConnected,
@@ -286,8 +320,8 @@ export const useLobbyStore = defineStore('lobby', () => {
     opponent,
     isWaiting,
     isInGame,
-    deckCardIds,
-    deckCardCount,
+    hasSelectedDeck,
+    selectedDeck,
     // actions
     init,
     setPseudo,
@@ -299,5 +333,6 @@ export const useLobbyStore = defineStore('lobby', () => {
     leaveLocalRoom,
     resumeStoredGame,
     forfeit,
+    selectDeck,
   }
 })

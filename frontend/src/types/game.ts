@@ -90,6 +90,10 @@ export type WsErrorCode =
   | 'ALREADY_IN_ROOM'
   | 'GAME_IN_PROGRESS'
   | 'DECK_INVALID'
+  /** Mini-Feature 9D : aucun `deckId` envoyé à la création/rejointe. */
+  | 'NO_DECK_SELECTED'
+  /** Mini-Feature 9D : le deck n'existe pas ou n'appartient pas au joueur. */
+  | 'DECK_NOT_OWNED'
   | 'ILLEGAL_ACTION'
   | 'BAD_REQUEST'
   | 'GAME_NOT_FOUND'
@@ -265,7 +269,17 @@ export interface WsError {
 export interface RoomPlayer {
   pseudo: string
   seat: number
-  deckCardCount: number
+  /**
+   * Mini-Feature 9D : identifiant du deck sauvegardé sélectionné par le joueur
+   * (clé vers `decks.id`). `null` tant qu'aucun deck n'a été choisi.
+   */
+  deckId?: number | null
+  /**
+   * Taille effective du deck (mise à jour à la sélection, valeur indicative).
+   * Conservé pour l'affichage historique côté UI ; le backend n'envoie plus
+   * ce champ, qui devient facultatif.
+   */
+  deckCardCount?: number
 }
 
 /** `LOBBY_STATE` sur `/topic/lobby/{code}` et `/user/queue/lobby`. */
@@ -310,12 +324,19 @@ export interface GameCommand {
 
 export interface CreateRoomRequest {
   roomName?: string | null
-  deckCardIds?: string[] | null
+  /**
+   * Identifiant du deck sauvegardé (Mini-Feature 9D). Le client le tire de
+   * `GET /api/decks` et l'envoie dans le payload STOMP ; le backend vérifie
+   * qu'il existe et appartient au joueur avant de rejoindre la partie.
+   * Requis : envoyer un payload sans `deckId` aboutit à un rejet `NO_DECK_SELECTED`.
+   */
+  deckId?: number | null
 }
 
 export interface JoinRoomRequest {
   roomCode: string
-  deckCardIds?: string[] | null
+  /** Voir {@link CreateRoomRequest#deckId} — requis pour rejoindre un salon. */
+  deckId?: number | null
 }
 
 export interface LeaveRoomRequest {

@@ -257,11 +257,11 @@ function requestResync(gameId: string): void {
 }
 
 function createRoom(request: CreateRoomRequest): boolean {
-  return publish(Ws.lobbyCreate, compact({ roomName: request.roomName, deckCardIds: request.deckCardIds }))
+  return publish(Ws.lobbyCreate, compact({ roomName: request.roomName, deckId: request.deckId }))
 }
 
 function joinRoom(request: JoinRoomRequest): boolean {
-  return publish(Ws.lobbyJoin, compact({ roomCode: request.roomCode, deckCardIds: request.deckCardIds }))
+  return publish(Ws.lobbyJoin, compact({ roomCode: request.roomCode, deckId: request.deckId }))
 }
 
 function leaveRoom(request: LeaveRoomRequest = {}): boolean {

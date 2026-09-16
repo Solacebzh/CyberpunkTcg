@@ -274,6 +274,60 @@ class GameServiceTest {
     }
 
     // ------------------------------------------------------------------
+    // Mini-Feature 9D — la partie utilise le deck sélectionné par le joueur
+    // ------------------------------------------------------------------
+
+    @Test
+    void testGameStarts_WithSelectedDeck() {
+        // Mini-Feature 9D : `LobbyService` résout la liste de cartes depuis le
+        // deck persisté et appelle `GameService.createGame(...)` avec. Le
+        // service de partie doit utiliser TELLE QUELLE cette liste pour bâtir
+        // le joueur : on marque les cartes avec un préfixe distinctif
+        // (`saved-...`) et on vérifie qu'on les retrouve dans la Legends Area
+        // et dans le deck du joueur correspondant.
+        List<String> savedDeckOne = new ArrayList<>();
+        savedDeckOne.add("saved-legend-1");
+        savedDeckOne.add("saved-legend-2");
+        savedDeckOne.add("saved-legend-3");
+        for (int i = 0; i < 10; i++) {
+            savedDeckOne.add("saved-unit-" + i);
+        }
+        List<String> savedDeckTwo = new ArrayList<>();
+        savedDeckTwo.add("saved-legend-4");
+        savedDeckTwo.add("saved-legend-5");
+        savedDeckTwo.add("saved-legend-6");
+        for (int i = 0; i < 10; i++) {
+            savedDeckTwo.add("other-unit-" + i);
+        }
+        stubCatalog(savedDeckOne, savedDeckTwo);
+
+        GameState state = gameService.createGame("p1", "p2", savedDeckOne, savedDeckTwo);
+
+        // Chaque joueur reçoit SES Legends (et pas un deck par défaut
+        // calculé depuis le catalogue). La Legends Area doit donc contenir
+        // exactement les préfixes du deck transmis.
+        assertThat(state.getPlayer("p1").getLegendsArea())
+                .extracting(CardInstance::getCardId)
+                .containsExactlyInAnyOrder("saved-legend-1", "saved-legend-2", "saved-legend-3");
+        assertThat(state.getPlayer("p2").getLegendsArea())
+                .extracting(CardInstance::getCardId)
+                .containsExactlyInAnyOrder("saved-legend-4", "saved-legend-5", "saved-legend-6");
+
+        // Les 10 cartes non-Legend de chaque deck (moins les 6 distribuées
+        // en main) sont bien dans la pioche correspondante — pas un
+        // sous-ensemble aléatoire du catalogue global.
+        assertThat(state.getPlayer("p1").getDeck())
+                .allMatch(card -> card.getCardId().startsWith("saved-"));
+        assertThat(state.getPlayer("p2").getDeck())
+                .allMatch(card -> card.getCardId().startsWith("other-"));
+        // Main = 6 cartes piochées parmi les 10 cartes non-Legend du deck.
+        assertThat(state.getPlayer("p1").getHand()).hasSize(6);
+        assertThat(state.getPlayer("p2").getHand()).hasSize(6);
+        assertThat(state.getPlayer("p1").getDeck()).hasSize(4);
+        assertThat(state.getPlayer("p2").getDeck()).hasSize(4);
+    }
+
+    // ------------------------------------------------------------------
     // Fabriques locales
     // ------------------------------------------------------------------
 

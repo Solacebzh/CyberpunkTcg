@@ -178,7 +178,10 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     await waitFor(() => lobby.isConnected, 'connexion STOMP')
 
     decks.setDeck(DECK_A)
-    lobby.useCustomDeck = true
+    // Mini-Feature 9D : on simule un deck sauvegardé côté mock, puis on le sélectionne.
+    const alphaDeckId = server.registerSavedDeck('Alpha', DECK_A)
+    lobby.selectDeck(alphaDeckId)
+    await tick(2)
 
     // --- 2. Création du salon --------------------------------------------
     await buttonWith(wrapper, 'Créer le salon').trigger('click')
@@ -190,14 +193,15 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     expect(wrapper.text()).toContain('en attente du 2e joueur')
 
     const createCommand = commandsTo(server, '/app/lobby.create')[0]
-    expect(createCommand).toMatchObject({ deckCardIds: DECK_A })
+    expect(createCommand).toMatchObject({ deckId: alphaDeckId })
 
     // --- 3. Le second joueur rejoint → la partie démarre ------------------
     const bravo = new RawClient(server, 'Bravo')
     bravo.connect()
     bravo.subscribe('/user/queue/lobby')
     bravo.subscribe('/user/queue/errors')
-    bravo.send('/app/lobby.join', { roomCode, deckCardIds: DECK_B })
+    const bravoDeckId = server.registerSavedDeck('Bravo', DECK_B)
+    bravo.send('/app/lobby.join', { roomCode, deckId: bravoDeckId })
 
     await waitFor(() => lobby.gameId !== null, 'gameId reçu après join')
     await waitFor(() => router.currentRoute.value.name === 'game', 'navigation vers /game')
@@ -549,14 +553,17 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     await waitFor(() => lobby.isConnected, 'connexion STOMP')
 
     decks.setDeck(DECK_A)
-    lobby.useCustomDeck = true
+    const alphaDeckIdR2 = server.registerSavedDeck('Alpha', DECK_A)
+    lobby.selectDeck(alphaDeckIdR2)
+    await tick(2)
     await buttonWith(wrapper, 'Créer le salon').trigger('click')
     await waitFor(() => lobby.room !== null, 'salon créé')
 
     const bravo = new RawClient(server, 'Bravo')
     bravo.connect()
     bravo.subscribe('/user/queue/errors')
-    bravo.send('/app/lobby.join', { roomCode: lobby.room?.code, deckCardIds: DECK_B })
+    const bravoDeckId2 = server.registerSavedDeck('Bravo', DECK_B)
+    bravo.send('/app/lobby.join', { roomCode: lobby.room?.code, deckId: bravoDeckId2 })
 
     await waitFor(() => game.state !== null, 'partie démarrée')
     const gameId = lobby.gameId ?? ''
