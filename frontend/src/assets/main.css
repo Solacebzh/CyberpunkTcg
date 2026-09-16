@@ -151,6 +151,23 @@
     letter-spacing: 0.08em;
   }
 
+  .cyber-input {
+    width: 100%;
+    border: 1px solid var(--color-cyber-line);
+    border-radius: var(--radius-cyber);
+    background: rgba(0, 0, 0, 0.35);
+    padding: 0.7rem 0.85rem;
+    color: #f1f5f9;
+    font-family: var(--font-mono);
+    outline: none;
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  }
+
+  .cyber-input:focus {
+    border-color: var(--color-cyber-cyan);
+    box-shadow: 0 0 14px rgba(5, 217, 232, 0.2);
+  }
+
   .cyber-btn {
     display: inline-flex;
     align-items: center;
