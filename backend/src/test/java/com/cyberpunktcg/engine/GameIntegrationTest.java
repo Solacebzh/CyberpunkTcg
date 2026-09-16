@@ -87,9 +87,11 @@ class GameIntegrationTest {
         assertThat(state.getPlayer("p2").getHand()).hasSize(6);
         // Deck = total - main (12 -6 =6 pour notre fixture 9 units +3 legends =12 ; en vrai 40-50)
         assertThat(state.getPlayer("p1").getDeck().size() + state.getPlayer("p1").getHand().size()).isEqualTo(9);
-        // 2 joueurs, premier tiré au sort (ALWAYS_TRUE => p1)
+        // 2 joueurs, premier tiré au sort (ALWAYS_TRUE => p1). Mini-Feature 5.1 :
+        // le premier joueur démarre en phase DRAW (sous-étape AWAITING_DRAW), pas MAIN.
         assertThat(state.getTurn().getActivePlayerId()).isEqualTo("p1");
-        assertThat(state.getPhase()).isEqualTo(Phase.MAIN);
+        assertThat(state.getPhase()).isEqualTo(Phase.DRAW);
+        assertThat(state.getDrawStep()).isEqualTo(DrawStep.AWAITING_DRAW);
     }
 
     @Test
@@ -141,6 +143,9 @@ class GameIntegrationTest {
     @DisplayName("R1 - Setup : le premier joueur a exactement 2 Legends inclinées sur 3")
     void testR1_Setup_FirstPlayerHasTwoExhaustedLegends() {
         GameState state = newGame();
+        // Mini-Feature 5.1 : le premier joueur démarre en phase DRAW — on résout la
+        // pioche + le dé avant d'agir en phase MAIN (le malus demeure pendant ce tour).
+        completeDraw(state);
 
         // ALWAYS_TRUE => p1 commence ; on passe malgré tout par le joueur actif.
         String starter = state.getTurn().getActivePlayerId();
@@ -205,6 +210,8 @@ class GameIntegrationTest {
     @DisplayName("R1 - Phase DRAW : toutes les Legends sont redressées (malus levé au tour 2)")
     void testR1_DrawPhase_ReadiesAllLegends() {
         GameState state = newGame();
+        // Mini-Feature 5.1 : résolution de la phase DRAW du tour 1 avant d'agir.
+        completeDraw(state);
         String starter = state.getTurn().getActivePlayerId();
         String secondId = state.getOpponent(starter).getId();
         Player first = state.getPlayer(starter);
@@ -252,6 +259,8 @@ class GameIntegrationTest {
     @DisplayName("R2 - Eddies repartent de 0 chaque tour")
     void testR2_EddiesResetEachTurn() {
         GameState state = newGame();
+        // Mini-Feature 5.1 : le premier joueur (p1) démarre en DRAW — on résout avant d'agir.
+        completeDraw(state);
         // p1 spend legend -> +1
         CardInstance legend = state.getPlayer("p1").legendsAvailableForEddies().get(0);
         execute(state, new SpendLegendCommand("p1", legend.getInstanceId()));
@@ -285,6 +294,8 @@ class GameIntegrationTest {
     @DisplayName("R2 - Sources : Legend + Eddies card + effets")
     void testR2_EddiesSources() {
         GameState state = newGame();
+        // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
+        completeDraw(state);
         // Source Legend
         CardInstance leg = state.getPlayer("p1").legendsAvailableForEddies().get(0);
         execute(state, new SpendLegendCommand("p1", leg.getInstanceId()));
@@ -318,6 +329,8 @@ class GameIntegrationTest {
     @DisplayName("R3 - Incliner Legend face cachée donne +1 et reste sur terrain")
     void testR3_LegendSpend_GivesEddieAndStays() {
         GameState state = newGame();
+        // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
+        completeDraw(state);
         Player p1 = state.getPlayer("p1");
         CardInstance legend = p1.legendsAvailableForEddies().get(0);
         assertThat(legend.isFaceDown()).isTrue();
@@ -333,6 +346,8 @@ class GameIntegrationTest {
     @DisplayName("R3 - Legends redressées au début du tour suivant")
     void testR3_LegendReadyNextTurn() {
         GameState state = newGame();
+        // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
+        completeDraw(state);
         CardInstance legend = state.getPlayer("p1").legendsAvailableForEddies().get(0);
         execute(state, new SpendLegendCommand("p1", legend.getInstanceId()));
         assertThat(legend.isExhausted()).isTrue();
@@ -349,6 +364,8 @@ class GameIntegrationTest {
     @DisplayName("R3 - Incliner Legend épuisée refuse")
     void testR3_LegendSpendExhaustedFails() {
         GameState state = newGame();
+        // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
+        completeDraw(state);
         CardInstance legend = state.getPlayer("p1").legendsAvailableForEddies().get(0);
         execute(state, new SpendLegendCommand("p1", legend.getInstanceId()));
         String reason = expectRefusal(state, new SpendLegendCommand("p1", legend.getInstanceId()));
@@ -363,6 +380,8 @@ class GameIntegrationTest {
     @DisplayName("R4 - Flip Legend coûte 1 Eddie et reste en Legends Area")
     void testR4_FlipCostsOneEddie() {
         GameState state = newGame();
+        // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
+        completeDraw(state);
         Card definition = GameFixtures.coloredLegend("legend-call", CardColor.RED, 2, "FLIP:DRAW:1");
         CardInstance legend = GameFixtures.legendCard(state, "p1", definition, true);
         // Sans eddy : refus
@@ -389,6 +408,8 @@ class GameIntegrationTest {
     @DisplayName("R4 - Call une seule fois par tour")
     void testR4_FlipOncePerTurn() {
         GameState state = newGame();
+        // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
+        completeDraw(state);
         Card leg1 = GameFixtures.coloredLegend("flip-1", CardColor.RED, 2, null);
         Card leg2 = GameFixtures.coloredLegend("flip-2", CardColor.BLUE, 2, null);
         CardInstance l1 = GameFixtures.legendCard(state, "p1", leg1, true);
@@ -409,6 +430,8 @@ class GameIntegrationTest {
     @DisplayName("R4 - Flip reste active sur terrain et ne quitte pas Legends Area")
     void testR4_FlipStaysInLegendsArea() {
         GameState state = newGame();
+        // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
+        completeDraw(state);
         CardInstance legend = GameFixtures.legendCard(state, "p1", GameFixtures.coloredLegend("stay", CardColor.RED, 2, null), true);
         GameFixtures.giveEddies(state, "p1", 2);
         execute(state, new PlayCardCommand("p1", legend.getInstanceId()));
@@ -427,6 +450,8 @@ class GameIntegrationTest {
     @DisplayName("R5 - Vente 1 par tour, révélée, face cachée en Eddies Area, prête (0 Eddie immédiat)")
     void testR5_Sell_OnePerTurn_FaceDownEddiesArea() {
         GameState state = newGame();
+        // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
+        completeDraw(state);
         CardInstance first = GameFixtures.handCard(state, "p1", GameFixtures.coloredUnit("sell-1", CardColor.RED,1,2,2));
         CardInstance second = GameFixtures.handCard(state, "p1", GameFixtures.coloredUnit("sell-2", CardColor.RED,1,3,3));
 
@@ -449,6 +474,8 @@ class GameIntegrationTest {
     @DisplayName("R5 - Carte vendue = ressource : prête dès la vente, inclinable chaque tour")
     void testR5_Sell_StaysAsFutureResource() {
         GameState state = newGame();
+        // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
+        completeDraw(state);
         CardInstance toSell = GameFixtures.handCard(state, "p1", GameFixtures.coloredUnit("future", CardColor.RED,1,1,1));
         execute(state, new SellCardCommand("p1", toSell.getInstanceId()));
         assertThat(toSell.getZone()).isEqualTo(Zone.EDDIES_AREA);
@@ -470,6 +497,8 @@ class GameIntegrationTest {
     @DisplayName("R5 - Vente réinitialisée au tour suivant")
     void testR5_Sell_ResetNextTurn() {
         GameState state = newGame();
+        // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
+        completeDraw(state);
         CardInstance a = GameFixtures.handCard(state, "p1", GameFixtures.unit("a",1,1));
         CardInstance b = GameFixtures.handCard(state, "p1", GameFixtures.unit("b",1,1));
         execute(state, new SellCardCommand("p1", a.getInstanceId()));
@@ -492,6 +521,8 @@ class GameIntegrationTest {
     @DisplayName("R6 - Incliner carte Eddies donne +1 Eddie")
     void testR6_EddiesCard_TapGivesEddie() {
         GameState state = newGame();
+        // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
+        completeDraw(state);
         CardInstance sold = GameFixtures.handCard(state, "p1", GameFixtures.unit("to-sell",1,1));
         execute(state, new SellCardCommand("p1", sold.getInstanceId()));
         passTurn(state, "p1");
@@ -508,6 +539,8 @@ class GameIntegrationTest {
     @DisplayName("R6 - Carte Eddies redressée au début de chaque tour")
     void testR6_EddiesCard_ReadyNextTurn() {
         GameState state = newGame();
+        // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
+        completeDraw(state);
         CardInstance card = GameFixtures.handCard(state, "p1", GameFixtures.unit("eddy",1,1));
         execute(state, new SellCardCommand("p1", card.getInstanceId()));
         passTurn(state, "p1");
@@ -524,6 +557,8 @@ class GameIntegrationTest {
     @DisplayName("R6 - Incliner carte Eddies déjà inclinée refuse")
     void testR6_EddiesCard_AlreadyExhaustedFails() {
         GameState state = newGame();
+        // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
+        completeDraw(state);
         CardInstance card = GameFixtures.handCard(state, "p1", GameFixtures.unit("dup",1,1));
         execute(state, new SellCardCommand("p1", card.getInstanceId()));
         passTurn(state, "p1");
@@ -544,6 +579,8 @@ class GameIntegrationTest {
         List<Card> blueLegends = new ArrayList<>();
         for (int i=0;i<3;i++) blueLegends.add(GameFixtures.coloredLegend("blue-"+i, CardColor.BLUE,2,null));
         GameState state = newGame(blueLegends, defaultLegends("b"));
+        // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
+        completeDraw(state);
         // Carte rouge 1 RAM, coût 1, devrait être jouable malgré plafond rouge 0 car RAM désactivée
         CardInstance redUnit = GameFixtures.handCard(state, "p1",
                 GameFixtures.coloredUnit("red-unit", CardColor.RED, 6, 1, 2));
@@ -560,6 +597,8 @@ class GameIntegrationTest {
         legends.add(GameFixtures.coloredLegend("l2", CardColor.RED,1,null));
         legends.add(GameFixtures.coloredLegend("l3", CardColor.BLUE,2,null));
         GameState state = newGame(legends, defaultLegends("b"));
+        // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
+        completeDraw(state);
         // Carte verte 10 RAM alors que plafond vert 0 → devrait passer car RAM non vérifiée
         CardInstance greenHuge = GameFixtures.handCard(state, "p1",
                 GameFixtures.coloredUnit("huge-green", CardColor.GREEN, 10, 1, 1));
@@ -576,7 +615,18 @@ class GameIntegrationTest {
     @DisplayName("R8 - Ordre exact des phases : DRAW ready->draw->gig puis MAIN")
     void testR8_PhasesOrder() {
         GameState state = newGame();
+        // Mini-Feature 5.1 : le tour 1 du premier joueur démarre en phase DRAW.
+        assertThat(state.getTurn().getNumber()).isEqualTo(1);
+        assertThat(state.getPhase()).isEqualTo(Phase.DRAW);
+        assertThat(state.getDrawStep()).isEqualTo(DrawStep.AWAITING_DRAW);
+        // Le premier joueur doit piocher puis choisir son dé avant d'entrer en MAIN.
+        expectRefusal(state, new EndTurnCommand("p1"));
+        execute(state, new DrawCardCommand("p1"));
+        assertThat(state.getDrawStep()).isEqualTo(DrawStep.AWAITING_DIE_SELECT);
+        execute(state, new SelectDieCommand("p1", "d4"));
         assertThat(state.getPhase()).isEqualTo(Phase.MAIN);
+        assertThat(state.getDrawStep()).isNull();
+        assertThat(state.getPlayer("p1").getGigs()).hasSize(1);
         // Fin tour p1 -> tour p2 : phase DRAW interactive (Mini-Feature 5)
         int turnBefore = state.getTurn().getNumber();
         execute(state, new EndTurnCommand("p1"));
@@ -592,7 +642,7 @@ class GameIntegrationTest {
         assertThat(state.getPhase()).isEqualTo(Phase.MAIN);
         assertThat(state.getDrawStep()).isNull();
         // Logs doivent montrer DRAW, VICTORY_CHECK, GIG_ROLL, MAIN dans l'ordre
-        List<String> logs = descriptions(state, 30);
+        List<String> logs = descriptions(state, 40);
         // Vérifie que la séquence DRAW avant Gig
         int drawIdx = -1, gigIdx = -1, mainIdx = -1;
         for (int i=0;i<logs.size();i++) {
@@ -604,7 +654,7 @@ class GameIntegrationTest {
         assertThat(drawIdx).isGreaterThanOrEqualTo(0);
         assertThat(gigIdx).isGreaterThan(drawIdx);
         assertThat(mainIdx).isGreaterThan(gigIdx);
-        // Vérifie que startTurn a remis eddies à 0 et redressé
+        // Vérifie que startTurn a remis eddies à 0 et redressé (pour p2 ici)
         assertThat(state.getPlayer("p2").getEddies()).isZero();
     }
 
@@ -617,17 +667,23 @@ class GameIntegrationTest {
         CardInstance u = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("ready-test",1,1));
         u.setExhausted(true);
         int deckBefore = p1.getDeck().size();
-        int handBefore = p1.getHand().size();
+        int p2HandBefore = state.getPlayer("p2").getHand().size();
         int gigsBefore = state.getPlayer("p2").getGigs().size();
         int p2DeckBefore = state.getPlayer("p2").getDeck().size();
-        execute(state, new EndTurnCommand("p1"));
+        // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout d'abord sa pioche + son dé.
+        completeDraw(state);
         // 1) READY : résolu à l'ouverture du tour (p1's unit reste épuisée jusqu'à SON prochain tour)
         assertThat(u.isExhausted()).isTrue();
+        assertThat(state.getPhase()).isEqualTo(Phase.MAIN);
+        // 2) DRAW 1 : exige le clic du joueur (Mini-Feature 5) — p1 vient de piocher.
+        execute(state, new EndTurnCommand("p1"));
+        // Ouverture du tour 2 de p2 : phase DRAW interactive.
         assertThat(state.getPhase()).isEqualTo(Phase.DRAW);
-        // 2) DRAW 1 : exige le clic du joueur (Mini-Feature 5)
-        assertThat(state.getPlayer("p2").getHand()).hasSize(handBefore);
+        assertThat(state.getDrawStep()).isEqualTo(DrawStep.AWAITING_DRAW);
+        // p2 n'a pas encore pioché : sa main est intacte.
+        assertThat(state.getPlayer("p2").getHand()).hasSize(p2HandBefore);
         execute(state, new DrawCardCommand("p2"));
-        assertThat(state.getPlayer("p2").getHand()).hasSize(handBefore + 1); // mains de départ identiques (6)
+        assertThat(state.getPlayer("p2").getHand()).hasSize(p2HandBefore + 1); // mains de départ identiques (6)
         assertThat(state.getPlayer("p2").getDeck()).hasSize(p2DeckBefore - 1);
         assertThat(state.getPlayer("p2").getGigs()).hasSize(gigsBefore);
         // 3) GAIN A GIG : le d20 est refusé tant qu'il reste d'autres dés (d20 last)
@@ -640,6 +696,8 @@ class GameIntegrationTest {
         // Le tour suivant de p1 redresse enfin son Unit
         passTurn(state, "p2");
         assertThat(u.isExhausted()).isFalse();
+        // deckBefore documente la taille initiale de p1 (non utilisé directement ici).
+        assertThat(deckBefore).isGreaterThanOrEqualTo(0);
     }
 
     @Test
@@ -660,6 +718,7 @@ class GameIntegrationTest {
     @DisplayName("R9 - Unit peut attaquer si ready et sans Lag")
     void testR9_Combat_UnitCanAttackIfReady() {
         GameState state = newGame();
+        completeDraw(state);
         CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("att",1,3));
         CardInstance defender = GameFixtures.fieldCard(state, "p2", GameFixtures.unit("def",1,2));
         defender.setExhausted(true); // doit être spent pour être cible
@@ -672,6 +731,7 @@ class GameIntegrationTest {
     @DisplayName("R9 - Power = dégâts : plus forte l'emporte, égalité les deux meurent")
     void testR9_Combat_PowerIsDamage() {
         GameState state = newGame();
+        completeDraw(state);
         // Cas 1 : 4 vs 5 -> attaquant meurt
         CardInstance a1 = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("a1",1,4));
         CardInstance d1 = GameFixtures.fieldCard(state, "p2", GameFixtures.unit("d1",1,5));
@@ -682,6 +742,7 @@ class GameIntegrationTest {
 
         // Cas 2 : égalité 3 vs 3 -> les deux meurent
         GameState state2 = newGame();
+        completeDraw(state2);
         CardInstance a2 = GameFixtures.fieldCard(state2, "p1", GameFixtures.unit("a2",1,3));
         CardInstance d2 = GameFixtures.fieldCard(state2, "p2", GameFixtures.unit("d2",1,3));
         d2.setExhausted(true);
@@ -694,6 +755,7 @@ class GameIntegrationTest {
     @DisplayName("R9 - BLOCKER intercepte attaque et vol de Gig")
     void testR9_BlockerIntercepte() {
         GameState state = newGame();
+        completeDraw(state);
         CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("atk",1,4));
         CardInstance blocker = GameFixtures.fieldCard(state, "p2", GameFixtures.unit("block",1,5, CardKeyword.BLOCKER));
         CardInstance bystander = GameFixtures.fieldCard(state, "p2", GameFixtures.unit("byst",1,2));
@@ -715,6 +777,7 @@ class GameIntegrationTest {
     @DisplayName("R9 - Unit vaincue va en défausse (Trash)")
     void testR9_DefeatedGoesToTrash() {
         GameState state = newGame();
+        completeDraw(state);
         CardInstance weak = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("weak",1,1));
         CardInstance strong = GameFixtures.fieldCard(state, "p2", GameFixtures.unit("strong",1,5));
         strong.setExhausted(true);
@@ -731,6 +794,7 @@ class GameIntegrationTest {
     @DisplayName("R10 - Unit jouée ce tour ne peut pas attaquer (Lag)")
     void testR10_SummoningSickness_BlocksAttack() {
         GameState state = newGame();
+        completeDraw(state);
         GameFixtures.giveEddies(state, "p1", 5);
         CardInstance unit = GameFixtures.handCard(state, "p1", GameFixtures.unit("fresh",1,2));
         execute(state, new PlayCardCommand("p1", unit.getInstanceId()));
@@ -745,6 +809,7 @@ class GameIntegrationTest {
     @DisplayName("R10 - GO_SOLO / ADRENALINE ignore Lag et peut attaquer immédiatement")
     void testR10_GoSoloIgnoresSickness() {
         GameState state = newGame();
+        completeDraw(state);
         GameFixtures.giveEddies(state, "p1", 5);
         CardInstance goSoloUnit = GameFixtures.handCard(state, "p1",
                 GameFixtures.unit("go",1,3, CardKeyword.GO_SOLO));
@@ -761,6 +826,7 @@ class GameIntegrationTest {
     @DisplayName("R10 - Mal d'invocation dissipé au début du tour suivant")
     void testR10_SicknessClearsNextTurn() {
         GameState state = newGame();
+        completeDraw(state);
         GameFixtures.giveEddies(state, "p1", 5);
         CardInstance u = GameFixtures.handCard(state, "p1", GameFixtures.unit("lag",1,2));
         execute(state, new PlayCardCommand("p1", u.getInstanceId()));
@@ -783,6 +849,7 @@ class GameIntegrationTest {
     @DisplayName("R11 - Keyword {Play} : effet à la pose")
     void testR11_Keyword_Play() {
         GameState state = newGame();
+        completeDraw(state);
         GameFixtures.giveEddies(state, "p1", 5);
         CardInstance card = GameFixtures.handCard(state, "p1",
                 GameFixtures.unit("play-draw",1,2,"ON_PLAY:DRAW:2"));
@@ -797,6 +864,7 @@ class GameIntegrationTest {
     @DisplayName("R11 - Keyword {Blocker} : interception")
     void testR11_Keyword_Blocker() {
         GameState state = newGame();
+        completeDraw(state);
         CardInstance blocker = GameFixtures.fieldCard(state, "p2", GameFixtures.unit("b",1,3, CardKeyword.BLOCKER));
         CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("a",1,4));
         GameFixtures.addGigs(state, "p2", 2);
@@ -812,6 +880,7 @@ class GameIntegrationTest {
     void testR11_Keyword_GoSolo() {
         // On teste via une Unit GO_SOLO qui peut attaquer le tour même
         GameState state = newGame();
+        completeDraw(state);
         GameFixtures.giveEddies(state, "p1", 5);
         CardInstance gs = GameFixtures.handCard(state, "p1", GameFixtures.unit("gs",1,3, CardKeyword.GO_SOLO));
         execute(state, new PlayCardCommand("p1", gs.getInstanceId()));
@@ -822,6 +891,7 @@ class GameIntegrationTest {
     @DisplayName("R11 - Keyword QUICK : jouable en réaction, sinon refusé")
     void testR11_Keyword_Quick() {
         GameState state = newGame();
+        completeDraw(state);
         CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("att",1,3));
         CardInstance defender = GameFixtures.fieldCard(state, "p2", GameFixtures.unit("def",1,1));
         defender.setExhausted(true);
@@ -841,6 +911,7 @@ class GameIntegrationTest {
     @DisplayName("R11 - Keyword {Defeated} : effet à la destruction")
     void testR11_Keyword_Defeated() {
         GameState state = newGame();
+        completeDraw(state);
         // Unit avec ON_DEATH:DRAW:1 : quand elle meurt, pioche
         CardInstance victim = GameFixtures.fieldCard(state, "p1",
                 GameFixtures.unit("victim",1,2,"ON_DEATH:DRAW:1"));
@@ -863,6 +934,7 @@ class GameIntegrationTest {
     @DisplayName("R11 - Keyword {Call} et {Spend} documentés comme non supportés V0")
     void testR11_Keyword_SpendCallSkipped() {
         GameState state = newGame();
+        completeDraw(state);
         // Carte avec Spend (conditionnel) doit être ignorée sans erreur
         CardInstance card = GameFixtures.handCard(state, "p1",
                 GameFixtures.unit("spend",1,2,"{Spend} 1 €$ : Draw 1"));
@@ -882,11 +954,14 @@ class GameIntegrationTest {
     @DisplayName("R12 - Victoire 7 Gigs au début du tour")
     void testR12_Victory_7GigsAtStart() {
         GameState state = newGame();
-        GameFixtures.addGigs(state, "p1", 1,1,1,1,1,1); // 6
+        completeDraw(state);
+        // Mini-Feature 5.1 : p1 gagne déjà 1 Gig à sa phase DRAW du tour 1 — on part de 5
+        // pour atteindre 7 au bon moment (victoire vérifiée au DÉBUT du tour).
+        GameFixtures.addGigs(state, "p1", 1,1,1,1,1); // 5
         passTurn(state, "p1");
         assertThat(state.isGameOver()).isFalse();
         passTurn(state, "p2");
-        // Début tour 3 p1 : 6 -> roll ->7
+        // Début tour 3 p1 : 5 (+1 Gig du tour 1) -> roll ->7
         assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(7);
         assertThat(state.isGameOver()).isFalse(); // pas encore victoire, vérification au début du prochain tour
         passTurn(state, "p1");
@@ -900,11 +975,13 @@ class GameIntegrationTest {
     @DisplayName("R12 - 6 Gigs ne donne pas victoire")
     void testR12_Victory_6GigsNoWin() {
         GameState state = newGame();
-        GameFixtures.addGigs(state, "p1", 1,1,1,1,1,1); //6
+        completeDraw(state);
+        // Mini-Feature 5.1 : p1 gagne déjà 1 Gig à sa phase DRAW du tour 1.
+        GameFixtures.addGigs(state, "p1", 1,1,1,1,1); //5 -> 6 avant le lancer de son tour 3
         passTurn(state, "p1");
         passTurn(state, "p2");
         assertThat(state.isGameOver()).isFalse();
-        assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(7); // after roll, but not victory yet
+        assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(7); // after roll, but not victory yet (atteint pendant le tour, pas au début)
         // Still not winner because 7 achieved during turn, not at start
         assertThat(state.isGameOver()).isFalse();
     }
@@ -913,18 +990,22 @@ class GameIntegrationTest {
     @DisplayName("R12 - Gigs via vol et dés")
     void testR12_GigsViaDiceAndSteal() {
         GameState state = newGame();
-        // p1 gagne Gig via dice (lancer de la phase DRAW de son tour 2)
-        assertThat(state.getPlayer("p1").getGigCount()).isZero();
+        completeDraw(state);
+        // Mini-Feature 5.1 : p1 gagne un Gig dès sa phase DRAW du tour 1 (lancer de dé).
+        assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(1);
         passTurn(state, "p1");
         passTurn(state, "p2");
-        assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(1);
+        // p1 a pioché et lancé à ses tours 1 et 3 -> 2 Gigs ; p2 en a 1 (tour 2).
+        assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(2);
+        assertThat(state.getPlayer("p2").getGigCount()).isEqualTo(1);
         // Vol — p2 a déjà gagné 1 Gig en ouvrant son propre tour, on en ajoute un 2e
         GameFixtures.addGigs(state, "p2", 3);
         int p2GigsBefore = state.getPlayer("p2").getGigCount();
         assertThat(p2GigsBefore).isEqualTo(2);
         CardInstance attacker = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("stealer",1,2));
         execute(state, new AttackCommand("p1", attacker.getInstanceId()));
-        assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(2);
+        // p1 vole le Gig le plus fort de p2 : il en gagne un (et p2 en perd un).
+        assertThat(state.getPlayer("p1").getGigCount()).isEqualTo(p2GigsBefore + 1);
         assertThat(state.getPlayer("p2").getGigCount()).isEqualTo(p2GigsBefore - 1);
     }
 
@@ -932,6 +1013,7 @@ class GameIntegrationTest {
     @DisplayName("R12 - Deck-out = défaite")
     void testR12_DeckOut_Defeat() {
         GameState state = newGame();
+        completeDraw(state);
         // Vide le deck de p1
         state.getPlayer("p1").getDeck().clear();
         // Fin tour p1 (p2 pioche et lance), puis fin tour p2 -> début tour p1
@@ -953,6 +1035,7 @@ class GameIntegrationTest {
     @DisplayName("R13 - Effet DRAW via mini-langage")
     void testR13_Effect_Draw() {
         GameState state = newGame();
+        completeDraw(state);
         GameFixtures.giveEddies(state, "p1", 5);
         CardInstance card = GameFixtures.handCard(state, "p1", GameFixtures.unit("draw2",1,1,"ON_PLAY:DRAW:2"));
         int handBefore = state.getPlayer("p1").getHand().size();
@@ -964,6 +1047,7 @@ class GameIntegrationTest {
     @DisplayName("R13 - Effet DAMAGE via parser naturel Defeat? On teste ON_PLAY:DAMAGE")
     void testR13_Effect_Damage() {
         GameState state = newGame();
+        completeDraw(state);
         GameFixtures.giveEddies(state, "p1", 5);
         CardInstance target = GameFixtures.fieldCard(state, "p2", GameFixtures.unit("target",1,5));
         CardInstance damager = GameFixtures.handCard(state, "p1",
@@ -985,6 +1069,7 @@ class GameIntegrationTest {
     @DisplayName("R13 - Effet DEFEAT via texte naturel {Play} Defeat a rival Unit")
     void testR13_Effect_Defeat() {
         GameState state = newGame();
+        completeDraw(state);
         CardInstance victim = GameFixtures.fieldCard(state, "p2", GameFixtures.unit("victim",1,2));
         GameFixtures.giveEddies(state, "p1", 5);
         // Carte réelle du catalogue : Adam Smasher text {Play} Defeat a rival Unit. Simulée via natural parser
@@ -998,6 +1083,7 @@ class GameIntegrationTest {
     @DisplayName("R13 - Effet GRANT_POWER via give friendly Unit +N")
     void testR13_Effect_GrantPower() {
         GameState state = newGame();
+        completeDraw(state);
         CardInstance friendly = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("friend",1,2));
         GameFixtures.giveEddies(state, "p1", 5);
         CardInstance buffCard = GameFixtures.handCard(state, "p1",
@@ -1011,6 +1097,7 @@ class GameIntegrationTest {
     @DisplayName("R13 - Effet STEAL_GIG via EffetParser")
     void testR13_Effect_StealGig() {
         GameState state = newGame();
+        completeDraw(state);
         GameFixtures.addGigs(state, "p2", 5,6);
         GameFixtures.giveEddies(state, "p1", 5);
         CardInstance stealCard = GameFixtures.handCard(state, "p1",
@@ -1024,6 +1111,7 @@ class GameIntegrationTest {
     @DisplayName("R13 - Effet HEAL")
     void testR13_Effect_Heal() {
         GameState state = newGame();
+        completeDraw(state);
         CardInstance wounded = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("wounded",1,5));
         wounded.setDamage(3);
         GameFixtures.giveEddies(state, "p1", 5);
@@ -1046,6 +1134,7 @@ class GameIntegrationTest {
     @DisplayName("R13 - Effet DISCARD (Trash N)")
     void testR13_Effect_Discard() {
         GameState state = newGame();
+        completeDraw(state);
         int deckBefore = state.getPlayer("p1").getDeck().size();
         GameFixtures.giveEddies(state, "p1", 5);
         CardInstance discardCard = GameFixtures.handCard(state, "p1",
@@ -1062,6 +1151,7 @@ class GameIntegrationTest {
     @DisplayName("R13 - Effet BUFF alias GRANT_POWER")
     void testR13_Effect_Buff() {
         GameState state = newGame();
+        completeDraw(state);
         CardInstance target = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("t",1,3));
         GameFixtures.giveEddies(state, "p1", 5);
         CardInstance buff = GameFixtures.handCard(state, "p1",
@@ -1078,6 +1168,7 @@ class GameIntegrationTest {
     @DisplayName("R13 - Effet non supporté (Call modal) ignoré sans erreur")
     void testR13_Effect_CallModal_Ignored() {
         GameState state = newGame();
+        completeDraw(state);
         GameFixtures.giveEddies(state, "p1", 5);
         CardInstance modal = GameFixtures.handCard(state, "p1",
                 GameFixtures.unit("modal",1,2,"{Call} Choose one — Draw 1 // Give a friendly Unit +1 power."));
@@ -1090,6 +1181,7 @@ class GameIntegrationTest {
     @DisplayName("R13 - Limites documentées : conditionnel ignoré")
     void testR13_Conditional_Ignored() {
         GameState state = newGame();
+        completeDraw(state);
         GameFixtures.giveEddies(state, "p1", 5);
         CardInstance cond = GameFixtures.handCard(state, "p1",
                 GameFixtures.unit("cond",1,2,"{Play} If you have 5 ☆, draw 2."));
@@ -1104,6 +1196,7 @@ class GameIntegrationTest {
     void testR13_RealCard_SixthStreetRecruits() {
         // Cette carte a When a friendly Unit steals a d6, increase a Gig by up to 6. — conditionnel, donc ignoré en V0 sans erreur
         GameState state = newGame();
+        completeDraw(state);
         GameFixtures.giveEddies(state, "p1", 5);
         Card real = new Card("6th-street-recruits","6th Street Recruits",null,
                 com.cyberpunktcg.domain.card.CardType.UNIT, CardColor.RED,1,4,6,null,
@@ -1164,8 +1257,16 @@ class GameIntegrationTest {
     /**
      * Fin de tour complète (Mini-Feature 5) : {@code from} termine son tour, puis
      * le joueur entrant joue sa phase DRAW interactive (pioche + choix du dé).
+     *
+     * <p>Mini-Feature 5.1 : au tout début de la partie, le joueur actif démarre
+     * en phase DRAW (sous-étape AWAITING_DRAW). Si {@code from} est encore dans
+     * sa phase DRAW (début de partie, ou tout état transitoire), on la résout
+     * d'abord (pioche + dé) avant de terminer son tour.</p>
      */
     private void passTurn(GameState state, String from) {
+        if (state.getPhase() == Phase.DRAW && state.getTurn().getActivePlayerId().equals(from)) {
+            completeDraw(state);
+        }
         execute(state, new EndTurnCommand(from));
         completeDraw(state);
     }

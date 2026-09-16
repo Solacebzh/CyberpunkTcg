@@ -12,6 +12,7 @@ import com.cyberpunktcg.domain.game.GameState;
 import com.cyberpunktcg.domain.game.Phase;
 import com.cyberpunktcg.domain.game.Player;
 import com.cyberpunktcg.domain.game.Zone;
+import com.cyberpunktcg.engine.DrawPhaseHandler;
 import com.cyberpunktcg.engine.GameConstants;
 import com.cyberpunktcg.engine.GameRuleException;
 import com.cyberpunktcg.engine.command.GameCommand;
@@ -34,17 +35,25 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Orchestre les parties 1v1 : création, exécution des commandes, vues masquées.
  *
- * <p>Les états vivent en mémoire (une instance suffit pour un jeu entre amis) ;
- * aucune règle de jeu ne vit ici — tout est délégué aux commandes du moteur,
- * qui valident, exécutent et détectent la victoire. Les vues exposées aux
- * joueurs sont systématiquement masquées (voir
- * {@link GameState#maskedCopyFor(String)}).</p>
- *
- * <p>Depuis la feature 6.5, le service tient aussi le <strong>journal de
- * diagnostic</strong> ({@link GameLog}) : chaque action acceptée y est consignée
- * par la commande, et chaque action refusée par le service (avec son motif), ce
- * qui rend les règles observables en jeu (panneau de debug, {@code /api/debug}).</p>
- */
+     * <p>Les états vivent en mémoire (une instance suffit pour un jeu entre amis) ;
+     * aucune règle de jeu ne vit ici — tout est délégué aux commandes du moteur,
+     * qui valident, exécutent et détectent la victoire. Les vues exposées aux
+     * joueurs sont systématiquement masquées (voir
+     * {@link GameState#maskedCopyFor(String)}).</p>
+     *
+     * <p>Depuis la feature 6.5, le service tient aussi le <strong>journal de
+     * diagnostic</strong> ({@link GameLog}) : chaque action acceptée y est consignée
+     * par la commande, et chaque action refusée par le service (avec son motif), ce
+     * qui rend les règles observables en jeu (panneau de debug, {@code /api/debug}).</p>
+     *
+     * <p>Mini-Feature 5.1 (« Tour 1 du Premier Joueur ») : le premier joueur ouvre
+     * son tour 1 en phase {@code DRAW} (sous-étape {@code AWAITING_DRAW}) — pas en
+     * {@code MAIN}. Comme tous les tours, il doit donc cliquer pour piocher sa carte
+     * puis choisir et lancer son dé Gig avant d'entrer en phase {@code MAIN}. Son
+     * malus de mise en place (R1.4) demeure pendant ce tour 1 : on ne redresse
+     * <em>pas</em> ses cartes à l'ouverture (contrairement à
+     * {@code EndTurnCommand} → {@link DrawPhaseHandler#readyAndAwaitDraw}).</p>
+     */
 @Service
 public class GameService {
 
@@ -69,9 +78,10 @@ public class GameService {
      * Crée une partie 1v1 : les IDs de type {@code legend} rejoignent la Legends Area
      * (face cachée), les autres forment le deck (mélangé). Chaque joueur reçoit
      * {@link GameConstants#STARTING_HAND_SIZE} cartes. Le <strong>premier joueur est
-     * tiré au sort</strong> ; il commence en phase {@code MAIN} et subit le malus de
-     * mise en place (R1.4 : ses 2 Legends les plus à gauche sont déjà inclinées, il
-     * ne peut donc encaisser qu'un Eddie en inclinant la troisième). Le second
+     * tiré au sort</strong> ; il commence au tour 1 en phase {@code DRAW} (sous-étape
+     * {@code AWAITING_DRAW}) et subit le malus de mise en place (R1.4 : ses 2 Legends
+     * les plus à gauche sont déjà inclinées, il ne peut donc encaisser qu'un Eddie en
+     * inclinant la troisième). Le second
      * joueur ne subit aucun malus (R1.5 : ses 3 Legends sont prêtes). Le malus est
      * levé dès le tour 2 du premier joueur : la phase {@code DRAW} redresse toutes
      * les cartes dépensées et remet les Eddies à 0.
@@ -115,8 +125,15 @@ public class GameService {
 
         state.appendEvent(GameEventType.TURN_STARTED, starter.getId(),
                 "début de la partie (tour 1, " + starter.getId() + " commence)");
+        // Mini-Feature 5.1 : le premier joueur ouvre son tour 1 en phase DRAW (sous-étape
+        // AWAITING_DRAW). Contrairement à EndTurnCommand, on ne redresse PAS ses cartes :
+        // le malus de mise en place (R1.4, ses 2 Legends inclinées) doit demeurer jusqu'à
+        // son tour 2. Il doit donc cliquer pour piocher puis lancer son dé Gig, comme
+        // tous les tours.
+        DrawPhaseHandler.beginFirstPlayerDrawPhase(state, starter.getId());
         state.logInfo(null, "GAME_START",
-                "Nouvelle partie : Joueur " + starter.getId() + " commence (premier joueur tiré au sort)",
+                "Nouvelle partie : Joueur " + starter.getId()
+                        + " commence en phase DRAW (premier joueur, sous-étape AWAITING_DRAW)",
                 GameLog.details("starter", starter.getId(), "second", second.getId(),
                         "seed", seed, "phase", state.getPhase().name()));
         logSetup(state, starter, true, firstPlayerPenalty);

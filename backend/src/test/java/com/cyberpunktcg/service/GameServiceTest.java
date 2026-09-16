@@ -6,6 +6,7 @@ import com.cyberpunktcg.domain.card.CardKeyword;
 import com.cyberpunktcg.domain.card.CardRarity;
 import com.cyberpunktcg.domain.card.CardType;
 import com.cyberpunktcg.domain.game.CardInstance;
+import com.cyberpunktcg.domain.game.DrawStep;
 import com.cyberpunktcg.domain.game.GameActionResult;
 import com.cyberpunktcg.domain.game.GameEvent;
 import com.cyberpunktcg.domain.game.GameState;
@@ -13,7 +14,9 @@ import com.cyberpunktcg.domain.game.Phase;
 import com.cyberpunktcg.domain.game.Zone;
 import com.cyberpunktcg.engine.GameConstants;
 import com.cyberpunktcg.engine.GameRuleException;
+import com.cyberpunktcg.engine.command.DrawCardCommand;
 import com.cyberpunktcg.engine.command.PlayCardCommand;
+import com.cyberpunktcg.engine.command.SelectDieCommand;
 import com.cyberpunktcg.engine.command.SellCardCommand;
 import com.cyberpunktcg.repository.CardRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -66,7 +69,11 @@ class GameServiceTest {
         assertThat(starter).isIn("p1", "p2");
         String second = "p1".equals(starter) ? "p2" : "p1";
         assertThat(state.getTurn().getNumber()).isEqualTo(1);
-        assertThat(state.getPhase()).isEqualTo(Phase.MAIN);
+        // Mini-Feature 5.1 : le premier joueur démarre en phase DRAW (sous-étape
+        // AWAITING_DRAW), pas en MAIN — il doit cliquer pour piocher puis lancer
+        // son dé Gig avant d'entrer en phase MAIN.
+        assertThat(state.getPhase()).isEqualTo(Phase.DRAW);
+        assertThat(state.getDrawStep()).isEqualTo(DrawStep.AWAITING_DRAW);
         for (String playerId : List.of("p1", "p2")) {
             assertThat(state.getPlayer(playerId).getLegendsArea()).hasSize(3);
             assertThat(state.getPlayer(playerId).getLegendsArea())
@@ -99,6 +106,62 @@ class GameServiceTest {
         assertThat(first.getTurn().getActivePlayerId())
                 .isEqualTo(second.getTurn().getActivePlayerId());
         assertThat(first.getPlayer(first.getTurn().getActivePlayerId()).countSpentLegends()).isEqualTo(2);
+    }
+
+    @Test
+    void testR5_Turn1_FirstPlayer_MustDrawAndRollDie() {
+        // Mini-Feature 5.1 — « Tour 1 du Premier Joueur » : le premier joueur (celui qui
+        // subit le malus des 2 Legends inclinées) DOIT exécuter sa phase DRAW comme tous
+        // les autres tours : clic pour piocher, puis choix et lancer d'un dé Gig.
+        List<String> idsOne = deckIds("a");
+        List<String> idsTwo = deckIds("b");
+        stubCatalog(idsOne, idsTwo);
+        GameState state = gameService.createGame("p1", "p2", idsOne, idsTwo);
+
+        // Le jeu démarre au Tour 1 en phase DRAW, sous-étape AWAITING_DRAW pour le premier joueur.
+        String starter = state.getTurn().getActivePlayerId();
+        String second = "p1".equals(starter) ? "p2" : "p1";
+        assertThat(state.getTurn().getNumber()).isEqualTo(1);
+        assertThat(state.getPhase()).isEqualTo(Phase.DRAW);
+        assertThat(state.getDrawStep()).isEqualTo(DrawStep.AWAITING_DRAW);
+
+        // Malus de mise en place préservé : 2 Legends inclinées, 1 seule libre ; le
+        // second joueur n'a aucune Legend inclinée.
+        assertThat(state.getPlayer(starter).countSpentLegends())
+                .isEqualTo(GameConstants.FIRST_PLAYER_SPENT_LEGENDS);
+        assertThat(state.getPlayer(starter).legendsAvailableForEddies()).hasSize(1);
+        assertThat(state.getPlayer(second).countSpentLegends()).isZero();
+
+        // DrawCardCommand et SelectDieCommand sont acceptées au Tour 1 pour le premier joueur.
+        int handBefore = state.getPlayer(starter).getHand().size();
+        int deckBefore = state.getPlayer(starter).getDeck().size();
+        int fixerBefore = state.getPlayer(starter).getFixerDice().size();
+
+        gameService.executeCommand(state.getGameId(), new DrawCardCommand(starter));
+        assertThat(state.getPhase()).isEqualTo(Phase.DRAW);
+        assertThat(state.getDrawStep()).isEqualTo(DrawStep.AWAITING_DIE_SELECT);
+        assertThat(state.getPlayer(starter).getHand()).hasSize(handBefore + 1);
+        assertThat(state.getPlayer(starter).getDeck()).hasSize(deckBefore - 1);
+
+        // Le d20 reste refusé tant qu'il reste d'autres dés (règle du Start Phase).
+        assertThatThrownBy(() -> gameService.executeCommand(state.getGameId(),
+                new SelectDieCommand(starter, "d20")))
+                .isInstanceOf(GameRuleException.class)
+                .hasMessageContaining("d20");
+
+        gameService.executeCommand(state.getGameId(), new SelectDieCommand(starter, "d4"));
+
+        // Passage automatique en phase MAIN, sous-étape DRAW effacée.
+        assertThat(state.getPhase()).isEqualTo(Phase.MAIN);
+        assertThat(state.getDrawStep()).isNull();
+        assertThat(state.getPlayer(starter).getGigs()).hasSize(1);
+        assertThat(state.getPlayer(starter).getGigDice()).containsExactly("d4");
+        assertThat(state.getPlayer(starter).getFixerDice()).hasSize(fixerBefore - 1);
+
+        // Le malus n'est toujours pas levé : il ne l'est qu'au tour 2 du premier joueur
+        // (quand la phase DRAW redresse toutes les cartes dépensées).
+        assertThat(state.getPlayer(starter).countSpentLegends())
+                .isEqualTo(GameConstants.FIRST_PLAYER_SPENT_LEGENDS);
     }
 
     @Test

@@ -58,6 +58,37 @@ public final class DrawPhaseHandler {
                         "step", DrawStep.DRAW_START.name()));
     }
 
+    /**
+     * Ouverture de la phase DRAW du tout premier tour du premier joueur
+     * (Mini-Feature 5.1 — « Tour 1 du Premier Joueur »).
+     *
+     * <p>Identique à {@link #readyAndAwaitDraw} MAIS <strong>sans redresser les
+     * cartes</strong> : le malus de mise en place du premier joueur (R1.4 — ses 2
+     * Legends les plus à gauche déjà inclinées, « doesn't ready them on their
+     * first turn ») doit demeurer pendant tout son tour 1. On place donc le
+     * joueur entrant directement en {@link DrawStep#AWAITING_DRAW}, prêt à cliquer
+     * sur sa pioche puis à choisir son dé Gig. La phase {@link Phase#MAIN} ne
+     * s'ouvre qu'après ces deux actions (cf. {@link #drawCard},
+     * {@link #rollSelectedDie}). Le redressement (et donc la levée du malus)
+     * intervient au tour suivant du premier joueur, via
+     * {@link #readyAndAwaitDraw} appelé par {@code EndTurnCommand}.</p>
+     *
+     * @param state    état de la partie (tour 1, joueur entrant = premier joueur)
+     * @param playerId identifiant du premier joueur
+     */
+    public static void beginFirstPlayerDrawPhase(GameState state, String playerId) {
+        Player incoming = state.getPlayer(playerId);
+        state.setPhase(Phase.DRAW);
+        state.setDrawStep(DrawStep.AWAITING_DRAW);
+        state.appendEvent(GameEventType.PHASE_CHANGED, playerId, "phase Draw");
+        state.logInfo(playerId, "PHASE",
+                "Début du tour 1 — premier joueur " + playerId
+                        + " (phase DRAW, malus de mise en place maintenu : "
+                        + incoming.countSpentLegends() + " Legend(s) inclinée(s))",
+                GameLog.details("turn", 1, "phase", "DRAW", "step", DrawStep.AWAITING_DRAW.name(),
+                        "firstPlayerMalus", true, "legendsSpent", incoming.countSpentLegends()));
+    }
+
     /** Étape 1 « READY SPENT CARDS » puis attente de la pioche ({@code AWAITING_DRAW}). */
     public static void readyAndAwaitDraw(GameState state, String playerId) {
         Player incoming = state.getPlayer(playerId);
