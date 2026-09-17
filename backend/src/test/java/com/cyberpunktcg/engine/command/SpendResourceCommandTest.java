@@ -95,7 +95,8 @@ class SpendResourceCommandTest {
     @DisplayName("R4 - Incliner une carte vendue (Eddies Area) : +1 Eddie, carte inclinée, reste face cachée")
     void testR4_SpendEddieCard_Gives1Eddie_AndBecomesExhausted() {
         // Flux officiel : vente (Mini-Feature 3) → ressource posée prête, puis inclinaison (R4).
-        CardInstance sold = GameFixtures.handCard(state, "p1", GameFixtures.unit("scrap", 2, 2));
+        // Mini-Feature 10C : on vend un GEAR (les Units/Legends sont invendables).
+        CardInstance sold = GameFixtures.handCard(state, "p1", GameFixtures.gear("scrap", 2, 2));
         new SellCardCommand("p1", sold.getInstanceId()).execute(state);
         assertThat(sold.getZone()).isEqualTo(Zone.EDDIES_AREA);
         assertThat(sold.isFaceDown()).isTrue();
@@ -127,7 +128,7 @@ class SpendResourceCommandTest {
     @Test
     @DisplayName("R4 - Cycle : la ressource est redressée au tour suivant et rapporte à nouveau 1 Eddie")
     void testR4_ResourceReadyAgainNextTurn() {
-        CardInstance sold = GameFixtures.handCard(state, "p1", GameFixtures.unit("recycler", 1, 1));
+        CardInstance sold = GameFixtures.handCard(state, "p1", GameFixtures.program("recycler", 1));
         new SellCardCommand("p1", sold.getInstanceId()).execute(state);
         new SpendResourceCommand("p1", sold.getInstanceId()).execute(state);
         assertThat(sold.isExhausted()).isTrue();

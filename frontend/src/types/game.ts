@@ -416,6 +416,16 @@ export function effectivePower(card: CardInstance | null | undefined): number {
 }
 
 /**
+ * Mini-Feature 10C — restriction de vente par Type de Carte : les `unit` et les
+ * `legend` ne peuvent PAS être vendues ; tous les autres types (`program`,
+ * `gear`…) restent vendables, dans la limite d'1 vente par tour.
+ * Miroir client de `SellCardCommand.isSellableType` — le serveur fait foi.
+ */
+export function isSellableCardType(type: CardType): boolean {
+  return type !== 'unit' && type !== 'legend'
+}
+
+/**
  * Quota théorique de Gigs volés : `N = power <= 0 ? 0 : (power / 10) + 1`
  * (miroir de `RuleEngine.calculateQuota`, pour l'affichage — le serveur fait foi).
  */

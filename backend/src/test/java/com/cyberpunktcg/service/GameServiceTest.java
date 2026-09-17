@@ -191,7 +191,12 @@ class GameServiceTest {
         gameService.executeCommand(state.getGameId(), new DrawCardCommand(active));
         gameService.executeCommand(state.getGameId(), new SelectDieCommand(active, "d4"));
         assertThat(state.getPhase()).isEqualTo(Phase.MAIN);
-        CardInstance toSell = state.getPlayer(active).getHand().get(0);
+        // Mini-Feature 10C : les Units et les Legends ne peuvent pas être vendues —
+        // on vise une carte vendable (PROGRAM) de la main.
+        CardInstance toSell = state.getPlayer(active).getHand().stream()
+                .filter(card -> card.getType() != CardType.UNIT && card.getType() != CardType.LEGEND)
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("aucune carte vendable en main (deck de test)"));
 
         List<GameEvent> events = gameService.executeCommand(state.getGameId(),
                 new SellCardCommand(active, toSell.getInstanceId()));
@@ -331,14 +336,22 @@ class GameServiceTest {
     // Fabriques locales
     // ------------------------------------------------------------------
 
-    /** 3 legends + 10 units (main 6 + deck 4 après distribution). */
+    /**
+     * 3 legends + 5 units + 5 programs (main 6 + deck 4 après distribution).
+     * Mini-Feature 10C : les Units/Legends étant invendables, le deck de test
+     * embarque des Programs pour garantir une main toujours vendable
+     * (6 cartes tirées parmi 5 units + 5 programs ⇒ au moins 1 Program en main).
+     */
     private static List<String> deckIds(String side) {
         List<String> ids = new ArrayList<String>();
         ids.add("legend-" + side + "-1");
         ids.add("legend-" + side + "-2");
         ids.add("legend-" + side + "-3");
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 5; i++) {
             ids.add("unit-" + side + "-" + i);
+        }
+        for (int i = 0; i < 5; i++) {
+            ids.add("program-" + side + "-" + i);
         }
         return ids;
     }
@@ -369,8 +382,21 @@ class GameServiceTest {
     }
 
     private static Card testCard(String id) {
-        CardType type = id.startsWith("legend-") ? CardType.LEGEND : CardType.UNIT;
-        Integer power = type == CardType.LEGEND ? null : 2;
+        // Classification par CONTENU de l'identifiant (et non par préfixe
+        // strict) : les ids `saved-legend-*` des decks persistés
+        // (Mini-Feature 9D) doivent eux aussi produire des LEGEND, sinon
+        // `GameService.buildPlayer` (répartition par type) les enverrait
+        // dans le deck au lieu de la Legends Area.
+        CardType type;
+        if (id.contains("legend")) {
+            type = CardType.LEGEND;
+        } else if (id.contains("program")) {
+            // Mini-Feature 10C : type vendable (ni UNIT, ni LEGEND).
+            type = CardType.PROGRAM;
+        } else {
+            type = CardType.UNIT;
+        }
+        Integer power = type == CardType.UNIT ? 2 : null;
         return new Card(id, "Test " + id, null, type, CardColor.BLUE, 1,
                 1, power, null, new ArrayList<String>(),
                 new ArrayList<CardKeyword>(), "test", new ArrayList<String>(),

@@ -142,6 +142,7 @@ appellera `executeCommand`, puis diffusera `getGameState(gameId, joueur)` à cha
   du tour), `hasSoldThisTurn` (1 vente/tour).
 - **Économie des Eddies (R2/R3/R6)** : chaque carte face-down en Eddies Area vaut 1 Eddie par tour, et chaque Legend (face-up ou face-down) vaut aussi 1 Eddie par tour (Guide § EDDIES & LEGENDS). `spendLegendForEddies` et `spendEddiesCardForEddies` inclinent la carte (exhausted) pour +1 Eddie (compteur remis à 0 au début de chaque tour — `Player.startTurn` fait `eddies=0` et `readyAll` redresse Field+Legends+Eddies). `legendsAvailableForEddies()`, `eddiesAvailableForEddies()` et `countSpentLegends()` exposent la réserve. Le premier joueur démarre avec `FIRST_PLAYER_SPENT_LEGENDS=2` Legends déjà inclinées (ne se redressent qu'à son 2e tour).
 - **Vente = création de ressource (Mini-Feature 3)** : `SellCardCommand` **ne crédite aucun Eddie**. La carte est révélée au rival (`CARD_REVEALED`), retirée de la main, puis posée en Eddies Area `faceDown = true` et `exhausted = false` (prête). Elle vaut dès lors 1 €$ **par tour** via `SpendEddiesCommand` — y compris le tour même de la vente. Seule limite : `SALES_PER_TURN = 1` vente par tour, en phase `MAIN`.
+- **Restriction de vente par Type (Mini-Feature 10C)** : les cartes de type `UNIT` et `LEGEND` ne peuvent **pas** être vendues (`SellCardCommand.isSellableType`) — refus « Les Unités et les Légendes ne peuvent pas être vendues » (`GameRuleException` → `ILLEGAL_ACTION`), sans consommer le quota du tour. Tous les autres types (`PROGRAM`, `GEAR`…) restent vendables, dans la limite d'1 vente par tour.
 - **RAM (R7)** : `ramCeilingFor` existe pour le deckbuilder, mais `GameConstants.RAM_CEILING_ENFORCED=false` — **aucune vérification en jeu** (`PlayCardCommand` ne vérifie plus la RAM). La RAM n'est donc qu'une limite de construction de deck (Guide § DECK BUILDING).
 - `startTurn()` : **Eddies remis à 0**, vente (`hasSoldThisTurn`) et Call (`hasCalledLegendThisTurn`) réinitialisés, remise remise à 0, redressement de **toutes** les cartes dépensées (Field+Legends+EddiesArea), fin des mals d'invocation (Lag).
 - `readyBlockers()` / `controlsReadyBlocker()` : BLOCKERs prêts (non épuisés) —
@@ -277,7 +278,7 @@ Journal de diagnostic (`actionType`) : `ATTACK`, `BLOCKER_PROMPT`, `USE_BLOCKER`
 | `BlockCommand` (Mini-Feature 6) | **défenseur** (hors tour) | `MAIN`/`COMBAT` / `AWAITING_BLOCK` | `USE_BLOCKER` : incline chaque `{Blocker}` désigné (`cardIds`, ordre significatif ; `instanceId` pour un blocage simple), `ATTACK_BLOCKED`, compétences `ON_BLOCK` puis `ON_ATTACK`, combat contre le **dernier** Blocker, aucun Gig volé |
 | `DeclineBlockCommand` (Mini-Feature 6) | **défenseur** (hors tour) | `MAIN`/`COMBAT` / `AWAITING_BLOCK` | `DECLINE_BLOCK` : renoncement explicite → `CombatResolver.resolveAttack` (combat ou choix des dés à voler) |
 | `StealGigCommand` (Mini-Feature 6) | actif (attaquant) | `MAIN`/`COMBAT` / `AWAITING_STEAL_CHOICE` | `STEAL_GIG` : transfère **exactement M** dés Gigs actifs choisis (`dice` = identifiants `gigDieIds`), type + valeur + identifiant conservés, `GIG_STOLEN` par dé |
-| `SellCardCommand` | actif | `MAIN` | 1 carte de la main → révélée au rival puis posée en Eddies Area `faceDown=true`, `exhausted=false` (prête) ; **aucun Eddie immédiat** : la carte devient une ressource à incliner (`SpendResourceCommand`, 1 €$/tour) |
+| `SellCardCommand` | actif | `MAIN` | 1 carte de la main → révélée au rival puis posée en Eddies Area `faceDown=true`, `exhausted=false` (prête) ; **aucun Eddie immédiat** : la carte devient une ressource à incliner (`SpendResourceCommand`, 1 €$/tour). **Mini-Feature 10C** : types `UNIT`/`LEGEND` refusés (« Les Unités et les Légendes ne peuvent pas être vendues ») — seuls `PROGRAM`, `GEAR`… sont vendables |
 | `SpendResourceCommand` (R4, Mini-Feature 4) | actif | `MAIN` | **Générer des Eddies** : incliner une ressource — Legend non inclinée de la `LEGENDS_AREA` **ou** carte vendue non inclinée de l'`EDDIES_AREA` (ID unique, propriété du joueur ordonnateur vérifiée) → `exhausted=true`, `availableEddies += 1` ; 1 €$ par tour et par carte, redressée au START PHASE. Actions filaires : `SPEND_RESOURCE` (+ aliases historiques `SPEND_LEGEND`/`SPEND_EDDIES` via `SpendLegendCommand`/`SpendEddiesCommand`, sous-classes de cette commande) |
 | `EndTurnCommand` | actif | toute sauf `DRAW` | **résolution automatique d'un combat en suspens** (`CombatResolver.autoResolve`), `ON_TURN_END`, fermeture fenêtre, passage du tour, `DRAW_START`, victoire à 7 Gigs, redressement, puis **attente** `AWAITING_DRAW` |
 | `DrawCardCommand` (Mini-Feature 5) | actif | `DRAW` / `AWAITING_DRAW` | pioche 1 (deck vide → défaite), puis `AWAITING_DIE_SELECT` (ou `MAIN` si plus aucun dé). Action filaire `DRAW_CARD` |
@@ -445,7 +446,7 @@ pas de double `ON_DEATH`.
 | RAM = deckbuilding uniquement (R7) — aucune vérif en jeu | `GameConstants.RAM_CEILING_ENFORCED=false`, `PlayCardCommand` sans vérif RAM |
 | Eddies : cycle 0→tap→pay→lost (R2) ; Legends et Eddies cards +1 par tap, redress au START, reset à 0 | `Player.spendResourceForEddies` (R4 unifié, Mini-Feature 4), `Player.spendLegendForEddies`, `Player.spendEddiesCardForEddies` (déléguent), `SpendResourceCommand` (+ alias `SpendLegendCommand`/`SpendEddiesCommand`), `Player.startTurn` (eddies=0 & readyAll) |
 | Eddies / Street Cred | réserve dépensée / seuil non consommé (`Player`, `PlayCardCommand`) |
-| Vente 1 carte/tour, **0 Eddie immédiat** (création de ressource) | `SALES_PER_TURN`, `SellCardCommand` + `hasSoldThisTurn`, gain via `SpendEddiesCommand` |
+| Vente 1 carte/tour, **0 Eddie immédiat** (création de ressource) ; **`UNIT`/`LEGEND` invendables** (Mini-Feature 10C) | `SALES_PER_TURN`, `SellCardCommand` + `hasSoldThisTurn` + `isSellableType`, gain via `SpendEddiesCommand` |
 | Réactions QUICK uniquement | `ReactionWindow`, `PlayCardCommand` (défenseur), fermeture en fin de tour |
 | BLOCKER intercepte **au choix du défenseur** (blocage multiple, dernier Blocker seul touché) | `CombatResolver.openAttack`/`resolveBlock`, `BlockCommand` (`USE_BLOCKER`), `DeclineBlockCommand`, `Player.readyBlockers()`, événement `ATTACK_BLOCKED`, déclencheur `ON_BLOCK` |
 | Vol de Gigs : quota `N = (power / 10) + 1`, 0 si power 0 | `RuleEngine.calculateQuota`, `GameConstants.POWER_PER_EXTRA_GIG` |
@@ -550,12 +551,16 @@ cd backend && mvn clean test   # profil H2 (aucun Docker requis)
   `FAILED` + `VICTORY`), plus victoire à 7 Gigs avant la pioche, vues masquées,
   type de dé du Gig volé, ressources refusées en `DRAW`.
 - `engine/command/SellCardCommandTest` (Mini-Feature 3 — « Vente = Création de
-  ressource ») : `testR3_SellCard_GoesToEddiesArea_FaceDown_NotExhausted`,
+  ressource » + Mini-Feature 10C — « Restriction de vente par Type de Carte ») :
+  `testR3_SellCard_GoesToEddiesArea_FaceDown_NotExhausted`,
   `testR3_SellCard_LimitOnePerTurn`, `testR3_SellCard_CreatesResourceUsableSameTurn`,
-  `testR3_SellCard_IllegalContexts`, `testR3_SellCard_CommandContract` —
-  main → `EDDIES_AREA` (`faceDown=true`, `exhausted=false`, 0 Eddie), 1 vente/tour,
-  ressource inclinable dès ce tour, refus (hors tour, hors `MAIN`, carte hors main,
-  partie terminée, joueur inconnu).
+  `testR3_SellCard_IllegalContexts`, `testR3_SellCard_CommandContract`,
+  `testR_SellCard_ProgramOrGear_Success` (PROGRAM puis GEAR vendus, 1/tour),
+  `testR_SellCard_Unit_Rejected`, `testR_SellCard_Legend_Rejected` (refus
+  « Les Unités et les Légendes ne peuvent pas être vendues », aucune mutation,
+  quota intact) — main → `EDDIES_AREA` (`faceDown=true`, `exhausted=false`,
+  0 Eddie), 1 vente/tour, ressource inclinable dès ce tour, refus (hors tour,
+  hors `MAIN`, carte hors main, partie terminée, joueur inconnu, type `UNIT`/`LEGEND`).
 - `engine/command/SpendResourceCommandTest` (Mini-Feature 4 — « Générer des
   Eddies ») : `testR4_SpendLegend_Gives1Eddie_AndBecomesExhausted`,
   `testR4_SpendEddieCard_Gives1Eddie_AndBecomesExhausted`,

@@ -1,5 +1,6 @@
 package com.cyberpunktcg.engine.command;
 
+import com.cyberpunktcg.domain.card.CardType;
 import com.cyberpunktcg.domain.game.CardInstance;
 import com.cyberpunktcg.domain.game.GameEvent;
 import com.cyberpunktcg.domain.game.GameEventType;
@@ -39,9 +40,25 @@ import java.util.UUID;
  * (marqueur {@link Player#hasSoldThisTurn()}, réinitialisé par {@code Player.startTurn()}),
  * en phase {@code MAIN} uniquement, par le joueur actif, sur une partie en cours.</p>
  *
+ * <p><strong>Mini-Feature 10C — restriction de vente par type de carte</strong> :
+ * seules les cartes qui ne sont ni des {@link CardType#UNIT Units} ni des
+ * {@link CardType#LEGEND Legends} peuvent être vendues (les {@code PROGRAM},
+ * {@code GEAR} et tout autre type restent vendables, toujours dans la limite d'1
+ * vente par tour). Une tentative sur une Unit ou une Legend est refusée
+ * ({@link GameRuleException} → code {@code ILLEGAL_ACTION} sur le canal WebSocket)
+ * avec le motif « Les Unités et les Légendes ne peuvent pas être vendues ».</p>
+ *
  * @see SpendEddiesCommand incliner une carte de l'Eddies Area pour gagner 1 €$
  */
 public class SellCardCommand implements GameCommand {
+
+    /**
+     * Motif de refus de la Mini-Feature 10C : les Units et les Legends ne peuvent
+     * pas être vendues (relayé tel quel par le code d'erreur {@code ILLEGAL_ACTION}
+     * du canal WebSocket).
+     */
+    public static final String SELL_FORBIDDEN_TYPES_MESSAGE =
+            "Les Unités et les Légendes ne peuvent pas être vendues";
 
     private final String playerId;
     private final UUID cardInstanceId;
@@ -88,8 +105,25 @@ public class SellCardCommand implements GameCommand {
         if (player.hasSoldThisTurn()) {
             throw new GameRuleException("Une seule vente par tour (déjà effectuée)");
         }
-        player.findIn(Zone.HAND, cardInstanceId)
+        CardInstance card = player.findIn(Zone.HAND, cardInstanceId)
                 .orElseThrow(() -> new GameRuleException("On ne vend qu'une carte de sa main"));
+        // Mini-Feature 10C : restriction de vente par TYPE de carte — les Units et
+        // les Legends ne portent pas de « sell tag » et ne sont jamais vendables ;
+        // tous les autres types (PROGRAM, GEAR…) le restent, dans la limite d'1 vente/tour.
+        if (!isSellableType(card.getType())) {
+            throw new GameRuleException(SELL_FORBIDDEN_TYPES_MESSAGE);
+        }
+    }
+
+    /**
+     * Types de cartes vendables (Mini-Feature 10C) : tout sauf {@link CardType#UNIT}
+     * et {@link CardType#LEGEND}.
+     *
+     * @param type type imprimé de la carte candidate à la vente
+     * @return {@code true} si la carte peut être vendue depuis la main
+     */
+    public static boolean isSellableType(CardType type) {
+        return type != CardType.UNIT && type != CardType.LEGEND;
     }
 
     @Override

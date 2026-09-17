@@ -31,6 +31,7 @@ import {
   DRAW_STEP_HINTS,
   DRAW_STEP_LABELS,
   effectivePower,
+  isSellableCardType,
   type CardInstance,
 } from '@/types/game'
 import { DIE_FACES, FIXER_DICE_ORDER } from '@/types/playmat'
@@ -115,6 +116,14 @@ const selectedIsFieldUnit = computed(
   () => selected.value?.zone === 'FIELD' && selected.value.type === 'unit' && !selected.value.attachedTo,
 )
 const selectedAttackReason = computed(() => (selected.value ? game.canAttackWith(selected.value) : null))
+/**
+ * Mini-Feature 10C — restriction de vente par Type de Carte : le bouton
+ * « Vendre » ne vise qu'une carte de la main qui n'est NI une Unit NI une
+ * Legend (Program, Gear… restent vendables, 1 vente par tour).
+ */
+const selectedIsSellable = computed(
+  () => !!selected.value && selected.value.zone === 'HAND' && isSellableCardType(selected.value.type),
+)
 const targetingCandidates = computed(() => game.targeting?.candidates ?? [])
 const disconnection = computed(() => game.disconnection)
 
@@ -463,14 +472,18 @@ function onConcede(): void {
               {{ primaryLabel }}
             </button>
 
+            <!-- Mini-Feature 10C : cliquable uniquement si la carte de main sélectionnée
+                 n'est NI une Unit NI une Legend (les autres types restent vendables). -->
             <button
               type="button"
               class="cyber-btn"
-              :disabled="!selected || selected.zone !== 'HAND' || !game.canSell || game.waitingForServer"
+              :disabled="!selectedIsSellable || !game.canSell || game.waitingForServer"
               :title="
-                game.canSell
-                  ? 'Vendre : la carte est révélée puis posée face cachée dans l’Eddies Area — elle devient une ressource (1 vente par tour, 0 ¤ immédiat)'
-                  : 'Vente impossible (1 vente par tour, phase Principale, à ton tour)'"
+                selected && selected.zone === 'HAND' && !isSellableCardType(selected.type)
+                  ? 'Les Unités et les Légendes ne peuvent pas être vendues'
+                  : game.canSell
+                    ? 'Vendre : la carte est révélée puis posée face cachée dans l’Eddies Area — elle devient une ressource (1 vente par tour, 0 ¤ immédiat)'
+                    : 'Vente impossible (1 vente par tour, phase Principale, à ton tour)'"
               @click="onSellAction"
             >
               Vendre (1 ressource)

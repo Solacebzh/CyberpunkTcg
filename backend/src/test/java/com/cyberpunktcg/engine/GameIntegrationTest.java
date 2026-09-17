@@ -306,7 +306,7 @@ class GameIntegrationTest {
         assertThat(state.getPlayer("p1").getEddies()).isEqualTo(1);
         // Source Eddies card : la vente ne crédite RIEN, elle crée la ressource
         // (Mini-Feature 3) — posée face cachée et déjà prête à être inclinée.
-        CardInstance toSell = GameFixtures.handCard(state, "p1", GameFixtures.coloredUnit("sell-src", CardColor.RED,1,2,2));
+        CardInstance toSell = GameFixtures.handCard(state, "p1", GameFixtures.coloredProgram("sell-src", CardColor.RED, 1, 2, null));
         execute(state, new SellCardCommand("p1", toSell.getInstanceId()));
         assertThat(state.getPlayer("p1").getEddies()).isEqualTo(1); // Legend seule
         assertThat(toSell.getZone()).isEqualTo(Zone.EDDIES_AREA);
@@ -446,8 +446,11 @@ class GameIntegrationTest {
     // ------------------------------------------------------------------
     // R5 — Vente de carte
     // (Mini-Feature 3 : la vente CRÉE une ressource, aucun Eddie immédiat.
+    //  Mini-Feature 10C : seules les cartes hors UNIT/LEGEND sont vendables —
+    //  les fixtures de vente utilisent donc des PROGRAM.
     //  Tests dédiés : com.cyberpunktcg.engine.command.SellCardCommandTest —
-    //  testR3_SellCard_GoesToEddiesArea_FaceDown_NotExhausted / testR3_SellCard_LimitOnePerTurn)
+    //  testR3_SellCard_GoesToEddiesArea_FaceDown_NotExhausted / testR3_SellCard_LimitOnePerTurn /
+    //  testR_SellCard_ProgramOrGear_Success / testR_SellCard_Unit_Rejected / testR_SellCard_Legend_Rejected)
     // ------------------------------------------------------------------
 
     @Test
@@ -456,8 +459,8 @@ class GameIntegrationTest {
         GameState state = newGame();
         // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
         completeDraw(state);
-        CardInstance first = GameFixtures.handCard(state, "p1", GameFixtures.coloredUnit("sell-1", CardColor.RED,1,2,2));
-        CardInstance second = GameFixtures.handCard(state, "p1", GameFixtures.coloredUnit("sell-2", CardColor.RED,1,3,3));
+        CardInstance first = GameFixtures.handCard(state, "p1", GameFixtures.coloredProgram("sell-1", CardColor.RED, 1, 2, null));
+        CardInstance second = GameFixtures.handCard(state, "p1", GameFixtures.coloredProgram("sell-2", CardColor.RED, 1, 3, null));
 
         execute(state, new SellCardCommand("p1", first.getInstanceId()));
         // Aucun Eddie crédité : la vente transforme la carte en ressource, elle ne paie pas.
@@ -480,7 +483,7 @@ class GameIntegrationTest {
         GameState state = newGame();
         // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
         completeDraw(state);
-        CardInstance toSell = GameFixtures.handCard(state, "p1", GameFixtures.coloredUnit("future", CardColor.RED,1,1,1));
+        CardInstance toSell = GameFixtures.handCard(state, "p1", GameFixtures.coloredProgram("future", CardColor.RED, 1, 1, null));
         execute(state, new SellCardCommand("p1", toSell.getInstanceId()));
         assertThat(toSell.getZone()).isEqualTo(Zone.EDDIES_AREA);
         assertThat(state.getPlayer("p1").getEddies()).isZero();
@@ -503,8 +506,8 @@ class GameIntegrationTest {
         GameState state = newGame();
         // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
         completeDraw(state);
-        CardInstance a = GameFixtures.handCard(state, "p1", GameFixtures.unit("a",1,1));
-        CardInstance b = GameFixtures.handCard(state, "p1", GameFixtures.unit("b",1,1));
+        CardInstance a = GameFixtures.handCard(state, "p1", GameFixtures.program("a", 1));
+        CardInstance b = GameFixtures.handCard(state, "p1", GameFixtures.program("b", 1));
         execute(state, new SellCardCommand("p1", a.getInstanceId()));
         passTurn(state, "p1");
         passTurn(state, "p2");
@@ -527,7 +530,7 @@ class GameIntegrationTest {
         GameState state = newGame();
         // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
         completeDraw(state);
-        CardInstance sold = GameFixtures.handCard(state, "p1", GameFixtures.unit("to-sell",1,1));
+        CardInstance sold = GameFixtures.handCard(state, "p1", GameFixtures.program("to-sell", 1));
         execute(state, new SellCardCommand("p1", sold.getInstanceId()));
         passTurn(state, "p1");
         passTurn(state, "p2");
@@ -545,7 +548,7 @@ class GameIntegrationTest {
         GameState state = newGame();
         // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
         completeDraw(state);
-        CardInstance card = GameFixtures.handCard(state, "p1", GameFixtures.unit("eddy",1,1));
+        CardInstance card = GameFixtures.handCard(state, "p1", GameFixtures.program("eddy", 1));
         execute(state, new SellCardCommand("p1", card.getInstanceId()));
         passTurn(state, "p1");
         passTurn(state, "p2");
@@ -563,7 +566,7 @@ class GameIntegrationTest {
         GameState state = newGame();
         // Mini-Feature 5.1 : le premier joueur démarre en DRAW — on résout avant d'agir.
         completeDraw(state);
-        CardInstance card = GameFixtures.handCard(state, "p1", GameFixtures.unit("dup",1,1));
+        CardInstance card = GameFixtures.handCard(state, "p1", GameFixtures.program("dup", 1));
         execute(state, new SellCardCommand("p1", card.getInstanceId()));
         passTurn(state, "p1");
         passTurn(state, "p2");

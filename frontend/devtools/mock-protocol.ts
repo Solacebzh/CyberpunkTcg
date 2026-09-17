@@ -1201,18 +1201,24 @@ export class MockGameServer {
     }
     appendEvent(game, 'REACTION_WINDOW_OPENED', rival.playerId, 'fenêtre de réaction ouverte (QUICK uniquement)')
 
+    // L'attaque déclarée est TOUJOURS enregistrée comme combat en suspens —
+    // miroir de `CombatResolver.openAttack` côté Java, où le `PendingAttack` est
+    // créé AVANT le contrôle des Blockers. Sans cela, `resolveAttack` (chemin
+    // « aucun Blocker prêt ») ne trouve aucun `pendingAttack` et l'attaque directe
+    // ne s'ouvre jamais sur le choix des dés à voler.
+    game.pendingAttack = {
+      attackerPlayerId: pseudo,
+      defendingPlayerId: rival.playerId,
+      attackerInstanceId: attacker.instanceId,
+      targetInstanceId: direct ? null : (target as Instance).instanceId,
+      step: 'AWAITING_BLOCK',
+      quota: 0,
+      stealableCount: 0,
+      blockerInstanceIds: [],
+    }
+
     const blockers = readyBlockers(rival)
     if (blockers.length > 0) {
-      game.pendingAttack = {
-        attackerPlayerId: pseudo,
-        defendingPlayerId: rival.playerId,
-        attackerInstanceId: attacker.instanceId,
-        targetInstanceId: direct ? null : (target as Instance).instanceId,
-        step: 'AWAITING_BLOCK',
-        quota: 0,
-        stealableCount: 0,
-        blockerInstanceIds: [],
-      }
       appendActionLog(game, {
         playerId: rival.playerId,
         actionType: 'BLOCKER_PROMPT',
@@ -1545,6 +1551,13 @@ export class MockGameServer {
 
     const found = this.findInstance(game, payload.instanceId)
     if (!found || found.zone !== 'hand' || found.player.playerId !== pseudo) throw new RuleError('Carte de main introuvable')
+
+    // Mini-Feature 10C — restriction de vente par Type de Carte : les Units et
+    // les Legends ne peuvent pas être vendues (miroir de `SellCardCommand.validate` ;
+    // les Programs, Gears et autres types restent vendables, 1 vente par tour).
+    if (found.card.type === 'unit' || found.card.type === 'legend') {
+      throw new RuleError('Les Unités et les Légendes ne peuvent pas être vendues')
+    }
 
     // Mini-Feature 3 : la vente CRÉE une ressource, elle ne crédite aucun Eddie.
     move(player, 'hand', 'eddiesArea', found.card)

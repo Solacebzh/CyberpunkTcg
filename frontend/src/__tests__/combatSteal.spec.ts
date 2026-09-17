@@ -55,8 +55,9 @@ const BLOCKERS: MockCard[] = Array.from({ length: 14 }, (_, index) => ({
 
 /**
  * Deck de Bravo : 4 Units power 0 et 6 Units power 25, toutes `{Go Solo}`.
- * Avec 10 cartes (6 en main de départ + 1 pioche par tour), le scénario est sûr
- * de trouver les puissances voulues en main à chaque tour (pigeonhole).
+ * Les 5 Programs « ferraille » (Mini-Feature 10C — seules cartes vendables)
+ * complètent le deck ; le mélange étant à graine fixe, le scénario reste
+ * déterministe et trouve les puissances voulues en main à chaque tour.
  */
 const ZEROES: MockCard[] = Array.from({ length: 4 }, (_, index) => ({
   id: `zero-${index}`,
@@ -82,9 +83,46 @@ const HEAVIES: MockCard[] = Array.from({ length: 6 }, (_, index) => ({
   abilities: [],
 }))
 
-const CATALOG: MockCard[] = [...LEGENDS, ...BLOCKERS, ...ZEROES, ...HEAVIES].map(card)
-const DECK_ALPHA = [...LEGENDS.map((item) => item.id), ...BLOCKERS.map((item) => item.id)]
-const DECK_BRAVO = [...LEGENDS.map((item) => item.id), ...ZEROES.map((item) => item.id), ...HEAVIES.map((item) => item.id)]
+/**
+ * Programs « ferraille » (coût 1) — Mini-Feature 10C : les Units et les Legends
+ * ne peuvent PAS être vendues, chaque deck embarque donc des cartes vendables
+ * (3 ventes par siège dans le scénario).
+ */
+/**
+ * Programs « ferraille » (coût 1) — Mini-Feature 10C : les Units et les Legends
+ * ne peuvent PAS être vendues, chaque deck embarque donc des cartes vendables.
+ * Alpha vend à ses tours 1, 3 et 5 ; Bravo à ses tours 2, 4 et 6. Les comptes
+ * (11 côté Alpha, 6 côté Bravo) garantissent, avec le mélange à graine fixe,
+ * qu'une ferraille est toujours en main au moment de chaque vente sans affamer
+ * les pioches d'Units du scénario.
+ */
+const JUNK_A: MockCard[] = Array.from({ length: 11 }, (_, index) => ({
+  id: `junk-a-${index}`,
+  name: `Ferraille A${index}`,
+  type: 'program',
+  color: 'yellow',
+  cost: 1,
+  power: null,
+  streetCred: null,
+  keywords: [],
+  abilities: [],
+}))
+
+const JUNK_B: MockCard[] = Array.from({ length: 6 }, (_, index) => ({
+  id: `junk-b-${index}`,
+  name: `Ferraille B${index}`,
+  type: 'program',
+  color: 'yellow',
+  cost: 1,
+  power: null,
+  streetCred: null,
+  keywords: [],
+  abilities: [],
+}))
+
+const CATALOG: MockCard[] = [...LEGENDS, ...JUNK_A, ...JUNK_B, ...BLOCKERS, ...ZEROES, ...HEAVIES].map(card)
+const DECK_ALPHA = [...LEGENDS.map((item) => item.id), ...JUNK_A.map((item) => item.id), ...BLOCKERS.map((item) => item.id)]
+const DECK_BRAVO = [...LEGENDS.map((item) => item.id), ...JUNK_B.map((item) => item.id), ...ZEROES.map((item) => item.id), ...HEAVIES.map((item) => item.id)]
 
 // --- Utilitaires ------------------------------------------------------------
 
@@ -145,12 +183,14 @@ async function takeDrawPhase(client: RawClient, gameId: string, die: string): Pr
   await act(client, gameId, { action: 'SELECT_DIE', dice: [die] })
 }
 
-/** 1 vente (0 ¤ immédiat) puis inclinaison de la ressource : +1 Eddie (R4). */
-async function sellForEddie(client: RawClient, gameId: string, playerId: string, power?: number): Promise<void> {
-  const sold = power === undefined
-    ? handOf(client, playerId)[0]
-    : handOf(client, playerId).find((instance) => instance.type === 'unit' && instance.power === power)
-  if (!sold) throw new Error(`Rien à vendre en main de ${playerId} (power ${power ?? '—'})`)
+/**
+ * 1 vente (0 ¤ immédiat) puis inclinaison de la ressource : +1 Eddie (R4).
+ * Mini-Feature 10C : les Units et les Legends ne peuvent pas être vendues —
+ * on vend un Program « ferraille » du deck.
+ */
+async function sellForEddie(client: RawClient, gameId: string, playerId: string): Promise<void> {
+  const sold = handOf(client, playerId).find((instance) => instance.type !== 'unit' && instance.type !== 'legend')
+  if (!sold) throw new Error(`Rien à vendre (hors Unit/Legend) en main de ${playerId}`)
   await act(client, gameId, { action: 'SELL_CARD', instanceId: sold.instanceId })
   await act(client, gameId, { action: 'SPEND_RESOURCE', instanceId: sold.instanceId })
 }
@@ -243,7 +283,7 @@ describe('Combat, blocage et vol de dés à plafond strict (contrat WebSocket)',
 
     // --- Tour 2 (Bravo) : power 25 {Go Solo} attaque la Gig Area -----------
     await takeDrawPhase(bravo, gameId, 'd6')
-    await sellForEddie(bravo, gameId, 'Bravo', 25)
+    await sellForEddie(bravo, gameId, 'Bravo')
     const heavy2 = await playUnit(bravo, gameId, 'Bravo', 25)
 
     // « Ready Units can't be attacked » : le Blocker prêt d'Alpha n'est pas ciblable.
@@ -313,7 +353,7 @@ describe('Combat, blocage et vol de dés à plafond strict (contrat WebSocket)',
 
     // --- Tour 4 (Bravo) : power 0 (N = 0) puis power 25 (N = 3, M = 2) -----
     await takeDrawPhase(bravo, gameId, 'd8')
-    await sellForEddie(bravo, gameId, 'Bravo', 0)
+    await sellForEddie(bravo, gameId, 'Bravo')
     await inclineLegend(bravo, gameId, 'Bravo')
     const zero4 = await playUnit(bravo, gameId, 'Bravo', 0)
     const heavy4 = await playUnit(bravo, gameId, 'Bravo', 25)
@@ -420,7 +460,7 @@ describe('Combat, blocage et vol de dés à plafond strict (contrat WebSocket)',
 
     // --- Tour 6 (Bravo) : M = 2 (plafond) puis défenseur à 0 dé actif -----
     await takeDrawPhase(bravo, gameId, 'd10')
-    await sellForEddie(bravo, gameId, 'Bravo', 25)
+    await sellForEddie(bravo, gameId, 'Bravo')
     const heavy6 = await playUnit(bravo, gameId, 'Bravo', 25)
     await act(bravo, gameId, { action: 'ATTACK', instanceId: heavy6 })
     expect(pendingOf(bravo)?.step).toBe('AWAITING_BLOCK')

@@ -24,6 +24,7 @@ import { __resetGameSocketForTests, useGameSocket } from '@/composables/useGameS
 import { useDeckStore } from '@/stores/deck'
 import { useGameStore } from '@/stores/game'
 import { useLobbyStore } from '@/stores/lobby'
+import { useUiStore } from '@/stores/ui'
 import type { CardInstance, PlayerState } from '@/types/game'
 
 import {
@@ -76,9 +77,32 @@ const UNITS_B: MockCard[] = Array.from({ length: 10 }, (_, index) => ({
   abilities: [],
 }))
 
-const CATALOG: MockCard[] = [...LEGENDS, ...UNITS_A, ...UNITS_B].map(card)
-const DECK_A = [...LEGENDS.map((card) => card.id), ...UNITS_A.map((card) => card.id)]
-const DECK_B = [...LEGENDS.map((card) => card.id), ...UNITS_B.map((card) => card.id)]
+/**
+ * Programs « ferraille » (coût 1) — Mini-Feature 10C : les Units et les Legends
+ * ne peuvent PAS être vendues, chaque deck embarque donc des cartes vendables.
+ */
+const PROGRAMS: MockCard[] = Array.from({ length: 7 }, (_, index) => ({
+  id: `program-${index}`,
+  name: `Script ${index}`,
+  type: 'program',
+  color: 'yellow',
+  cost: 1,
+  power: null,
+  streetCred: null,
+  keywords: [],
+  abilities: [],
+}))
+
+const CATALOG: MockCard[] = [...LEGENDS, ...PROGRAMS, ...UNITS_A, ...UNITS_B].map(card)
+const DECK_A = [...LEGENDS.map((card) => card.id), ...PROGRAMS.map((card) => card.id), ...UNITS_A.map((card) => card.id)]
+const DECK_B = [...LEGENDS.map((card) => card.id), ...PROGRAMS.map((card) => card.id), ...UNITS_B.map((card) => card.id)]
+
+/** Première carte vendable de la main (Mini-Feature 10C : ni Unit, ni Legend). */
+function firstSellable(hand: CardInstance[]): CardInstance {
+  const found = hand.find((instance) => instance.type !== 'unit' && instance.type !== 'legend')
+  if (!found) throw new Error('Aucune carte vendable (hors Unit/Legend) en main')
+  return found
+}
 
 // --- Utilitaires de test ----------------------------------------------------
 
@@ -264,8 +288,41 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     expect(game.drawStep).toBeNull()
     expect(game.isMyTurn).toBe(true)
 
-    // --- 4. Vente (Mini-Feature 3) : 1 carte de la main → ressource, 0 ¤ immédiat ---
-    const sold = game.me?.hand[0] as CardInstance
+    // --- 4. Vente (Mini-Feature 3 + 10C) ------------------------------------
+    // 10C — UI : une Unit sélectionnée en main ⇒ bouton « Vendre » désactivé.
+    const unitInHand = (game.me?.hand ?? []).find((instance) => instance.type === 'unit') as CardInstance
+    expect(unitInHand).toBeTruthy()
+    await wrapper.get(`[data-instance-id="${unitInHand.instanceId}"]`).trigger('click')
+    expect(game.selectedInstanceId).toBe(unitInHand.instanceId)
+    const sellButton = buttonWith(wrapper, 'Vendre')
+    expect((sellButton.element as HTMLButtonElement).disabled).toBe(true)
+    expect(sellButton.attributes('title')).toBe('Les Unités et les Légendes ne peuvent pas être vendues')
+
+    // 10C — store : la garde locale refuse l'intention (toast) sans rien envoyer.
+    const uiStore = useUiStore()
+    const actionUrl = `/app/game/${gameId}/action`
+    const sellSendsBefore = commandsTo(server, actionUrl).filter((command) => command.action === 'SELL_CARD').length
+    expect(game.sellCard(unitInHand.instanceId)).toBe(false)
+    expect(commandsTo(server, actionUrl).filter((command) => command.action === 'SELL_CARD')).toHaveLength(sellSendsBefore)
+    expect(uiStore.toasts.some((toast) => toast.message.includes('ne peuvent pas être vendues'))).toBe(true)
+
+    // 10C — serveur : un SELL_CARD forcé sur l'Unit est rejeté (ILLEGAL_ACTION)
+    // et ne consomme PAS le quota de vente du tour.
+    socket.sendAction(gameId, { action: 'SELL_CARD', instanceId: unitInHand.instanceId })
+    await waitFor(
+      () => game.debugLog.some((entry) => entry.actionType === 'SELL_CARD' && entry.result === 'ILLEGAL'),
+      'refus 10C journalisé (ILLEGAL)',
+    )
+    const typeRefusal = game.debugLog.find((entry) => entry.actionType === 'SELL_CARD' && entry.result === 'ILLEGAL')
+    expect(typeRefusal?.description).toContain('REFUSÉ')
+    expect(typeRefusal?.details?.reason).toContain('Les Unités et les Légendes ne peuvent pas être vendues')
+    expect(game.me?.hasSoldThisTurn).toBe(false)
+    expect(game.me?.hand.some((instance) => instance.instanceId === unitInHand.instanceId)).toBe(true)
+    expect(game.me?.eddiesArea ?? []).toHaveLength(0)
+
+    // Une carte VENDABLE (Program) reste acceptée : 1 carte de la main →
+    // ressource, 0 ¤ immédiat (Mini-Feature 3).
+    const sold = firstSellable(game.me?.hand ?? [])
     await wrapper.get(`[data-instance-id="${sold.instanceId}"]`).trigger('click')
     expect(game.selectedInstanceId).toBe(sold.instanceId)
 
@@ -279,7 +336,11 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     expect(soldInArea?.exhausted).toBe(false)
 
     const actions = () => commandsTo(server, `/app/game/${gameId}/action`)
-    const sellCommand = actions().find((command) => command.action === 'SELL_CARD')
+    // Le SELL_CARD refusé de la section 10C (Unit) précède celui-ci : on cible
+    // la commande envoyée pour LA carte vendable.
+    const sellCommand = actions().find(
+      (command) => command.action === 'SELL_CARD' && command.instanceId === sold.instanceId,
+    )
     expect(sellCommand).toMatchObject({ action: 'SELL_CARD', instanceId: sold.instanceId })
     expect(typeof sellCommand?.clientRequestId).toBe('string')
     expect(game.me?.hand).toHaveLength(6) // 7 après la pioche du tour 1, moins 1 vente
@@ -314,13 +375,14 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     expect(game.debugLog.some((entry) => entry.actionType === 'GAME_START')).toBe(true)
 
     // Une seconde vente est illégale : le refus est journalisé et diffusé (ILLEGAL).
+    // (Le garde « 1 vente par tour » précède la restriction de type 10C côté serveur.)
     const secondCard = game.me?.hand[0] as CardInstance
     socket.sendAction(gameId, { action: 'SELL_CARD', instanceId: secondCard.instanceId })
     await waitFor(
-      () => game.debugLog.some((entry) => entry.result === 'ILLEGAL'),
+      () => game.debugLog.some((entry) => entry.result === 'ILLEGAL' && entry.description.includes('Une seule vente')),
       'refus journalisé (ILLEGAL)',
     )
-    const refusal = game.debugLog.find((entry) => entry.result === 'ILLEGAL')
+    const refusal = game.debugLog.find((entry) => entry.result === 'ILLEGAL' && entry.description.includes('Une seule vente'))
     expect(refusal?.description).toContain('REFUSÉ')
     expect(refusal?.phase).toBeTruthy()
     expect(game.me?.hasSoldThisTurn).toBe(true)
@@ -392,7 +454,8 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     expect(wrapper.find('[data-draw-waiting]').exists()).toBe(false)
 
     const bravoHand = playerOf(bravo.lastState(), 'Bravo').hand
-    const bravoSoldId = bravoHand[0]?.instanceId
+    // Mini-Feature 10C : Bravo vend une carte vendable (Program) — jamais une Unit/Legend.
+    const bravoSoldId = firstSellable(bravoHand).instanceId
     bravo.send(`/app/game/${gameId}/action`, { action: 'SELL_CARD', instanceId: bravoSoldId })
     await waitFor(
       () => playerOf(bravo.lastState(), 'Bravo').eddiesArea.some((c) => c.instanceId === bravoSoldId),
@@ -508,8 +571,10 @@ describe('Flux complet Lobby → Partie → Jeu', () => {
     expect(attackCommand).toMatchObject({
       action: 'ATTACK',
       instanceId: attacker.instanceId,
-      targetInstanceId: null,
     })
+    // Attaque directe « sans targetInstanceId » (doc §5.1) : `compact()` retire
+    // les champs nuls du payload filaire, comme le fait le serveur dans ses DTO.
+    expect(attackCommand?.targetInstanceId).toBeUndefined()
     const stealCommand = actions().find((command) => command.action === 'STEAL_GIG')
     expect(stealCommand).toMatchObject({ action: 'STEAL_GIG', dice: [rivalDie?.id] })
     expect(typeof stealCommand?.clientRequestId).toBe('string')
