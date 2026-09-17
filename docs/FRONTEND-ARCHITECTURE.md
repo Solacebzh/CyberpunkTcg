@@ -219,6 +219,21 @@ Catalogue (`cards`, `catalogState`, `loadCatalog`), filtres (`search`,
 Persistance : `localStorage['cyberpunk-tcg.deck.v1']`. Les règles affichées sont
 celles du serveur (`DefaultDeckService`) : 3 Legends, ≥ 10 non-Legends, sans doublon.
 
+Deux points d'attention depuis la **mini-feature 10A** :
+
+* `resetDeck()` (bouton « + Nouveau Deck » de la `DeckBuilderView`) vide la liste
+  **et** remet le nom à `DEFAULT_DECK_NAME` ; `startNewDeck()` ne fait que détacher
+  l'éditeur (`currentDeckId = null`) — c'est lui qui protège un deck sauvegardé
+  d'un écrasement par `PUT` après un import. `clear()` vidé seul garde le deck chargé.
+* l'import textuel (`importFromText`) ne se fie plus au seul nom : `cardQueryVariants`
+  découpe la ligne (`nom: sous-titre`, `nom - sous-titre`, `nom | sous-titre`,
+  `nom (sous-titre)`), `findCardMatches` score chaque carte sur `name` **et**
+  `subtitle`, et la meilleure lecture gagne. Les cartes homonymes (« Adam Smasher »
+  en « Ender of Legends » et « Metal Over Meat », « V » en trois versions, …) sont
+  donc importées sur la bonne version ; un sous-titre inconnu met la ligne en
+  **non reconnue** au lieu de deviner, et une ligne restée ambiguë remonte dans
+  `TextImportResult.ambiguousLines` (affichée en jaune par la modale).
+
 ### 4.4 `stores/ui.ts` et `stores/connection.ts`
 
 `ui` : pile de toasts (`info/success/warn/error`, TTL par défaut, 5 max).
@@ -425,6 +440,10 @@ sur le serveur simulé (`src/__tests__/helpers/stompHarness.ts`).
 * `frontendFlow.spec.ts` : deck builder (catalogue `/api/cards`, ajout, doublons,
   validation, glisser-déposer, persistance) et bascule en reconnexion
   automatique quand le transport tombe.
+* `deckBuilderUx.spec.ts` (mini-feature 10A) : `resetDeck()` qui part d'une liste
+  vide après chargement d'un deck sauvegardé, bouton « Vider le deck » désactivé
+  à vide, et import textuel sur les cartes homonymes — y compris un aller-retour
+  complet sur le catalogue officiel `backend/src/main/resources/data/cards.json`.
 * `playmatLayout.spec.ts` : disposition du tapis officiel — zones des deux demi-tapis,
   3 slots de Legends, colonne Fixer (d20 → d4), piles Deck/Eddies/Trash, bandeau
   `Rival Gigs` / `Friendly Gigs` et grille CSS (`grid-template-areas`, `grid-area`) ;

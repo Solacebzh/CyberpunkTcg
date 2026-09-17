@@ -32,6 +32,19 @@ Le branchement à la source réelle des cartes et les tests d'import sont pris e
 - persistance des decks + validation serveur (`R1`), messages d'erreur explicites ;
 - introduction de **Flyway** pour remplacer `ddl-auto=update`.
 
+## ✅ Mini-Feature 10A — UX du deckbuilder *(livrée)*
+
+- « + Nouveau Deck » (en-tête, « + » de la liste « Mes Decks », barre d'outils du
+  deck) appelle `deckStore.resetDeck()` : liste de cartes vidée, nom remis à
+  `DEFAULT_DECK_NAME`, éditeur détaché du deck sauvegardé — le formulaire
+  n'affiche plus les cartes du deck précédent ;
+- bouton « Vider le deck » explicite au-dessus de la liste des cartes (désactivé
+  quand le deck est vide), compteur de cartes et copie `n/3` par carte du catalogue ;
+- import textuel : le parseur compare `card.name` **et** `card.subtitle`
+  (`3 Adam Smasher: Metal Over Meat`, `-`, `|`, `(sous-titre)` acceptés), refuse
+  un sous-titre inconnu plutôt que de deviner, et signale les lignes restées
+  ambiguës ; les sous-titres sont désormais affichés partout dans l'UI.
+
 ## 🔜 Feature 04 — Lobby et partie 1v1
 
 - salles avec code d'invitation, présence, prêts, choix du deck ;

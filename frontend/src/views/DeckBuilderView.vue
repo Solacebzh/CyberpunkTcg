@@ -4,7 +4,7 @@
  * - Catalogue `GET /api/cards` + ajout par clic ou glisser-déposer.
  * - Validation en temps réel selon les règles officielles (3 Legends uniques,
  *   Main Deck 40-50, max 3 copies, plafonds RAM par couleur).
- * - Importation textuelle avec modale ([Quantité] [Nom de la carte], commentaires ignorés).
+ * - Importation textuelle avec modale ([Quantité] [Nom][: sous-titre], commentaires ignorés).
  *
  * Mini-Feature 9C — persistance :
  * - Colonne « Mes Decks » à gauche : `GET /api/decks` (decks du compte connecté).
@@ -12,6 +12,15 @@
  *   (deck chargé depuis la liste), `DELETE /api/decks/{id}` sur la croix.
  * - Le serveur rejoue les règles officielles avant d'écrire : ses refus
  *   (`400` + `errors`) sont affichés en rouge, tels quels, sous le bouton.
+ *
+ * Mini-Feature 10A — ergonomie :
+ * - « Nouveau Deck » (en-tête, colonne « Mes Decks » ou barre d'outils du deck)
+ *   appelle `deckStore.resetDeck()` : liste de cartes vidée et nom par défaut,
+ *   plus jamais les cartes du deck précédent.
+ * - Barre d'actions « Nouveau Deck » / « Vider le deck » posée au-dessus de la
+ *   liste des cartes, avec le compteur de cartes.
+ * - Les sous-titres sont affichés partout (deux « Adam Smasher » différents ne
+ *   doivent pas se ressembler) et l'import signale les lignes ambiguës.
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -19,11 +28,13 @@ import { useRouter } from 'vue-router'
 import CardPreview from '@/components/CardPreview.vue'
 import type { SavedDeck } from '@/services/api'
 import {
+  DEFAULT_DECK_NAME,
   MAIN_DECK_MAX,
   MAIN_DECK_MIN,
   MAX_COPIES_PER_CARD,
   REQUIRED_LEGENDS,
   useDeckStore,
+  type AmbiguousImportLine,
 } from '@/stores/deck'
 import { useUiStore } from '@/stores/ui'
 import { CARD_COLOR_LABELS, CARD_TYPE_LABELS, type CardColor, type CardType } from '@/types/card'
@@ -39,9 +50,11 @@ const dropActive = ref<'legends' | 'main' | null>(null)
 const showImportModal = ref(false)
 const importText = ref('')
 const importWarnings = ref<string[]>([])
+/** Lignes dont le nom désigne plusieurs versions : le sous-titre manque (10A). */
+const importAmbiguities = ref<AmbiguousImportLine[]>([])
 
 // --- Sauvegarde sur le compte (Mini-Feature 9C) ---
-const deckName = ref('')
+const deckName = ref(DEFAULT_DECK_NAME)
 
 const TYPES: Array<CardType | 'all'> = ['all', 'legend', 'unit', 'program', 'gear']
 const COLORS: Array<CardColor | 'all'> = ['all', 'red', 'green', 'blue', 'yellow']
@@ -59,6 +72,9 @@ const saveHint = computed(() => {
     : `« ${decks.currentDeckName} » est à jour.`
 })
 
+/** Nombre de cartes présentes dans l'éditeur (raccourci d'affichage). */
+const deckTotal = computed(() => decks.deck.length)
+
 onMounted(() => {
   void decks.loadCatalog()
   void decks.loadSavedDecks()
@@ -68,7 +84,7 @@ onMounted(() => {
 async function saveDeck(): Promise<void> {
   const accepted = await decks.saveDeck(deckName.value)
   if (accepted) {
-    deckName.value = decks.currentDeckName
+    deckName.value = decks.currentDeckName || DEFAULT_DECK_NAME
     ui.success(`Deck « ${decks.currentDeckName} » sauvegardé sur ton compte`)
     return
   }
@@ -88,14 +104,38 @@ async function removeSavedDeck(saved: SavedDeck): Promise<void> {
     ui.error(`Suppression du deck « ${saved.name} » impossible`)
     return
   }
-  if (deckName.value === saved.name) deckName.value = ''
+  if (deckName.value === saved.name) deckName.value = DEFAULT_DECK_NAME
   ui.info(`Deck « ${saved.name} » supprimé`)
 }
 
-function startNewDeck(): void {
-  decks.startNewDeck()
-  deckName.value = ''
-  ui.info('Nouveau deck : la sauvegarde créera un deck distinct')
+/**
+ * « Nouveau Deck » : repart d'une liste **vide** (Mini-Feature 10A) — sans cette
+ * action, le formulaire conservait les cartes du deck précédemment chargé.
+ */
+function createNewDeck(): void {
+  const previous = deckTotal.value
+  decks.resetDeck()
+  deckName.value = DEFAULT_DECK_NAME
+  showImportModal.value = false
+  importText.value = ''
+  importWarnings.value = []
+  importAmbiguities.value = []
+  ui.success(
+    previous > 0
+      ? `Nouveau deck : ${previous} carte(s) du deck précédent retirée(s)`
+      : 'Nouveau deck vierge : à toi de le construire',
+  )
+}
+
+/** « Vider le deck » : retire toutes les cartes, sans toucher au deck sauvegardé. */
+function clearDeck(): void {
+  if (deckTotal.value === 0) {
+    ui.info('Le deck est déjà vide')
+    return
+  }
+  const removed = deckTotal.value
+  decks.clear()
+  ui.warn(`${removed} carte(s) retirée(s) du deck`)
 }
 
 function onDragStart(event: DragEvent, cardId: string): void {
@@ -109,6 +149,11 @@ function onDrop(event: DragEvent): void {
   if (!cardId) return
   event.preventDefault()
   addCard(cardId)
+}
+
+/** Copies déjà présentes dans le deck pour cette carte (indicateur du catalogue). */
+function copiesInDeck(cardId: string): number {
+  return decks.deck.filter((id) => id === cardId).length
 }
 
 function addCard(cardId: string): void {
@@ -145,29 +190,52 @@ function removeCard(cardId: string): void {
 }
 
 function sample(): void {
+  const wasAttached = decks.currentDeckId !== null
   decks.buildSampleDeck()
+  // L'exemple remplace la liste : on ne l'écrasera pas sur un deck sauvegardé.
+  decks.startNewDeck()
+  // Le deck chargé n'est plus le bon : son nom non plus.
+  if (wasAttached) deckName.value = decks.currentDeckName
   ui.success('Deck d’exemple officiel généré depuis le catalogue')
 }
 
 function openImportModal(): void {
   importText.value = ''
   importWarnings.value = []
+  importAmbiguities.value = []
   showImportModal.value = true
+}
+
+function closeImportModal(): void {
+  showImportModal.value = false
+}
+
+/** « Adam Smasher: Metal Over Meat » — la syntaxe à conseiller pour lever l'ambiguïté. */
+function describeAmbiguity(entry: AmbiguousImportLine): string {
+  const versions = entry.options
+    .map((option) => `« ${option.name}${option.subtitle ? `: ${option.subtitle}` : ''} »`)
+    .join(' ou ')
+  return `${entry.line.trim()} → ${entry.options.length} versions (${versions}). Précise le sous-titre pour choisir.`
 }
 
 function executeImport(): void {
   if (!importText.value.trim()) return
 
+  const wasAttached = decks.currentDeckId !== null
   const result = decks.importFromText(importText.value)
   importWarnings.value = result.unknownLines
+  importAmbiguities.value = result.ambiguousLines
+  // L'import détache l'éditeur du deck sauvegardé : le champ nom suit, sinon
+  // on perdrait un nom déjà saisi pour un deck jamais envoyé au serveur.
+  if (wasAttached) deckName.value = decks.currentDeckName
 
   if (result.totalAdded > 0) {
-    if (result.unknownLines.length === 0) {
+    if (result.unknownLines.length === 0 && result.ambiguousLines.length === 0) {
       ui.success(`Deck importé avec succès : ${result.totalAdded} cartes ajoutées`)
       showImportModal.value = false
     } else {
       ui.warn(
-        `Deck importé partiellement : ${result.totalAdded} cartes ajoutées, ${result.unknownLines.length} ligne(s) non reconnue(s)`,
+        `Deck importé partiellement : ${result.totalAdded} cartes ajoutées, ${result.unknownLines.length} ligne(s) non reconnue(s), ${result.ambiguousLines.length} ligne(s) ambiguë(s)`,
       )
     }
   } else {
@@ -189,11 +257,29 @@ function executeImport(): void {
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
-        <button type="button" class="cyber-btn cyber-btn--cyan" @click="openImportModal">
+        <button
+          type="button"
+          class="cyber-btn cyber-btn--green"
+          data-testid="deck-create"
+          title="Nouveau deck vierge : la liste des cartes est remise à zéro"
+          @click="createNewDeck"
+        >
+          + Nouveau Deck
+        </button>
+        <button type="button" class="cyber-btn" @click="openImportModal">
           Importer un Deck
         </button>
         <button type="button" class="cyber-btn" @click="sample">Deck d’exemple</button>
-        <button type="button" class="cyber-btn cyber-btn--danger" @click="decks.clear()">Vider</button>
+        <button
+          type="button"
+          class="cyber-btn cyber-btn--danger"
+          data-testid="deck-clear"
+          :disabled="deckTotal === 0"
+          :title="deckTotal === 0 ? 'Le deck est déjà vide' : `Retirer les ${deckTotal} cartes du deck`"
+          @click="clearDeck"
+        >
+          Vider le deck
+        </button>
         <button type="button" class="cyber-btn cyber-btn--accent" @click="router.push({ name: 'lobby' })">
           Aller au lobby
         </button>
@@ -220,12 +306,25 @@ function executeImport(): void {
             <p class="font-mono text-[0.6rem] uppercase tracking-[0.25em] text-cyber-cyan">// mes decks</p>
             <h2 class="cyber-title truncate text-sm text-slate-100">Mes Decks</h2>
           </div>
-          <span
-            class="shrink-0 rounded bg-black/40 px-2 py-0.5 font-mono text-[0.65rem] text-slate-300"
-            data-testid="deck-count"
-          >
-            {{ decks.savedDecks.length }}
-          </span>
+          <div class="flex shrink-0 items-center gap-1">
+            <!-- Le « + » crée bien un deck VIERGE : il passe par resetDeck() (10A). -->
+            <button
+              type="button"
+              class="rounded border border-cyber-line bg-black/40 px-1.5 font-mono text-sm text-cyber-green transition hover:border-cyber-green/70 hover:text-slate-100"
+              data-testid="deck-add"
+              aria-label="Créer un nouveau deck vierge"
+              title="Créer un nouveau deck vierge"
+              @click="createNewDeck"
+            >
+              +
+            </button>
+            <span
+              class="rounded bg-black/40 px-2 py-0.5 font-mono text-[0.65rem] text-slate-300"
+              data-testid="deck-count"
+            >
+              {{ decks.savedDecks.length }}
+            </span>
+          </div>
         </div>
 
         <p v-if="decks.savedDecksState === 'loading'" class="font-mono text-[0.65rem] text-slate-500">
@@ -286,8 +385,15 @@ function executeImport(): void {
 
         <!-- Sauvegarde du deck en cours d'édition -->
         <div class="mt-auto flex flex-col gap-2 border-t border-cyber-line pt-3">
-          <label class="font-mono text-[0.6rem] uppercase tracking-widest text-cyber-cyan" for="deck-name">
-            Nom du deck
+          <label class="flex items-center justify-between gap-2 font-mono text-[0.6rem] uppercase tracking-widest text-cyber-cyan" for="deck-name">
+            <span>Nom du deck</span>
+            <span
+              class="rounded px-1.5 py-0.5 text-[0.55rem] font-bold normal-case tracking-normal"
+              :class="decks.currentDeckId === null ? 'bg-cyber-yellow/15 text-cyber-yellow' : 'bg-cyber-cyan/15 text-cyber-cyan'"
+              data-testid="deck-mode"
+            >
+              {{ decks.currentDeckId === null ? 'Nouveau' : `#${decks.currentDeckId}` }}
+            </span>
           </label>
           <input
             id="deck-name"
@@ -313,8 +419,14 @@ function executeImport(): void {
             {{ decks.savingDeck ? 'Sauvegarde…' : 'Sauvegarder le Deck' }}
           </button>
           <p class="font-mono text-[0.6rem] text-slate-500">{{ saveHint }}</p>
-          <button type="button" class="cyber-btn w-full justify-center" data-testid="deck-new" @click="startNewDeck">
-            Nouveau deck
+          <button
+            type="button"
+            class="cyber-btn w-full justify-center"
+            data-testid="deck-new"
+            title="Vide la liste des cartes et repart d'un deck nommé « Nouveau deck »"
+            @click="createNewDeck"
+          >
+            Nouveau deck vierge
           </button>
         </div>
 
@@ -380,6 +492,21 @@ function executeImport(): void {
             @mouseenter="previewId = card.id"
           >
             <CardPreview :card="card" />
+            <!-- Nom + sous-titre sous la carte : les homonymes ne se ressemblent pas que par leur nom. -->
+            <p class="mt-1 flex items-start justify-between gap-1 px-0.5" :data-testid="`catalog-item-${card.id}`">
+              <span class="min-w-0 truncate text-[0.66rem] leading-tight">
+                <span class="font-bold text-slate-200">{{ card.name }}</span>
+                <span v-if="card.subtitle" class="block truncate font-mono text-[0.58rem] text-cyber-yellow/80">
+                  {{ card.subtitle }}
+                </span>
+              </span>
+              <span
+                class="shrink-0 rounded bg-black/50 px-1 font-mono text-[0.58rem] text-slate-400"
+                :class="copiesInDeck(card.id) > 0 ? 'text-cyber-cyan' : ''"
+              >
+                {{ copiesInDeck(card.id) }}/<span v-if="card.type === 'legend'">1</span><span v-else>{{ MAX_COPIES_PER_CARD }}</span>
+              </span>
+            </p>
           </div>
           <p v-if="decks.filteredCards.length === 0" class="font-mono text-xs text-slate-500">
             Aucune carte ne correspond aux filtres.
@@ -389,6 +516,40 @@ function executeImport(): void {
 
       <!-- Deck & Validation -->
       <aside class="flex flex-col gap-3">
+        <!-- Barre d'actions du deck, posée au-dessus de la liste des cartes (10A) -->
+        <section class="cyber-panel flex flex-wrap items-center justify-between gap-2 p-3">
+          <div class="min-w-0">
+            <p class="font-mono text-[0.6rem] uppercase tracking-[0.25em] text-cyber-magenta">// deck en cours</p>
+            <p class="truncate text-xs font-bold text-slate-100" data-testid="deck-current-name">
+              {{ deckName.trim() || DEFAULT_DECK_NAME }}
+              <span class="ml-1 font-mono text-[0.65rem] font-normal text-slate-500" data-testid="deck-total">
+                {{ deckTotal }} carte(s)
+              </span>
+            </p>
+          </div>
+          <div class="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              class="cyber-btn cyber-btn--green"
+              data-testid="deck-reset"
+              title="Nouveau deck : liste vidée et nom par défaut"
+              @click="createNewDeck"
+            >
+              + Nouveau Deck
+            </button>
+            <button
+              type="button"
+              class="cyber-btn cyber-btn--danger"
+              data-testid="deck-empty"
+              :disabled="deckTotal === 0"
+              :title="deckTotal === 0 ? 'Le deck est déjà vide' : `Retirer les ${deckTotal} cartes du deck`"
+              @click="clearDeck"
+            >
+              Vider le deck
+            </button>
+          </div>
+        </section>
+
         <!-- Zone Legends -->
         <section
           class="cyber-panel p-4"
@@ -409,7 +570,7 @@ function executeImport(): void {
             </span>
           </div>
 
-          <ul class="mt-2 flex flex-col gap-1">
+          <ul class="mt-2 flex flex-col gap-1" data-testid="legend-deck-list">
             <li
               v-for="id in legendIds"
               :key="id"
@@ -461,23 +622,28 @@ function executeImport(): void {
             </span>
           </div>
 
-          <ul class="cyber-scroll mt-2 max-h-[18rem] flex-1 overflow-y-auto pr-1">
+          <ul class="cyber-scroll mt-2 max-h-[18rem] flex-1 overflow-y-auto pr-1" data-testid="main-deck-list">
             <li
               v-for="entry in mainCards"
               :key="entry.id"
-              class="flex items-center justify-between gap-2 border-b border-cyber-line/50 py-1 hover:bg-white/[0.02] px-1"
+              class="flex items-center justify-between gap-2 border-b border-cyber-line/50 px-1 py-1 hover:bg-white/[0.02]"
             >
-              <span class="truncate font-mono text-[0.68rem] text-slate-300">
-                <span class="font-bold text-cyber-cyan mr-1">{{ entry.count }}x</span>
+              <!-- Nom + sous-titre : deux cartes peuvent porter le même nom principal. -->
+              <span class="min-w-0 flex-1 truncate font-mono text-[0.68rem] text-slate-300">
+                <span class="mr-1 font-bold text-cyber-cyan">{{ entry.count }}x</span>
                 {{ entry.card?.name ?? entry.id }}
-                <span class="text-slate-500 text-[0.62rem]">({{ entry.card?.type }})</span>
+                <span v-if="entry.card?.subtitle" class="text-[0.62rem] text-cyber-yellow/80">
+                  · {{ entry.card.subtitle }}
+                </span>
+                <span class="text-[0.62rem] text-slate-500">({{ entry.card?.type }})</span>
               </span>
-              <div class="flex items-center gap-1">
+              <div class="flex shrink-0 items-center gap-1">
                 <button
                   type="button"
                   class="rounded bg-black/40 px-1 font-mono text-[0.65rem] text-slate-300 hover:text-cyber-cyan transition disabled:opacity-30"
                   :disabled="entry.count >= MAX_COPIES_PER_CARD"
                   :title="`Ajouter un exemplaire (max ${MAX_COPIES_PER_CARD})`"
+                  :aria-label="`Ajouter un exemplaire de ${entry.card?.name ?? entry.id}`"
                   @click="decks.add(entry.id)"
                 >
                   +
@@ -486,6 +652,7 @@ function executeImport(): void {
                   type="button"
                   class="rounded bg-black/40 px-1 font-mono text-[0.65rem] text-slate-300 hover:text-cyber-magenta transition"
                   :title="`Retirer un exemplaire`"
+                  :aria-label="`Retirer un exemplaire de ${entry.card?.name ?? entry.id}`"
                   @click="decks.remove(entry.id)"
                 >
                   -
@@ -572,7 +739,10 @@ function executeImport(): void {
     <div
       v-if="showImportModal"
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
-      @click.self="showImportModal = false"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Importer un deck depuis un texte"
+      @click.self="closeImportModal"
     >
       <div class="cyber-panel w-full max-w-xl p-6 border-cyber-cyan shadow-[0_0_30px_rgba(5,217,232,0.3)] flex flex-col gap-3">
         <div class="flex items-center justify-between pb-2 border-b border-cyber-line">
@@ -583,23 +753,31 @@ function executeImport(): void {
           <button
             type="button"
             class="font-mono text-lg text-slate-400 hover:text-cyber-magenta transition"
-            @click="showImportModal = false"
+            aria-label="Fermer l'import"
+            @click="closeImportModal"
           >
             ×
           </button>
         </div>
 
         <p class="text-xs text-slate-300">
-          Colle ta liste au format <span class="font-mono text-cyber-yellow">[Quantité] [Nom de la carte]</span>.
+          Colle ta liste au format <span class="font-mono text-cyber-yellow">[Quantité] [Nom de la carte][: sous-titre]</span>.
           Les commentaires (<span class="font-mono text-slate-400">//</span> ou <span class="font-mono text-slate-400">#</span>)
-          et lignes vides sont ignorés.
+          et lignes vides sont ignorés. <span class="text-slate-400">L'import remplace la liste en cours.</span>
+        </p>
+        <p class="rounded border border-cyber-line bg-black/40 p-2 font-mono text-[0.65rem] text-slate-400">
+          Certaines cartes partagent le même nom (deux « Adam Smasher », trois « V », …) :
+          écris le sous-titre pour lever l'ambiguïté —
+          <span class="text-cyber-cyan">3 Adam Smasher: Metal Over Meat</span>
+          (« : », « - », « | » ou « (sous-titre) » sont acceptés).
         </p>
 
         <textarea
           v-model="importText"
           rows="10"
+          data-testid="import-textarea"
           placeholder="// Legends (3)
-1 Adam Smasher - Ender of Legends
+1 Adam Smasher: Metal Over Meat
 1 Johnny Silverhand - Rocking Renegade
 1 Royce - Psycho on the Edge
 
@@ -614,6 +792,7 @@ function executeImport(): void {
         <div
           v-if="importWarnings.length > 0"
           class="rounded border border-cyber-magenta/40 bg-cyber-magenta/10 p-2 font-mono text-xs text-cyber-magenta"
+          data-testid="import-unknown-lines"
         >
           <p class="font-bold">Lignes non reconnues (ignorées) :</p>
           <ul class="cyber-scroll list-disc list-inside mt-1 max-h-20 overflow-y-auto">
@@ -621,13 +800,26 @@ function executeImport(): void {
           </ul>
         </div>
 
+        <!-- 10A : le nom colle à plusieurs versions, le sous-titre manque -->
+        <div
+          v-if="importAmbiguities.length > 0"
+          class="rounded border border-cyber-yellow/40 bg-cyber-yellow/10 p-2 font-mono text-xs text-cyber-yellow"
+          data-testid="import-ambiguous-lines"
+        >
+          <p class="font-bold">Lignes ambiguës (version par défaut retenue) :</p>
+          <ul class="cyber-scroll mt-1 flex max-h-24 list-none flex-col gap-1 overflow-y-auto">
+            <li v-for="(entry, idx) in importAmbiguities" :key="idx">• {{ describeAmbiguity(entry) }}</li>
+          </ul>
+        </div>
+
         <div class="mt-2 flex justify-end gap-2">
-          <button type="button" class="cyber-btn" @click="showImportModal = false">
+          <button type="button" class="cyber-btn" @click="closeImportModal">
             Annuler
           </button>
           <button
             type="button"
             class="cyber-btn cyber-btn--accent"
+            data-testid="import-confirm"
             :disabled="!importText.trim()"
             @click="executeImport"
           >

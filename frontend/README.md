@@ -79,6 +79,38 @@ tools/mock-server.mjs      # `npm run mock:ws` : /api/* + ws://…/ws
   [`../docs/FRONTEND-ARCHITECTURE.md`](../docs/FRONTEND-ARCHITECTURE.md) § 6 bis.
 - Une seule connexion STOMP par page, partagée via `useGameSocket()`.
 
+## Deck builder (`/deck`)
+
+Quatre actions de contexte, toujours visibles :
+
+| Bouton | Effet |
+| --- | --- |
+| **+ Nouveau Deck** | repart d'une liste **vide** avec le nom par défaut `Nouveau deck` (`deckStore.resetDeck()`) ; détache aussi l'éditeur du deck sauvegardé chargé |
+| **Importer un Deck** | modale d'import texte (remplace la liste, détache le deck sauvegardé) |
+| **Deck d'exemple** | deck légal généré depuis le catalogue |
+| **Vider le deck** | retire les cartes **sans** détacher le deck chargé (mis à jour par « Sauvegarder ») |
+
+Format accepté par l'import, une carte par ligne :
+
+```
+// Legends (3)
+1 Adam Smasher: Metal Over Meat
+1 Johnny Silverhand - Rocking Renegade
+1 Royce: Psycho on the Edge
+
+// Main deck (40)
+3 The Heist
+```
+
+- quantité en tête (`3`, `3x`, `3 X`), commentaires `//` et `#` ignorés ;
+- le séparateur entre le nom et le sous-titre est au choix `:`, ` - `, `|` ou des
+  parenthèses — les cartes homonymes du catalogue (deux « Adam Smasher », trois
+  « V », « Goro Takemura », …) sont résolues **par le sous-titre** ;
+- une ligne sans sous-titre qui colle à plusieurs versions est importée sur la
+  première version du catalogue et **signalée en jaune** dans la modale ;
+- un sous-titre qui ne correspond à aucune version rend la ligne « non reconnue » :
+  rien n'est deviné.
+
 ## Jouer une partie en local
 
 1. `npm run mock:ws` + `npm run dev` (ou le backend Spring + `npm run dev`) ;
