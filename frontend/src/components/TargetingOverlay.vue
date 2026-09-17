@@ -57,14 +57,21 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <!--
+    Calque décoratif : `pointer-events-none` partout SAUF la bannière, sans quoi
+    le voile ou le réticule intercepteraient le premier clic de ciblage (10B).
+  -->
   <div class="pointer-events-none fixed inset-0 z-40">
     <!-- Voile léger : la cible reste visible et cliquable -->
-    <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_35%,rgba(255,42,109,0.12))]" />
+    <div
+      class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_35%,rgba(255,42,109,0.12))]"
+      aria-hidden="true"
+    />
 
-    <!-- Réticule -->
+    <!-- Réticule (décoratif : suit le curseur, jamais cliquable) -->
     <div
       ref="reticle"
-      class="absolute left-0 top-0 h-11 w-11 rounded-full border-2 border-cyber-magenta/80 shadow-[0_0_18px_rgba(255,42,109,0.55)]"
+      class="pointer-events-none absolute left-0 top-0 h-11 w-11 rounded-full border-2 border-cyber-magenta/80 shadow-[0_0_18px_rgba(255,42,109,0.55)]"
       aria-hidden="true"
     >
       <span class="absolute left-1/2 top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-cyber-magenta" />

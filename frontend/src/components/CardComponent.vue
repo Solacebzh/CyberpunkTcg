@@ -101,10 +101,16 @@ function inspect(): void {
       draggable="false"
       @error="imageFailed = true"
     />
+    <!--
+      Mini-Feature 10B : `opacity-0` ne retire PAS le bouton du hit-test — sans
+      `pointer-events-none`, cette zone invisible au coin de la carte avalait le
+      premier clic (zoom au lieu de sélection). Le bouton ne devient cliquable
+      que lorsqu'il est visible (survol du groupe, ou focus clavier).
+    -->
     <button
       v-if="canInspect"
       type="button"
-      class="absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-full border border-cyber-cyan/80 bg-black/80 text-sm text-white opacity-0 shadow-[0_0_10px_rgba(5,217,232,0.7)] transition-opacity hover:text-cyber-cyan focus:opacity-100 group-hover:opacity-100"
+      class="pointer-events-none absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-full border border-cyber-cyan/80 bg-black/80 text-sm text-white opacity-0 shadow-[0_0_10px_rgba(5,217,232,0.7)] transition-opacity hover:text-cyber-cyan focus:pointer-events-auto focus:opacity-100 focus-visible:pointer-events-auto group-hover:pointer-events-auto group-hover:opacity-100"
       :aria-label="`Inspecter ${card.name}`"
       title="Inspecter la carte"
       @click.stop="inspect"

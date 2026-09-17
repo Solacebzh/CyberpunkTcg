@@ -43,10 +43,14 @@ function inspect(): void {
     <div v-else class="grid h-full place-items-center border border-cyber-line p-4 text-center text-xs text-slate-500">
       Image officielle indisponible
     </div>
+    <!--
+      Mini-Feature 10B : le bouton invisible (`opacity-0`) restait cliquable et
+      interceptait le clic du coin haut-droit de la carte — cf. CardComponent.
+    -->
     <button
       v-if="card.imageUrl && !imageFailed"
       type="button"
-      class="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full border border-cyber-cyan/80 bg-black/80 text-sm text-white opacity-0 shadow-[0_0_10px_rgba(5,217,232,0.7)] transition-opacity hover:text-cyber-cyan focus:opacity-100 group-hover:opacity-100"
+      class="pointer-events-none absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full border border-cyber-cyan/80 bg-black/80 text-sm text-white opacity-0 shadow-[0_0_10px_rgba(5,217,232,0.7)] transition-opacity hover:text-cyber-cyan focus:pointer-events-auto focus:opacity-100 focus-visible:pointer-events-auto group-hover:pointer-events-auto group-hover:opacity-100"
       :aria-label="`Inspecter ${cardLabel}`"
       title="Inspecter la carte"
       @click.stop="inspect"

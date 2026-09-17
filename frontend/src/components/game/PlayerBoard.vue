@@ -51,8 +51,10 @@ const props = withDefaults(
     awaitingDraw?: boolean
     /** Mini-Feature 5 : dés cliquables pendant `AWAITING_DIE_SELECT` (vide sinon). */
     selectableDice?: string[]
+    /** Mini-Feature 10B : une intention est en vol (verrouille les dés de la Fixer Area). */
+    busy?: boolean
   }>(),
-  { disconnection: null, awaitingDraw: false, selectableDice: () => [] },
+  { disconnection: null, awaitingDraw: false, selectableDice: () => [], busy: false },
 )
 
 const emit = defineEmits<{ cardClick: [card: CardInstance]; drawClick: []; selectDie: [die: string] }>()
@@ -127,6 +129,7 @@ function isActionable(instanceId: string): boolean {
           :side="side"
           :selecting="isMe && interactive && selectableDice.length > 0"
           :selectable-dice="isMe && interactive ? selectableDice : []"
+          :busy="isMe && busy"
           @select-die="(die) => emit('selectDie', die)"
         />
       </PlaymatZone>
