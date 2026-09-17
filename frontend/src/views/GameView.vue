@@ -203,6 +203,11 @@ function onSpendAction(): void {
   if (card) game.spendResource(card.instanceId)
 }
 
+function onSellAction(): void {
+  const card = selected.value
+  if (card) game.sellCard(card.instanceId)
+}
+
 const primaryLabel = computed(() => {
   const card = selected.value
   if (!card) return 'Aucune carte sélectionnée'
@@ -353,6 +358,7 @@ function onConcede(): void {
           :disconnection="disconnection && disconnection.playerId === me.playerId ? disconnection : null"
           :awaiting-draw="game.canDrawNow"
           :selectable-dice="game.selectableDice"
+          :busy="game.waitingForServer"
           @card-click="(card) => onCardClick(card, true)"
           @draw-click="game.drawCard()"
           @select-die="(die) => game.selectDie(die)"
@@ -465,7 +471,7 @@ function onConcede(): void {
                 game.canSell
                   ? 'Vendre : la carte est révélée puis posée face cachée dans l’Eddies Area — elle devient une ressource (1 vente par tour, 0 ¤ immédiat)'
                   : 'Vente impossible (1 vente par tour, phase Principale, à ton tour)'"
-              @click="selected && game.sellCard(selected.instanceId)"
+              @click="onSellAction"
             >
               Vendre (1 ressource)
             </button>

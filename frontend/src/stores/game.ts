@@ -35,6 +35,17 @@ import {
 
 export type TargetingKind = 'attack' | 'gear'
 
+/**
+ * Garde-fou anti-blocage (Mini-Feature 10B) : une intention sans accusé au
+ * bout de ce délai est considérée perdue (message WS abandonné, resync avec
+ * `clientRequestId: null`…). On libère alors le verrou `waitingForServer` et
+ * on demande une resync — le serveur reste seul juge de l'état final.
+ */
+export const PENDING_ACK_TIMEOUT_MS = 8_000
+
+/** Cap sur la file des intentions en attente (évite toute fuite mémoire). */
+const PENDING_REQUEST_IDS_MAX = 20
+
 export interface TargetingRequest {
   kind: TargetingKind
   sourceInstanceId: string
@@ -118,6 +129,8 @@ export const useGameStore = defineStore('game', () => {
   let stopWatching: Unsubscribe | null = null
   const unsubscribers: Unsubscribe[] = []
   let countdownTimer: number | null = null
+  /** Minuteurs d'expiration des accusés d'intention (`requestId → timeoutId`). */
+  const pendingTimers = new Map<string, number>()
 
   // --- Lectures de base ---
   const myPlayerId = computed(() => state.value?.yourPlayerId ?? null)
@@ -146,6 +159,41 @@ export const useGameStore = defineStore('game', () => {
   )
   const log = computed<GameLogEntry[]>(() => state.value?.log ?? [])
   const waitingForServer = computed(() => pendingRequestIds.value.length > 0)
+
+  // --- Verrou « serveur… » (Mini-Feature 10B : ne jamais rester bloqué) -------
+
+  /** Oublie une intention en attente (annule aussi son minuteur d'expiration). */
+  function dropPendingRequest(requestId: string): void {
+    const timer = pendingTimers.get(requestId)
+    if (timer !== undefined) {
+      window.clearTimeout(timer)
+      pendingTimers.delete(requestId)
+    }
+    if (pendingRequestIds.value.includes(requestId)) {
+      pendingRequestIds.value = pendingRequestIds.value.filter((id) => id !== requestId)
+    }
+  }
+
+  /**
+   * Une intention est restée sans accusé : l'interface n'a pas vocation à rester
+   * figée sur « serveur… » (aucun clic ne répond). On libère le verrou puis on
+   * resynchronise — si l'action est réellement passée, la `STATE` complète
+   * renvoyée par le serveur recollera l'affichage (le serveur fait foi).
+   */
+  function expirePendingRequest(requestId: string): void {
+    pendingTimers.delete(requestId)
+    if (!pendingRequestIds.value.includes(requestId)) return
+    pendingRequestIds.value = pendingRequestIds.value.filter((id) => id !== requestId)
+    ui.warn('Pas de réponse du serveur — resynchronisation de la partie')
+    if (gameId.value) socket.requestResync(gameId.value)
+  }
+
+  /** Vide toutes les intentions en attente (reconnexion, détachement…). */
+  function clearPendingRequests(): void {
+    for (const timer of pendingTimers.values()) window.clearTimeout(timer)
+    pendingTimers.clear()
+    if (pendingRequestIds.value.length > 0) pendingRequestIds.value = []
+  }
   const opponentBlockerReady = computed(
     () => opponent.value?.field.some((card) => card.type === 'unit' && hasKeyword(card, 'blocker') && !card.exhausted) ?? false,
   )
@@ -409,11 +457,22 @@ export const useGameStore = defineStore('game', () => {
     return next.log.filter((entry) => entry.index >= previous.log.length)
   }
 
+  /**
+   * La sélection suit `selectedCard` : elle survit tant que la carte existe dans
+   * **l'une de ses zones** (main, field, Legends, Eddies). Sans les deux zones de
+   * ressources, chaque `STATE` (même sans rapport) effaçait la sélection d'une
+   * Legend ou d'une carte Eddies — et le 2ᵉ clic resélectionnait au lieu de
+   * retourner/incliner la carte (bug « clic avalé », Mini-Feature 10B).
+   */
   function pruneSelection(): void {
     const id = selectedInstanceId.value
-    if (!id || !me.value) return
+    const player = me.value
+    if (!id || !player) return
     const stillThere =
-      me.value.hand.some((card) => card.instanceId === id) || me.value.field.some((card) => card.instanceId === id)
+      player.hand.some((card) => card.instanceId === id) ||
+      player.field.some((card) => card.instanceId === id) ||
+      player.legendsArea.some((card) => card.instanceId === id) ||
+      player.eddiesArea.some((card) => card.instanceId === id)
     if (!stillThere) selectedInstanceId.value = null
   }
 
@@ -439,7 +498,7 @@ export const useGameStore = defineStore('game', () => {
     loading.value = false
 
     if (message.clientRequestId) {
-      pendingRequestIds.value = pendingRequestIds.value.filter((id) => id !== message.clientRequestId)
+      dropPendingRequest(message.clientRequestId)
     }
     pruneSelection()
     pruneCombatSelections(next)
@@ -563,7 +622,7 @@ export const useGameStore = defineStore('game', () => {
   function handleError(payload: WsError): void {
     if (gameId.value && payload.gameId && payload.gameId !== gameId.value) return
     if (payload.clientRequestId) {
-      pendingRequestIds.value = pendingRequestIds.value.filter((id) => id !== payload.clientRequestId)
+      dropPendingRequest(payload.clientRequestId)
     }
     if (payload.code === 'GAME_NOT_FOUND') {
       detach()
@@ -584,7 +643,13 @@ export const useGameStore = defineStore('game', () => {
       ui.error('Canal temps réel indisponible — reconnexion en cours')
       return false
     }
-    pendingRequestIds.value = [...pendingRequestIds.value, requestId]
+    pendingRequestIds.value = [...pendingRequestIds.value, requestId].slice(-PENDING_REQUEST_IDS_MAX)
+    // Garde-fou 10B : si l'accusé n'arrive jamais, le verrou sauté de
+    // lui-même (expirePendingRequest) au lieu de figer les clics du plateau.
+    pendingTimers.set(
+      requestId,
+      window.setTimeout(() => expirePendingRequest(requestId), PENDING_ACK_TIMEOUT_MS),
+    )
     return true
   }
 
@@ -867,6 +932,9 @@ export const useGameStore = defineStore('game', () => {
   // --- Cycle de vie ---
   function attach(id: string): void {
     if (gameId.value === id && stopWatching) {
+      // Reprise sur la même partie : les accusés des intentions en vol ne
+      // reviendront pas — on libère le verrou avant de resynchroniser.
+      clearPendingRequests()
       socket.requestResync(id)
       return
     }
@@ -882,7 +950,14 @@ export const useGameStore = defineStore('game', () => {
     unsubscribers.push(socket.onGameLog(handleDebugLog))
     unsubscribers.push(socket.onGameNotice(handleNotice))
     unsubscribers.push(socket.onWsError(handleError))
-    unsubscribers.push(socket.onReconnected(() => socket.requestResync(id)))
+    unsubscribers.push(
+      socket.onReconnected(() => {
+        // La session STOMP précédente a emporté les réponses en vol :
+        // sans purge, le verrou « serveur… » resterait collé indéfiniment.
+        clearPendingRequests()
+        socket.requestResync(id)
+      }),
+    )
     stopWatching = socket.watchGame(id)
   }
 
@@ -897,7 +972,7 @@ export const useGameStore = defineStore('game', () => {
     lastEvents.value = []
     debugLog.value = []
     lastSequence.value = 0
-    pendingRequestIds.value = []
+    clearPendingRequests()
     selectedInstanceId.value = null
     targeting.value = null
     notice.value = null

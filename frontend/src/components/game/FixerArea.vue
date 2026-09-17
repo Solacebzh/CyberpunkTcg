@@ -25,8 +25,14 @@ const props = withDefaults(
     selectableDice?: string[]
     /** Une sélection de dé est attendue du joueur (met la colonne en évidence). */
     selecting?: boolean
+    /**
+     * Mini-Feature 10B : une intention est déjà en vol vers le serveur —
+     * les dés sélectionnables se désactivent le temps de l'accusé (évite le
+     * double envoi et donne un retour visuel immédiat au premier clic).
+     */
+    busy?: boolean
   }>(),
-  { side: 'me', selectableDice: () => [], selecting: false },
+  { side: 'me', selectableDice: () => [], selecting: false, busy: false },
 )
 
 const emit = defineEmits<{ selectDie: [die: string] }>()
@@ -34,7 +40,9 @@ const emit = defineEmits<{ selectDie: [die: string] }>()
 const slots = computed(() =>
   FIXER_DICE_ORDER.map((die) => {
     const ready = props.dice.includes(die)
-    const selectable = props.selecting && ready && props.selectableDice.includes(die)
+    // En vol vers le serveur : le dé reste visuellement sélectionnable mais
+    // verrouillé (le clic suivant sera celui de l'accusé reçu, jamais un doublon).
+    const selectable = props.selecting && ready && !props.busy && props.selectableDice.includes(die)
     return {
       die,
       faces: DIE_FACES[die] ?? 6,
@@ -50,6 +58,7 @@ const remaining = computed(() => props.dice.length)
 
 function titleOf(slot: { die: string; faces: number; ready: boolean; selectable: boolean; locked: boolean }): string {
   if (slot.selectable) return `Lancer le ${slot.die} (1 à ${slot.faces})`
+  if (props.busy && slot.ready && props.selecting) return `${slot.die} : en attente du serveur…`
   if (slot.locked) return `${slot.die} : le d20 se lance toujours en dernier`
   if (slot.ready) return `${slot.die} : encore dans la Fixer Area (${slot.faces} faces)`
   return `${slot.die} : déjà lancé et placé dans la Gig Area`
@@ -61,7 +70,13 @@ function onSelect(die: string, selectable: boolean): void {
 </script>
 
 <template>
-  <div class="fixer-area" :data-side="side" :data-remaining="remaining" :data-selecting="selecting ? 'true' : null">
+  <div
+    class="fixer-area"
+    :data-side="side"
+    :data-remaining="remaining"
+    :data-selecting="selecting ? 'true' : null"
+    :data-busy="busy ? 'true' : null"
+  >
     <ul class="fixer-dice" :aria-label="`${remaining} dé(s) Gig dans la Fixer Area`">
       <li
         v-for="slot in slots"
