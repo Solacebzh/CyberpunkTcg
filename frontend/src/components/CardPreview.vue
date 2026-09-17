@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import CardZoomModal from '@/components/CardZoomModal.vue'
 import type { GameCard } from '@/types/card'
@@ -7,6 +7,9 @@ import type { GameCard } from '@/types/card'
 const props = defineProps<{ card: GameCard }>()
 const imageFailed = ref(false)
 const zoomed = ref(false)
+
+/** Nom + sous-titre : plusieurs cartes partagent le même nom au catalogue. */
+const cardLabel = computed(() => (props.card.subtitle ? `${props.card.name} — ${props.card.subtitle}` : props.card.name))
 
 watch(
   () => props.card.imageUrl,
@@ -24,8 +27,8 @@ function inspect(): void {
 <template>
   <article
     class="group relative aspect-[2/3] overflow-hidden rounded-xl bg-[#0d0d18] shadow-lg transition-shadow hover:shadow-[0_0_24px_rgba(5,217,232,0.4)]"
-    :aria-label="card.name"
-    :title="`${card.name} — clic droit pour inspecter`"
+    :aria-label="cardLabel"
+    :title="`${cardLabel} — clic droit pour inspecter`"
     @contextmenu.prevent="inspect"
   >
     <img
@@ -44,7 +47,7 @@ function inspect(): void {
       v-if="card.imageUrl && !imageFailed"
       type="button"
       class="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full border border-cyber-cyan/80 bg-black/80 text-sm text-white opacity-0 shadow-[0_0_10px_rgba(5,217,232,0.7)] transition-opacity hover:text-cyber-cyan focus:opacity-100 group-hover:opacity-100"
-      :aria-label="`Inspecter ${card.name}`"
+      :aria-label="`Inspecter ${cardLabel}`"
       title="Inspecter la carte"
       @click.stop="inspect"
     >

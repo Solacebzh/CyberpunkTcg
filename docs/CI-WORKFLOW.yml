@@ -1,6 +1,11 @@
-# PROPOSITION de workflow CI (à activer : git mv docs/CI-WORKFLOW.yml .github/workflows/ci.yml).
-# Vérifie le backend (Maven, profil H2) et le scraper (pytest) à chaque push
-# et sur les PR vers main. Aucun service externe requis.
+# PROPOSITION de workflow CI (à activer : copier ce fichier par-dessus
+# `.github/workflows/ci.yml`). Vérifie le backend (Maven, profil H2), le scraper
+# (pytest) et le frontend (`npm ci && npm run build`) à chaque push et sur les PR
+# vers main. Aucun service externe requis.
+#
+# Le job `frontend` est la nouveauté de la mini-feature 10A : `npm run build`
+# exécute `vue-tsc` sur `src/**` et `devtools/**`, ce qui aurait attrapé les
+# erreurs de types restées sur `main` (voir la PR 10A).
 name: CI
 
 on:
@@ -22,6 +27,23 @@ jobs:
           cache: maven
       - name: Build et tests (H2)
         run: cd backend && mvn -B clean test
+
+  frontend:
+    name: Frontend (npm run build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Installation des dépendances
+        run: npm ci --no-audit --no-fund
+        working-directory: frontend
+      - name: Types (vue-tsc) puis build de production
+        run: npm run build
+        working-directory: frontend
 
   scraper:
     name: Scraper (pytest)

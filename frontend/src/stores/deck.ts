@@ -13,6 +13,13 @@
  * compte du joueur via `/api/decks` (JWT). Le serveur rejoue les règles
  * ci-dessus **avant** d'écrire : ses refus (`400` + `errors`) alimentent
  * `serverErrors`, affichés en rouge par `DeckBuilderView`.
+ *
+ * Mini-Feature 10A — UX du deckbuilder :
+ * - `resetDeck()` remet l'éditeur à zéro (liste vide + nom par défaut) quand
+ *   on crée un nouveau deck, au lieu de conserver les cartes du deck chargé ;
+ * - l'import textuel compare `card.name` **et** `card.subtitle`, ce qui
+ *   distingue les cartes homonymes (« Adam Smasher: Metal Over Meat » vs
+ *   « Adam Smasher: Ender of Legends ») ; une ligne restée ambiguë est signalée.
  */
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
@@ -38,6 +45,9 @@ export const MAIN_DECK_MIN = 40
 export const MAIN_DECK_MAX = 50
 export const MAX_COPIES_PER_CARD = 3
 export const REQUIRED_NON_LEGENDS = MAIN_DECK_MIN
+
+/** Nom affiché par l'éditeur quand aucun deck sauvegardé n'est chargé (Mini-Feature 10A). */
+export const DEFAULT_DECK_NAME = 'Nouveau deck'
 
 export type CatalogState = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -69,56 +79,168 @@ export function normalizeCardQuery(str: string): string {
     .trim()
 }
 
+/** Une ligne de carte décomposée en nom principal + sous-titre éventuel. */
+export interface CardQueryParts {
+  name: string
+  subtitle: string | null
+}
+
 /**
- * Associe un nom ou extrait textuel de carte à une carte du catalogue.
+ * Séparateurs reconnus entre le nom et le sous-titre d'une ligne d'import :
+ * « Adam Smasher: Metal Over Meat », « Adam Smasher - Ender of Legends »,
+ * « Adam Smasher | Metal Over Meat », « Adam Smasher (Metal Over Meat) ».
+ *
+ * Le tiret **non espacé** n'y figure pas volontairement : il appartient à des
+ * noms du catalogue (« T-Bug », « Jacked-In Voodoo Boy »).
  */
-export function findCardInCatalog(query: string, catalog: GameCard[]): GameCard | undefined {
-  const trimmed = query.trim()
-  if (!trimmed) return undefined
-  const normQ = normalizeCardQuery(trimmed)
+const SUBTITLE_SEPARATORS = [':', ' - ', ' — ', ' – ', '|'] as const
 
-  // 1. Match direct par ID exact ou normalisé
-  let match = catalog.find((c) => c.id.toLowerCase() === trimmed.toLowerCase() || normalizeCardQuery(c.id) === normQ)
-  if (match) return match
+/** En dessous de ce score, la correspondance est jugée trop lâche pour être importée. */
+const MIN_MATCH_SCORE = 30
 
-  // 2. Match complet avec sous-titre (ex: "Adam Smasher - Ender of Legends" ou "Adam Smasher: Ender of Legends")
-  match = catalog.find((c) => {
-    if (!c.subtitle) return false
-    const combo1 = normalizeCardQuery(`${c.name} ${c.subtitle}`)
-    const combo2 = normalizeCardQuery(`${c.name} - ${c.subtitle}`)
-    const combo3 = normalizeCardQuery(`${c.name}: ${c.subtitle}`)
-    return normQ === combo1 || normQ === combo2 || normQ === combo3
-  })
-  if (match) return match
+/**
+ * Découpe une ligne de carte en (nom, sous-titre). Plusieurs lectures sont
+ * produites — de la plus littérale à la plus permissive — parce qu'un
+ * séparateur peut aussi bien introduire un sous-titre qu'appartenir au nom :
+ * c'est le score obtenu sur le catalogue qui arbitre (voir {@link findCardMatches}).
+ */
+export function cardQueryVariants(query: string): CardQueryParts[] {
+  const clean = query.trim().replace(/\s+/g, ' ')
+  if (!clean) return []
 
-  // 3. Match exact sur le nom
-  const nameMatches = catalog.filter((c) => normalizeCardQuery(c.name) === normQ)
-  if (nameMatches.length === 1) return nameMatches[0]
-  if (nameMatches.length > 1) {
-    // Si plusieurs cartes portent ce nom (ex: Legends avec sous-titres distincts),
-    // on vérifie si la requête contient un mot du sous-titre
-    const subMatch = nameMatches.find(
-      (c) => c.subtitle && normQ.includes(normalizeCardQuery(c.subtitle)),
-    )
-    return subMatch || nameMatches[0]
+  const variants: CardQueryParts[] = [{ name: clean, subtitle: null }]
+
+  // « Adam Smasher (Metal Over Meat) » — uniquement si la ligne finit par « ) ».
+  const parentheses = /^(.*)\(([^()]*)\)$/.exec(clean)
+  if (parentheses?.[1]?.trim() && parentheses[2]?.trim()) {
+    variants.push({ name: parentheses[1].trim(), subtitle: parentheses[2].trim() })
   }
 
-  // 4. Match partiel / inclusion si la requête contient le nom
-  match = catalog.find((c) => {
-    const normName = normalizeCardQuery(c.name)
-    if (normQ.includes(normName) || normName.includes(normQ)) return true
-    if (c.subtitle) {
-      const full = normalizeCardQuery(`${c.name} ${c.subtitle}`)
-      if (normQ.includes(full) || full.includes(normQ)) return true
-    }
-    return false
-  })
-  return match
+  for (const separator of SUBTITLE_SEPARATORS) {
+    const index = clean.indexOf(separator)
+    if (index <= 0) continue
+    const name = clean.slice(0, index).trim()
+    const subtitle = clean.slice(index + separator.length).trim()
+    if (name && subtitle) variants.push({ name, subtitle })
+  }
+
+  return variants
+}
+
+/**
+ * Score d'une carte pour une lecture donnée de la requête (0 = à rejeter).
+ *
+ * Le nom **et** le sous-titre sont comparés : deux cartes peuvent porter le
+ * même nom principal (« Adam Smasher » existe en « Ender of Legends » et en
+ * « Metal Over Meat »), et un sous-titre explicitement demandé qui ne
+ * correspond pas doit éliminer la carte plutôt que d'importer la mauvaise
+ * version.
+ *
+ * @param looseName autorise les correspondances approximatives sur le nom.
+ *   Elle est refusée à la lecture « ligne entière » dès qu'un séparateur a
+ *   proposé une découpe : sinon « Adam Smasher: Sous-titre Inexistant »
+ *   retomberait, par simple inclusion, sur le premier Adam Smasher du catalogue.
+ */
+function scoreCardVariant(
+  card: GameCard,
+  variant: CardQueryParts,
+  normQuery: string,
+  looseName: boolean,
+): number {
+  const normVariantName = normalizeCardQuery(variant.name)
+  if (!normVariantName) return 0
+
+  const normName = normalizeCardQuery(card.name)
+  const normSubtitle = card.subtitle ? normalizeCardQuery(card.subtitle) : ''
+  const normVariantSubtitle = variant.subtitle ? normalizeCardQuery(variant.subtitle) : null
+
+  let score: number
+  if (normVariantName === normName) {
+    score = 60 // nom principal exact
+  } else if (looseName && normName.includes(normVariantName)) {
+    score = 45 // la ligne est plus longue que le nom
+  } else if (looseName && normVariantName.includes(normName)) {
+    score = 30 // la ligne est plus courte (« Adam Smas »)
+  } else {
+    return 0
+  }
+
+  if (normVariantSubtitle) {
+    if (!normSubtitle) return 0
+    if (normVariantSubtitle === normSubtitle) score += 40
+    else if (normSubtitle.includes(normVariantSubtitle) || normVariantSubtitle.includes(normSubtitle)) score += 25
+    else return 0 // sous-titre demandé mais différent : ce n'est pas cette carte
+  } else if (normSubtitle && normQuery.includes(normSubtitle)) {
+    score += 25 // pas de séparateur, mais le sous-titre apparaît dans la ligne
+  }
+
+  return score
+}
+
+/**
+ * Toutes les cartes du catalogue qui répondent à la requête, par score
+ * décroissant (à score égal, l'ordre du catalogue fait foi).
+ *
+ * Une liste de taille > 1 signale une **ligne ambiguë** : plusieurs versions
+ * portent le même nom et la ligne ne désigne aucune d'elles par son sous-titre.
+ */
+export function findCardMatches(query: string, catalog: GameCard[]): GameCard[] {
+  const trimmed = query.trim()
+  if (!trimmed) return []
+
+  const normQuery = normalizeCardQuery(trimmed)
+  const variants = cardQueryVariants(trimmed)
+  const rawQuery = trimmed.toLowerCase()
+  // La 1re lecture est la ligne recopiée telle quelle ; les suivantes viennent
+  // d'une découpe sur un séparateur. Dès qu'une découpe existe, la lecture
+  // littérale ne garde que son droit d'exactitude (voir `scoreCardVariant`).
+  const splitWasProposed = variants.length > 1
+
+  const scored = catalog
+    .map((card, index) => ({
+      card,
+      index,
+      score: Math.max(
+        // Les listes exportées ailleurs utilisent souvent l'identifiant
+        // (« adam-smasher-metal-over-meat ») : c'est la correspondance reine.
+        card.id.toLowerCase() === rawQuery || normalizeCardQuery(card.id) === normQuery ? 120 : 0,
+        ...variants.map((variant, variantIndex) =>
+          scoreCardVariant(card, variant, normQuery, variantIndex > 0 || !splitWasProposed),
+        ),
+      ),
+    }))
+    .filter((entry) => entry.score >= MIN_MATCH_SCORE)
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+
+  const best = scored[0]?.score
+  if (best === undefined) return []
+  return scored.filter((entry) => entry.score === best).map((entry) => entry.card)
+}
+
+/**
+ * Associe un nom ou extrait textuel de carte à une carte du catalogue.
+ * En cas d'égalité (plusieurs versions du même nom sans sous-titre indiqué),
+ * la première du catalogue est retenue.
+ */
+export function findCardInCatalog(query: string, catalog: GameCard[]): GameCard | undefined {
+  return findCardMatches(query, catalog)[0]
+}
+
+/** Une ligne d'import dont le nom désigne plusieurs versions de carte. */
+export interface AmbiguousImportLine {
+  /** Ligne telle qu'elle a été écrite dans le texte importé. */
+  line: string
+  /** Version retenue par défaut (la première du catalogue). */
+  chosen: GameCard
+  /** Toutes les versions candidates, sous-titres en clair. */
+  options: GameCard[]
 }
 
 export interface TextImportResult {
   addedCardIds: string[]
   unknownLines: string[]
+  /** Lignes où le nom colle à plusieurs versions : le sous-titre manque. */
+  ambiguousLines: AmbiguousImportLine[]
   totalAdded: number
 }
 
@@ -148,7 +270,7 @@ export const useDeckStore = defineStore('deck', () => {
   const serverErrors = ref<string[]>([])
   /** Deck du compte en cours d'édition ; `null` = la sauvegarde créera un nouveau deck. */
   const currentDeckId = ref<number | null>(null)
-  const currentDeckName = ref('')
+  const currentDeckName = ref(DEFAULT_DECK_NAME)
   const savingDeck = ref(false)
 
   const byId = computed(() => new Map(cards.value.map((card) => [card.id, card])))
@@ -395,6 +517,17 @@ export const useDeckStore = defineStore('deck', () => {
     persist()
   }
 
+  /**
+   * Nouveau deck vierge (Mini-Feature 10A) : vide la liste de cartes — le
+   * formulaire n'affiche donc plus les cartes du deck précédent — puis
+   * détache l'éditeur avec son nom par défaut (voir {@link startNewDeck}).
+   */
+  function resetDeck(): void {
+    deck.value = []
+    persist()
+    startNewDeck()
+  }
+
   // --- Decks sauvegardés sur le compte (Mini-Feature 9C) ---
 
   /** Un jeton est-il présent ? (le deck builder est une route authentifiée) */
@@ -493,10 +626,13 @@ export const useDeckStore = defineStore('deck', () => {
     serverErrors.value = []
   }
 
-  /** Détache l'éditeur : la prochaine sauvegarde créera un deck distinct. */
+  /**
+   * Détache l'éditeur de tout deck sauvegardé : la prochaine sauvegarde créera
+   * un deck distinct. Le nom revient à {@link DEFAULT_DECK_NAME} (Mini-Feature 10A).
+   */
   function startNewDeck(): void {
     currentDeckId.value = null
-    currentDeckName.value = ''
+    currentDeckName.value = DEFAULT_DECK_NAME
     serverErrors.value = []
   }
 
@@ -521,14 +657,17 @@ export const useDeckStore = defineStore('deck', () => {
   /**
    * Importation textuelle d'un deck :
    * - Ignore les lignes de commentaires (// ou #) et les lignes vides.
-   * - Parse les lignes au format [Quantité] [Nom de la carte].
-   * - Associe le nom au catalogue cards.json.
+   * - Parse les lignes au format [Quantité] [Nom de la carte][: sous-titre].
+   * - Associe le texte au catalogue en comparant `name` **et** `subtitle`, ce
+   *   qui distingue les cartes homonymes (Mini-Feature 10A) ; une ligne dont le
+   *   nom colle à plusieurs versions est remontée dans `ambiguousLines`.
    * - Remplit le deck et déclenche la validation.
    */
   function importFromText(text: string): TextImportResult {
     const lines = text.split(/\r?\n/)
     const addedCardIds: string[] = []
     const unknownLines: string[] = []
+    const ambiguousLines: AmbiguousImportLine[] = []
 
     for (const rawLine of lines) {
       const line = rawLine.trim()
@@ -545,23 +684,35 @@ export const useDeckStore = defineStore('deck', () => {
         cardQuery = match[2].trim()
       }
 
-      const card = findCardInCatalog(cardQuery, cards.value)
-      if (card) {
-        for (let i = 0; i < quantity; i++) {
-          addedCardIds.push(card.id)
-        }
-      } else {
+      const candidates = findCardMatches(cardQuery, cards.value)
+      const card = candidates[0]
+      if (!card) {
         unknownLines.push(rawLine)
+        continue
+      }
+
+      // Le nom est porté par plusieurs versions et la ligne ne précise rien :
+      // on garde la première (comportement historique) mais on prévient.
+      if (candidates.length > 1) {
+        ambiguousLines.push({ line: rawLine, chosen: card, options: candidates })
+      }
+
+      for (let i = 0; i < quantity; i++) {
+        addedCardIds.push(card.id)
       }
     }
 
     if (addedCardIds.length > 0) {
       setDeck(addedCardIds)
+      // L'import remplace la liste : on ne doit jamais écraser le deck
+      // sauvegardé qui était chargé dans l'éditeur.
+      startNewDeck()
     }
 
     return {
       addedCardIds,
       unknownLines,
+      ambiguousLines,
       totalAdded: addedCardIds.length,
     }
   }
@@ -648,7 +799,7 @@ export const useDeckStore = defineStore('deck', () => {
       savedDecksError.value = null
       serverErrors.value = []
       currentDeckId.value = null
-      currentDeckName.value = ''
+      currentDeckName.value = DEFAULT_DECK_NAME
     })
   }
 
@@ -690,6 +841,7 @@ export const useDeckStore = defineStore('deck', () => {
     add,
     remove,
     clear,
+    resetDeck,
     setDeck,
     canAdd,
     buildSampleDeck,

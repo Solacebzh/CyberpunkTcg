@@ -25,7 +25,7 @@ import { useDeckStore } from '@/stores/deck'
 import { useLobbyStore } from '@/stores/lobby'
 
 import { card, installMockServer, tick, uninstallMockServer } from './helpers/stompHarness'
-import type { MockCard, MockGameServer } from '../../devtools/mock-protocol'
+import type { MockCard } from '../../devtools/mock-protocol'
 
 const LEGENDS: MockCard[] = [1, 2, 3].map((index) => ({
   id: `legend-${index}`,
@@ -79,7 +79,6 @@ function mockDecksEndpoint(decks: typeof SAVED_DECKS): void {
 }
 
 describe('Lobby : sélection d\'un deck sauvegardé (Mini-Feature 9D)', () => {
-  let server: MockGameServer
   let pinia: Pinia
   let wrapper: VueWrapper
 
@@ -87,7 +86,7 @@ describe('Lobby : sélection d\'un deck sauvegardé (Mini-Feature 9D)', () => {
     window.localStorage.clear()
     storeAuth('fake-token', 'Alpha')
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }))
-    server = installMockServer(CATALOG)
+    installMockServer(CATALOG)
     mockDecksEndpoint(SAVED_DECKS)
     __resetGameSocketForTests()
     pinia = createPinia()

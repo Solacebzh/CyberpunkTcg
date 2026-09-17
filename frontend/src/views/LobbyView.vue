@@ -63,9 +63,9 @@ const statusLabel = computed(() => {
 const seatLabels = computed(() => (room.value ? ['Hôte (siège 0)', 'Invité (siège 1)'] : []))
 
 const deckLockedReason = computed(() => {
-  if (decks.savedDecksState.value === 'loading')
+  if (decks.savedDecksState === 'loading')
     return 'Chargement de mes decks…'
-  if (decks.savedDecksState.value === 'error')
+  if (decks.savedDecksState === 'error')
     return 'Mes decks sont indisponibles pour le moment.'
   if (decks.savedDecks.length === 0)
     return 'Aucun deck sauvegardé — ouvre le deck builder pour en créer un.'
