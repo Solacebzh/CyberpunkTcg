@@ -23,7 +23,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Mini-Feature 3 — <strong>« Vente = Création de ressource »</strong> (règle R3 du mini-lot).
+ * Mini-Feature 3 — <strong>« Vente = Création de ressource »</strong> (règle R3 du mini-lot)
+ * + Mini-Feature 10C — <strong>« Restriction de vente par Type de Carte »</strong>.
  *
  * <p>Règle officielle appliquée (Guide § MAIN PHASE — « SELL FOR EDDIE (ONCE PER
  * TURN) » et § GLOSSARY — SELL) :</p>
@@ -37,6 +38,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *   <em>par tour</em>, obtenu en l'inclinant ({@link SpendEddiesCommand}, R6) — possible
  *   dès le tour de la vente puisqu'elle est posée prête.</li>
  * </ol>
+ *
+ * <p>Mini-Feature 10C : seules les cartes qui ne sont <strong>ni des Units ni des
+ * Legends</strong> peuvent être vendues ({@code PROGRAM}, {@code GEAR}…) — toujours
+ * dans la limite d'1 vente par tour. Une tentative sur une Unit ou une Legend est
+ * refusée par {@link GameRuleException} (relayée {@code ILLEGAL_ACTION} sur le
+ * WebSocket) avec le motif « Les Unités et les Légendes ne peuvent pas être
+ * vendues », sans aucune mutation de l'état ni consommation du quota du tour.</p>
  *
  * <p>Tests purs (aucun contexte Spring) : le duel vient de
  * {@link GameFixtures#freshDuel()} — {@code p1} actif, phase {@code MAIN}, tour 1,
@@ -61,7 +69,8 @@ class SellCardCommandTest {
     @DisplayName("R3 - Vendre : main → EDDIES_AREA, faceDown=true, exhausted=false, 0 Eddie immédiat")
     void testR3_SellCard_GoesToEddiesArea_FaceDown_NotExhausted() {
         // Coût imprimé volontairement élevé (4) : la vente ne paie pas le coût de la carte.
-        CardInstance sold = GameFixtures.handCard(state, "p1", GameFixtures.unit("junk", 4, 3));
+        // Mini-Feature 10C : on vend un PROGRAM (les Units/Legends sont invendables).
+        CardInstance sold = GameFixtures.handCard(state, "p1", GameFixtures.program("junk", 4));
         int handBefore = seller.getHand().size();
         assertThat(seller.getEddies()).isZero();
 
@@ -103,7 +112,8 @@ class SellCardCommandTest {
     @Test
     @DisplayName("R3 - La carte vendue est une ressource : inclinable dès ce tour pour 1 €$")
     void testR3_SellCard_CreatesResourceUsableSameTurn() {
-        CardInstance sold = GameFixtures.handCard(state, "p1", GameFixtures.unit("scrap", 2, 2));
+        // Mini-Feature 10C : un GEAR (type vendable) — ni Unit, ni Legend.
+        CardInstance sold = GameFixtures.handCard(state, "p1", GameFixtures.gear("scrap", 2, 2));
 
         new SellCardCommand("p1", sold.getInstanceId()).execute(state);
         assertThat(seller.getEddies()).isZero();
@@ -123,14 +133,108 @@ class SellCardCommandTest {
     }
 
     // ------------------------------------------------------------------
+    // Mini-Feature 10C — restriction de vente par Type de Carte
+    // (UNIT et LEGEND interdites ; PROGRAM, GEAR… autorisés, 1 vente/tour)
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("R(10C) - Program puis Gear : ventes acceptées (main → EDDIES_AREA, 1 par tour)")
+    void testR_SellCard_ProgramOrGear_Success() {
+        // PROGRAM : type vendable (ni Unit, ni Legend) — vente acceptée.
+        CardInstance program = GameFixtures.handCard(state, "p1", GameFixtures.program("ice-breaker", 2));
+        assertThat(SellCardCommand.isSellableType(program.getType())).isTrue();
+
+        List<GameEvent> events = new SellCardCommand("p1", program.getInstanceId()).execute(state);
+
+        assertThat(program.getZone()).isEqualTo(Zone.EDDIES_AREA);
+        assertThat(seller.getHand()).doesNotContain(program);
+        assertThat(seller.getEddiesArea()).containsExactly(program);
+        assertThat(program.isFaceDown()).isTrue();
+        assertThat(program.isExhausted()).isFalse();
+        assertThat(seller.hasSoldThisTurn()).isTrue();
+        // La vente crée la ressource, elle ne crédite toujours aucun Eddie (R3).
+        assertThat(seller.getEddies()).isZero();
+        assertThat(events).anyMatch(event -> event.getType() == GameEventType.CARD_SOLD);
+
+        // Tour suivant : un GEAR est vendable à son tour (toujours 1 vente par tour).
+        GameFixtures.passTurn(state, "p1");
+        GameFixtures.passTurn(state, "p2");
+        assertThat(seller.hasSoldThisTurn()).isFalse();
+        CardInstance gear = GameFixtures.handCard(state, "p1", GameFixtures.gear("chromed-arm", 1, 1));
+        assertThat(SellCardCommand.isSellableType(gear.getType())).isTrue();
+
+        new SellCardCommand("p1", gear.getInstanceId()).execute(state);
+
+        assertThat(gear.getZone()).isEqualTo(Zone.EDDIES_AREA);
+        assertThat(gear.isFaceDown()).isTrue();
+        assertThat(gear.isExhausted()).isFalse();
+        assertThat(seller.hasSoldThisTurn()).isTrue();
+        assertThat(seller.getEddiesArea()).containsExactly(program, gear);
+        assertThat(seller.getEddies()).isZero();
+    }
+
+    @Test
+    @DisplayName("R(10C) - Unit : vente REFUSÉE (ILLEGAL_ACTION) — « Les Unités et les Légendes ne peuvent pas être vendues »")
+    void testR_SellCard_Unit_Rejected() {
+        CardInstance unit = GameFixtures.handCard(state, "p1", GameFixtures.unit("street-solo", 2, 3));
+        assertThat(SellCardCommand.isSellableType(unit.getType())).isFalse();
+        SellCardCommand command = new SellCardCommand("p1", unit.getInstanceId());
+
+        // Refus par validate() comme par execute() — relayé ILLEGAL_ACTION sur le WebSocket.
+        assertThatThrownBy(() -> command.validate(state))
+                .isInstanceOf(GameRuleException.class)
+                .hasMessage(SellCardCommand.SELL_FORBIDDEN_TYPES_MESSAGE);
+        assertThatThrownBy(() -> command.execute(state))
+                .isInstanceOf(GameRuleException.class)
+                .hasMessageContaining("ne peuvent pas être vendues");
+
+        // Aucune mutation : la Unit reste en main, aucune ressource créée.
+        assertThat(unit.getZone()).isEqualTo(Zone.HAND);
+        assertThat(seller.getHand()).contains(unit);
+        assertThat(seller.getEddiesArea()).isEmpty();
+        assertThat(seller.getEddies()).isZero();
+        // Le refus ne consomme pas le quota du tour : un PROGRAM reste vendable.
+        assertThat(seller.hasSoldThisTurn()).isFalse();
+        CardInstance program = GameFixtures.handCard(state, "p1", GameFixtures.program("patch", 1));
+        new SellCardCommand("p1", program.getInstanceId()).execute(state);
+        assertThat(program.getZone()).isEqualTo(Zone.EDDIES_AREA);
+        assertThat(seller.hasSoldThisTurn()).isTrue();
+    }
+
+    @Test
+    @DisplayName("R(10C) - Legend : vente REFUSÉE (ILLEGAL_ACTION), même motif, aucune mutation")
+    void testR_SellCard_Legend_Rejected() {
+        // Une Legend en main (avant son appel) : invendable comme les Units.
+        CardInstance legend = GameFixtures.handCard(state, "p1", GameFixtures.legend("silverhand", null));
+        assertThat(SellCardCommand.isSellableType(legend.getType())).isFalse();
+        SellCardCommand command = new SellCardCommand("p1", legend.getInstanceId());
+
+        assertThatThrownBy(() -> command.validate(state))
+                .isInstanceOf(GameRuleException.class)
+                .hasMessage("Les Unités et les Légendes ne peuvent pas être vendues");
+        assertThatThrownBy(() -> command.execute(state))
+                .isInstanceOf(GameRuleException.class)
+                .hasMessageContaining("ne peuvent pas être vendues");
+
+        // Aucune mutation : la Legend reste en main, quota du tour intact.
+        assertThat(legend.getZone()).isEqualTo(Zone.HAND);
+        assertThat(seller.getHand()).contains(legend);
+        assertThat(seller.getEddiesArea()).isEmpty();
+        assertThat(seller.getEddies()).isZero();
+        assertThat(seller.hasSoldThisTurn()).isFalse();
+    }
+
+    // ------------------------------------------------------------------
     // Cas de refus — limite et garde-fous
     // ------------------------------------------------------------------
 
     @Test
     @DisplayName("R3 - Limite : 1 seule vente par tour (2e refusée, de nouveau légale au tour suivant)")
     void testR3_SellCard_LimitOnePerTurn() {
-        CardInstance first = GameFixtures.handCard(state, "p1", GameFixtures.unit("sell-1", 1, 1));
-        CardInstance second = GameFixtures.handCard(state, "p1", GameFixtures.unit("sell-2", 1, 1));
+        // Mini-Feature 10C : les deux candidates sont vendables (PROGRAM, GEAR) —
+        // le seul motif de refus du test reste la limite d'1 vente par tour.
+        CardInstance first = GameFixtures.handCard(state, "p1", GameFixtures.program("sell-1", 1));
+        CardInstance second = GameFixtures.handCard(state, "p1", GameFixtures.gear("sell-2", 1, 1));
 
         new SellCardCommand("p1", first.getInstanceId()).execute(state);
         assertThat(seller.hasSoldThisTurn()).isTrue();
@@ -171,9 +275,11 @@ class SellCardCommandTest {
     @Test
     @DisplayName("R3 - Refus : hors tour, hors phase MAIN, carte hors main, partie terminée")
     void testR3_SellCard_IllegalContexts() {
-        CardInstance inHand = GameFixtures.handCard(state, "p1", GameFixtures.unit("in-hand", 1, 1));
+        // Mini-Feature 10C : cartes de main vendables (PROGRAM) — les refus de ce
+        // test viennent tous du contexte (tour, phase, zone, partie), pas du type.
+        CardInstance inHand = GameFixtures.handCard(state, "p1", GameFixtures.program("in-hand", 1));
         CardInstance onField = GameFixtures.fieldCard(state, "p1", GameFixtures.unit("on-field", 1, 1));
-        CardInstance rivalCard = GameFixtures.handCard(state, "p2", GameFixtures.unit("rival", 1, 1));
+        CardInstance rivalCard = GameFixtures.handCard(state, "p2", GameFixtures.program("rival", 1));
 
         // Ce n'est pas le tour de p2.
         assertThatThrownBy(() -> new SellCardCommand("p2", rivalCard.getInstanceId()).validate(state))

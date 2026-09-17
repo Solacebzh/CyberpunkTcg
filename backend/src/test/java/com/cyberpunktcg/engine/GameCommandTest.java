@@ -214,8 +214,10 @@ class GameCommandTest {
 
     @Test
     void vente_uniqueParTour_puisDeNouveauApresUnTour() {
-        GameFixtures.handCard(state, "p1", GameFixtures.unit("junk-a", 1, 1));
-        CardInstance second = GameFixtures.handCard(state, "p1", GameFixtures.unit("junk-b", 1, 1));
+        // Mini-Feature 10C : seules les cartes hors UNIT/LEGEND sont vendables —
+        // les deux candidates sont un PROGRAM et un GEAR.
+        GameFixtures.handCard(state, "p1", GameFixtures.program("junk-a", 1));
+        CardInstance second = GameFixtures.handCard(state, "p1", GameFixtures.gear("junk-b", 1, 1));
         CardInstance first = state.getPlayer("p1").getHand().get(0);
 
         new SellCardCommand("p1", first.getInstanceId()).execute(state);

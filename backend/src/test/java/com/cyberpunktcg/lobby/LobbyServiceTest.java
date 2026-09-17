@@ -109,7 +109,9 @@ class LobbyServiceTest {
                 .thenAnswer(inv -> fakeGame("g", inv.getArgument(0), inv.getArgument(1)));
         lobbyService.joinRoom("Johnny", created.getCode(), GUEST_DECK_ID);
 
-        stubOwnedDeck("Troisieme", 303L, sampleDeck());
+        // Le salon est PLAYING/complet : `joinRoom` rejette AVANT même de
+        // résoudre le deck du candidat — aucun stub de deck n'est nécessaire
+        // ici (les stubbings inutiles sont interdits en mode strict).
         assertThatThrownBy(() -> lobbyService.joinRoom("Troisieme", created.getCode(), 303L))
                 .isInstanceOf(LobbyException.class)
                 .extracting("code").isEqualTo("ROOM_NOT_JOINABLE");

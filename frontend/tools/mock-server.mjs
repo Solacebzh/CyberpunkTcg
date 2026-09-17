@@ -38,6 +38,13 @@
  * volés, M = 0 ne vole rien (l'attaque réussit quand même), et `END_TURN` résout
  * un combat en suspens (blocage refusé, puis vol des M dés de plus haute valeur).
  *
+ * Mini-Feature 10C : la vente est restreinte par TYPE de carte — `SELL_CARD`
+ * refuse les `unit` et les `legend` (« Les Unités et les Légendes ne peuvent pas
+ * être vendues », erreur `ILLEGAL_ACTION` comme côté Spring) ; les `program`,
+ * `gear` et tout autre type restent vendables, toujours dans la limite stricte
+ * d'1 vente par tour (logique dans `MockGameServer.sellCard`,
+ * `devtools/mock-protocol.ts` — miroir de `SellCardCommand.validate`).
+ *
  * ⚠️ Les règles appliquées ici sont un sous-ensemble de démonstration ; le
  * serveur de référence reste le backend Spring (docs/RULE-ENGINE.md).
  */

@@ -17,6 +17,7 @@ import {
   GIGS_TO_WIN,
   activeGigsOf,
   effectivePower,
+  isSellableCardType,
   selectableFixerDice,
   stealQuota,
   stealableDiceCount,
@@ -279,6 +280,11 @@ export const useGameStore = defineStore('game', () => {
   const canEndTurn = computed(
     () => !!state.value && !isGameOver.value && isMyTurn.value && !isDrawPhase.value && !waitingForServer.value,
   )
+  /**
+   * Quota de vente du tour (1 vente/tour, phase MAIN, à son tour).
+   * Mini-Feature 10C : la vendabilité par TYPE de carte (ni Unit, ni Legend)
+   * se vérifie carte par carte — voir {@link isSellableCardType} et `sellCard`.
+   */
   const canSell = computed(
     () => !!me.value && !isGameOver.value && isMyTurn.value && phase.value === 'MAIN' && !me.value.hasSoldThisTurn,
   )
@@ -694,10 +700,20 @@ export const useGameStore = defineStore('game', () => {
     return sent
   }
 
+  /**
+   * Vendre une carte de la main (1 vente par tour, phase Principale, à son tour).
+   * Mini-Feature 10C : les Unités et les Légendes ne peuvent PAS être vendues —
+   * seuls les autres types (Program, Gear…) le sont (miroir de `SellCardCommand`,
+   * le serveur refuse avec `ILLEGAL_ACTION`).
+   */
   function sellCard(instanceId: string): boolean {
     const card = findInstance(instanceId)
     if (!card || card.zone !== 'HAND') {
       ui.warn('La vente ne concerne qu’une carte de ta main')
+      return false
+    }
+    if (!isSellableCardType(card.type)) {
+      ui.warn('Les Unités et les Légendes ne peuvent pas être vendues')
       return false
     }
     if (!canSell.value) {

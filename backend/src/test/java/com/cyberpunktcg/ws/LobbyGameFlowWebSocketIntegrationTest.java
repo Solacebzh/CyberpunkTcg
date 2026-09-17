@@ -8,6 +8,8 @@ import com.cyberpunktcg.domain.deck.Deck;
 import com.cyberpunktcg.domain.deck.DeckRepository;
 import com.cyberpunktcg.domain.user.User;
 import com.cyberpunktcg.domain.user.UserRepository;
+import com.cyberpunktcg.engine.DeckValidator;
+import com.cyberpunktcg.engine.GameConstants;
 import com.cyberpunktcg.repository.CardRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,6 +42,15 @@ class LobbyGameFlowWebSocketIntegrationTest {
 
     private static final String HOST = "Val";
     private static final String GUEST = "Johnny";
+
+    /**
+     * Mini-Feature 9D : le deck légal amorcé par {@link LobbyDeckFixture}
+     * contient {@code MAIN_DECK_MIN_SIZE} cartes hors Legends (40). Six sont
+     * distribuées à la donne initiale : le deck visible démarre donc à 34
+     * cartes (et 33 après la première pioche).
+     */
+    private static final int INITIAL_DECK_COUNT =
+            DeckValidator.MAIN_DECK_MIN_SIZE - GameConstants.STARTING_HAND_SIZE;
 
     @LocalServerPort
     private int port;
@@ -222,7 +233,8 @@ class LobbyGameFlowWebSocketIntegrationTest {
             assertThat(afterDraw.path("state").path("phase").asText()).isEqualTo("DRAW");
             assertThat(afterDraw.path("state").path("turn").path("drawStep").asText()).isEqualTo("AWAITING_DIE_SELECT");
             assertThat(player(afterDraw.path("state"), otherPseudo).path("hand")).hasSize(7);
-            assertThat(player(afterDraw.path("state"), otherPseudo).path("deckCount").asInt()).isEqualTo(3);
+            assertThat(player(afterDraw.path("state"), otherPseudo).path("deckCount").asInt())
+                    .isEqualTo(INITIAL_DECK_COUNT - 1);
             assertThat(fieldOf(afterDraw.path("newEvents"), "type")).contains("CARD_DRAWN");
 
             // Le d20 se lance toujours en dernier : refusé tant qu'il reste d'autres dés.
@@ -397,7 +409,7 @@ class LobbyGameFlowWebSocketIntegrationTest {
         assertThat(hostViewOfHost.path("hand")).hasSize(6);
         assertThat(hostViewOfHost.path("hand")).allSatisfy(card ->
                 assertThat(card.path("cardId").asText()).isNotEqualTo("hidden").isNotBlank());
-        assertThat(hostViewOfHost.path("deckCount").asInt()).isEqualTo(4);
+        assertThat(hostViewOfHost.path("deckCount").asInt()).isEqualTo(INITIAL_DECK_COUNT);
         // …et celle de l'invité entièrement masquée.
         assertThat(hostViewOfGuest.path("hand")).hasSize(6);
         assertThat(hostViewOfGuest.path("hand")).allSatisfy(card -> {
@@ -405,7 +417,7 @@ class LobbyGameFlowWebSocketIntegrationTest {
             assertThat(card.path("name").asText()).isEqualTo("Carte masquée");
             assertThat(card.path("power").isMissingNode() || card.path("power").isNull()).isTrue();
         });
-        assertThat(hostViewOfGuest.path("deckCount").asInt()).isEqualTo(4);
+        assertThat(hostViewOfGuest.path("deckCount").asInt()).isEqualTo(INITIAL_DECK_COUNT);
         // L'invité voit sa propre main en clair.
         JsonNode guestViewOfGuest = player(guest, GUEST);
         assertThat(guestViewOfGuest.path("hand")).allSatisfy(card ->

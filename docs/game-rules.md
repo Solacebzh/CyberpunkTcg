@@ -65,6 +65,12 @@ de sa main portant le tag de vente. Elle est révélée au rival puis placée fa
 la carte vendue vaut ensuite exactement 1 Eddie **par tour**, gagné en l'inclinant — y compris dès le tour de
 la vente. Une deuxième vente pendant le même tour est illégale.
 
+**Restriction de vente par type de carte (Mini-Feature 10C).** Les cartes de type **Unit** et **Legend** ne
+peuvent **pas** être vendues : toute tentative est refusée (« Les Unités et les Légendes ne peuvent pas être
+vendues », erreur `ILLEGAL_ACTION`) sans consommer la vente du tour. Les cartes de tous les autres types
+(**Program**, **Gear**…) restent vendables, dans la limite stricte d'1 vente par tour. Côté client, le bouton
+« Vendre » n'est cliquable que si la carte de main sélectionnée n'est ni une Unit ni une Legend.
+
 **Eddies : incliner une Legend.** Une Legend de la Legends Area — face cachée ou révélée — peut être inclinée
 pendant la phase principale ou la phase de combat pour +1 Eddie ; elle reste inclinée jusqu'au début du tour
 suivant de son propriétaire, qui la redresse. Les Eddies ainsi obtenus, comme ceux des cartes vendues
